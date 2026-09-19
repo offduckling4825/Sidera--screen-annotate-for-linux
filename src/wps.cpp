@@ -375,23 +375,21 @@ void goToPrevPage() {
     loadPage(g.currentSlide);
     return;
   }
-  // 调试模式：只“推进一步”，缓存由加载项回传的真实页号事件驱动（动画步不动缓存）
-  bool debugNoCache = g.wpsDebug && g.wpsConnected;   // 无客户端时静默回退“点击即缓存”
-  if (debugNoCache) {
+  // 调试模式且已连加载项：只入队 PREV 指令，由加载项执行；不再发假键（避免双重翻页）
+  if (g.wpsDebug && g.wpsConnected) {
     wpsLog("调试：入队 PREV 指令，等待加载项轮询执行");
     g.wpsCmdQueue.enqueue("PREV");
+    return;
   }
-  if (!debugNoCache) {
-    saveCurrentPage();
-    if (g.currentSlide > 1) g.currentSlide--;
-  }
+  saveCurrentPage();
+  if (g.currentSlide > 1) g.currentSlide--;
   // 始终发送 Up 键（与假键语义一致：有动画时它就是“下一步”）
   {
     Display* dpy = g.xDisplay;
     bool nc = false; if (!dpy) { dpy = XOpenDisplay(nullptr); nc = true; }
     if (dpy) { sendXTestKey(dpy, XK_Up); if (nc) XCloseDisplay(dpy); }
   }
-  if (!debugNoCache) loadPage(g.currentSlide);
+  loadPage(g.currentSlide);
 }
 
 void goToNextPage() {
@@ -402,23 +400,21 @@ void goToNextPage() {
     loadPage(g.currentSlide);
     return;
   }
-  // 调试模式：只“推进一步”，缓存由加载项回传的真实页号事件驱动（动画步不动缓存）
-  bool debugNoCache = g.wpsDebug && g.wpsConnected;   // 无客户端时静默回退“点击即缓存”
-  if (debugNoCache) {
+  // 调试模式且已连加载项：只入队 NEXT 指令，由加载项执行；不再发假键（避免双重翻页）
+  if (g.wpsDebug && g.wpsConnected) {
     wpsLog("调试：入队 NEXT 指令，等待加载项轮询执行");
     g.wpsCmdQueue.enqueue("NEXT");
+    return;
   }
-  if (!debugNoCache) {
-    saveCurrentPage();
-    g.currentSlide++;
-  }
+  saveCurrentPage();
+  g.currentSlide++;
   // 始终发送 Down 键（与假键语义一致：有动画时它就是“下一步”）
   {
     Display* dpy = g.xDisplay;
     bool nc = false; if (!dpy) { dpy = XOpenDisplay(nullptr); nc = true; }
     if (dpy) { sendXTestKey(dpy, XK_Down); if (nc) XCloseDisplay(dpy); }
   }
-  if (!debugNoCache) loadPage(g.currentSlide);
+  loadPage(g.currentSlide);
 }
 
 /*
