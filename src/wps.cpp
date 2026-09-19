@@ -10,6 +10,18 @@ QMap<int, QPixmap*>& activeCache() {
 // ============================================================
 // 多页缓存：翻页时保存/加载笔迹
 // ============================================================
+// 是否处于 WPS 放映联动（全屏放映，或调试模式已连加载项）
+static bool wpsModeActive() {
+  if (g.whiteboard) return false;
+  return g.wpsFullscreen || (g.wpsDebug && g.wpsConnected);
+}
+// 当前缓存容量：WPS 放映 20 / 白板 10 / 其它 2
+static int cacheCapacity() {
+  if (g.whiteboard)     return kCacheBoard;
+  if (wpsModeActive())  return kCacheWps;
+  return kCacheOther;
+}
+
 void clearAllPages() {
   qDebug() << "[INFO] clearAllPages 被调用，清空 普通" << g.slideCache.size()
            << "+ 白板" << g.whiteboardCache.size() << "页缓存 + 画布";
@@ -18,6 +30,7 @@ void clearAllPages() {
   for (auto* pix : g.whiteboardCache) delete pix;
   g.whiteboardCache.clear();
   g.currentSlide = 1;
+  g.pageHasInk = false;
 
   // 重置绘图状态，防止残留（幽灵线 / 未完成的笔画）
   g.isDrawing   = false;
@@ -33,9 +46,15 @@ void clearAllPages() {
 
 void saveCurrentPage() {
   if (!g.canvas) return;
+  if (!g.pageHasInk) return;                 // 没有任何笔迹的页不入缓存
   QMap<int, QPixmap*>& cache = activeCache();
-  // 限制缓存页数
-  if (cache.size() >= g.maxCachePages && !cache.contains(g.currentSlide)) return;
+  const int cap = cacheCapacity();
+  if (!cache.contains(g.currentSlide) && cache.size() >= cap) {
+    // WPS 放映：满了不再新增页（仍可批注，只是本页不保存）
+    if (wpsModeActive()) return;
+    // 其它/白板：淘汰页码最小（最旧）的一页，保留较新的
+    if (!cache.isEmpty()) delete cache.take(cache.firstKey());
+  }
   // 深拷贝当前画布
   delete cache.value(g.currentSlide);
   cache[g.currentSlide] = new QPixmap(*g.canvas);
@@ -50,6 +69,7 @@ void loadPage(int page) {
     p.drawPixmap(0, 0, *cached);
     p.end();
   }
+  g.pageHasInk = (cached != nullptr);        // 有缓存说明该页有笔迹
   clearUndo();                       // 换页后撤回栈失效
   if (g.mainWidget) g.mainWidget->update();
 }
@@ -375,7 +395,6 @@ void goToPrevPage() {
     loadPage(g.currentSlide);
     return;
   }
-  // 调试模式且已连加载项：只入队 PREV 指令，由加载项执行；不再发假键（避免双重翻页）
   if (g.wpsDebug && g.wpsConnected) {
     wpsLog("调试：入队 PREV 指令，等待加载项轮询执行");
     g.wpsCmdQueue.enqueue("PREV");
@@ -396,7 +415,15 @@ void goToNextPage() {
   // 白板模式：完全本地翻页，绝不发送任何虚拟按键，与外界隔离
   if (g.whiteboard) {
     saveCurrentPage();
-    g.currentSlide++;
+    int p = g.currentSlide + 1;
+    if (p > kCacheBoard) {
+      // 翻过第 10 页 → 回到第 1 页，并提示 3 秒（不清除第 1 页内容）
+      p = 1;
+      g.wbLimitMsgUntil = QDateTime::currentMSecsSinceEpoch() + 3000;
+      QTimer::singleShot(3000, []() { if (g.mainWidget) g.mainWidget->update(); });
+      qDebug() << "[INFO] 白板页数已达上限，回到第 1 页";
+    }
+    g.currentSlide = p;
     loadPage(g.currentSlide);
     return;
   }
@@ -522,18 +549,15 @@ void checkWpsState() {
 
   if (was != g.wpsFullscreen) {
     if (g.whiteboard) {
-      // 白板模式：与外界隔离，仅更新缓存上限，不清空白板笔迹
-      g.maxCachePages = g.wpsFullscreen ? 30 : 2;
+      // 白板模式：与外界隔离，不清空白板笔迹（容量由 cacheCapacity() 动态决定）
     } else if (g.wpsFullscreen) {
-      // 进入全屏放映：清空所有笔迹 + 缓存上限 30 页
+      // 进入全屏放映：清空所有笔迹
       qDebug() << "[INFO] 进入全屏放映，清空笔迹";
       clearAllPages();
-      g.maxCachePages = 30;
     } else {
-      // 退出全屏放映：清空所有笔迹 + 缓存上限 2 页
+      // 退出全屏放映：清空所有笔迹
       qDebug() << "[INFO] 退出全屏放映，清空笔迹";
       clearAllPages();
-      g.maxCachePages = 2;
     }
   }
 

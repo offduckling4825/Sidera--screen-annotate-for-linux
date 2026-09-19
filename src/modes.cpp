@@ -83,6 +83,7 @@ void initCanvas() {
 
 void clearCanvas() {
   if (g.canvas) g.canvas->fill(Qt::transparent);
+  g.pageHasInk = false;
   clearUndo();                       // 清除语义统一：清空后不可再撤回回旧内容
   if (g.mainWidget) g.mainWidget->update();
 }

@@ -72,11 +72,27 @@ void updateExitButtons() {
 }
 
 void toggleWhiteboard() {
-  // 把当前笔迹存进“当前模式”的缓存，再切换模式并载入另一套缓存
-  saveCurrentPage();
-  g.whiteboard = !g.whiteboard;
-  if (g.canvas) g.canvas->fill(Qt::transparent);   // 清空画布
-  loadPage(g.currentSlide);                        // 载入新模式缓存（无则空白）
+  auto clearBoardCache = []() {
+    for (QPixmap* pix : g.whiteboardCache) delete pix;
+    g.whiteboardCache.clear();
+  };
+  if (!g.whiteboard) {
+    // 进入白板：先保存当前普通/放映页（保留其笔迹），再清空白板自己的笔迹
+    saveCurrentPage();                 // 存入 slideCache（普通/放映）
+    g.savedSlide = g.currentSlide;     // 记住普通模式页码
+    clearBoardCache();                 // 白板笔迹清空
+    g.whiteboard = true;
+    g.currentSlide = 1;                // 白板从第 1 页开始
+    if (g.canvas) g.canvas->fill(Qt::transparent);
+    g.pageHasInk = false;
+  } else {
+    // 退出白板：清空白板笔迹（不保存），恢复普通/放映页（其笔迹保留）
+    clearBoardCache();
+    g.whiteboard = false;
+    g.currentSlide = g.savedSlide;
+    if (g.canvas) g.canvas->fill(Qt::transparent);
+    loadPage(g.currentSlide);          // 从 slideCache 恢复
+  }
   updateWhiteboardButtonStyles();
   updateExitButtons();
   clearUndo();
@@ -86,7 +102,8 @@ void toggleWhiteboard() {
     else resetInputShape();
     g.mainWidget->update();                       // 触发白底/透明重绘
   }
-  qDebug() << (g.whiteboard ? "[INFO] 白板模式开启" : "[INFO] 白板模式关闭");
+  qDebug() << (g.whiteboard ? "[INFO] 白板模式开启（白板笔迹已清空，放映/普通笔迹保留）"
+                            : "[INFO] 白板模式关闭（白板笔迹已清空，放映/普通笔迹保留）");
 }
 
 // 退出放映：先关白板、切回光标模式（让 PPT 自带控件可用），再发 ESC

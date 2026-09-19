@@ -369,6 +369,27 @@ protected:
         p.drawEllipse(cr);
       }
     }
+    // 白板模式：左下角页码 + 页数上限提示（蒂芙尼蓝）
+    if (g.whiteboard) {
+      p.setRenderHint(QPainter::Antialiasing, true);
+      QFont f = p.font();
+      f.setBold(true);
+      f.setPointSize(16);
+      p.setFont(f);
+      p.setPen(QColor("#0ABAB5"));
+      p.drawText(QRect(16, height() - 46, 320, 32),
+                 Qt::AlignLeft | Qt::AlignVCenter,
+                 QString::fromUtf8("第 %1 页 / %2").arg(g.currentSlide).arg(kCacheBoard));
+      if (QDateTime::currentMSecsSinceEpoch() < g.wbLimitMsgUntil) {
+        QFont mf = p.font();
+        mf.setBold(true);
+        mf.setPointSize(28);
+        p.setFont(mf);
+        p.setPen(QColor("#0ABAB5"));
+        p.drawText(rect(), Qt::AlignHCenter | Qt::AlignVCenter,
+                   QString::fromUtf8("已达到白板页数上限"));
+      }
+    }
     p.end();
   }
 

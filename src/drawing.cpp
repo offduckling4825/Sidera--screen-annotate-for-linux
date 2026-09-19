@@ -78,6 +78,7 @@ void strokeSegment(QPoint a, QPoint b, bool erase, int width) {
     QPen pen(g.penColor(), width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     p.setPen(pen);
     p.setRenderHint(QPainter::Antialiasing, true);
+    g.pageHasInk = true;
   }
   if (a == b) {
     // 同点：画/擦一个实心圆点，确保轻点一定可见
@@ -109,6 +110,7 @@ int timedPenWidth() {
 // 宽度沿笔画渐变的画笔笔迹（像墨水由细到粗扩散）：把一段拆成若干子段，宽度线性插值
 void strokeTapered(QPoint a, QPoint b, int wStart, int wEnd) {
   if (!g.canvas) return;
+  g.pageHasInk = true;
   QPainter p(g.canvas);
   p.setCompositionMode(QPainter::CompositionMode_SourceOver);
   p.setRenderHint(QPainter::Antialiasing, true);

@@ -158,8 +158,10 @@ struct AppState {
   // 多页缓存
   QMap<int, QPixmap*> slideCache;  // 页码 → 笔迹（普通/放映模式）
   QMap<int, QPixmap*> whiteboardCache; // 页码 → 笔迹（白板模式，与上面独立）
-  int currentSlide  = 1;           // 当前页码
-  int maxCachePages = 2;           // 非全屏 2 页，全屏 30 页
+  int currentSlide  = 1;           // 当前页码（普通/放映；白板模式下即白板页码）
+  int savedSlide    = 1;           // 进入白板前记住的普通模式页码
+  bool pageHasInk   = false;       // 当前页是否有过笔迹（无笔迹页不入缓存）
+  qint64 wbLimitMsgUntil = 0;      // 白板页数上限提示的截止时间(ms)
 
   // WPS 接口调试模式（教室默认开）：翻页走本地 HTTP 16666，WPS 加载项回传真实页号/事件
   bool         wpsDebug         = true;
@@ -209,6 +211,10 @@ static const int    kStrokeRampMs   = 600;
 static const double kStrokeMinScale = 0.85;
 // 撤回栈最大步数
 static const int kMaxUndo = 12;
+// 多页缓存容量：WPS 放映 / 白板 / 其它
+static const int kCacheWps   = 20;
+static const int kCacheBoard = 10;
+static const int kCacheOther = 2;
 
 extern AppState g;
 

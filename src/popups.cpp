@@ -132,6 +132,7 @@ void clearCurrentStrokes() {
   QMap<int, QPixmap*>& c = activeCache();
   if (c.contains(g.currentSlide)) { delete c.take(g.currentSlide); }
   if (g.canvas) g.canvas->fill(Qt::transparent);
+  g.pageHasInk = false;
   clearUndo();
   if (g.mainWidget) g.mainWidget->update();
   qDebug() << "[INFO] 已清除当前页笔迹";
