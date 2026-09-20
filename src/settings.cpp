@@ -186,11 +186,40 @@ void openSettings() {
 
   // 橡皮触发方式：手背大触点 / 多指（二选一，默认手背）
   QPushButton* trigBtn = new QPushButton();
-  auto updateTrigBtn = [trigBtn]() {
+
+  // 大触点判定阈值（px）—— 仅“手背大触点”触发时显示
+  QLabel* thrLabel = new QLabel(QString::fromUtf8("大触点阈值 (px)"));
+  QSlider* thrSlider = new QSlider(Qt::Horizontal);
+  thrSlider->setRange(20, 260);
+  thrSlider->setValue(g.largeTouchThreshold);
+  QLabel* thrVal = new QLabel(QString::number(g.largeTouchThreshold));
+  QObject::connect(thrSlider, &QSlider::valueChanged, [thrVal](int v) {
+    g.largeTouchThreshold = v;
+    thrVal->setText(QString::number(v));
+    wpsSaveSettings();
+  });
+
+  // 大触点橡皮倍率（×0.1）—— 仅“手背大触点”触发时显示
+  QLabel* scLabel = new QLabel(QString::fromUtf8("大触点橡皮倍率"));
+  QSlider* scSlider = new QSlider(Qt::Horizontal);
+  scSlider->setRange(8, 25);      // 0.8 ~ 2.5
+  scSlider->setValue(g.largeEraseScale10);
+  QLabel* scVal = new QLabel(QString::number(g.largeEraseScale10 / 10.0, 'f', 1));
+  QObject::connect(scSlider, &QSlider::valueChanged, [scVal](int v) {
+    g.largeEraseScale10 = v;
+    scVal->setText(QString::number(v / 10.0, 'f', 1));
+    wpsSaveSettings();
+  });
+
+  auto updateTrigBtn = [trigBtn, thrLabel, thrSlider, thrVal, scLabel, scSlider, scVal]() {
     trigBtn->setText(g.eraseByFinger ? QString::fromUtf8("橡皮触发方式: 多指")
                                      : QString::fromUtf8("橡皮触发方式: 手背"));
     trigBtn->setStyleSheet("QPushButton{background:#2a5a6a;color:#fff;border:1px solid #4dd0e1;border-radius:6px;padding:8px;}"
                            "QPushButton:hover{background:#356b7d;}");
+    // 仅“手背大触点”时显示阈值/倍率调节；隐藏不改变其值
+    const bool show = !g.eraseByFinger;
+    thrLabel->setVisible(show); thrSlider->setVisible(show); thrVal->setVisible(show);
+    scLabel->setVisible(show);  scSlider->setVisible(show);  scVal->setVisible(show);
   };
   updateTrigBtn();
   QObject::connect(trigBtn, &QPushButton::clicked, [updateTrigBtn]() {
@@ -204,30 +233,9 @@ void openSettings() {
   trigHint->setStyleSheet("color:#667;font-size:11px;");
   lay->addWidget(trigHint);
 
-  // 大触点判定阈值（px）
-  lay->addWidget(new QLabel(QString::fromUtf8("大触点阈值 (px)")));
-  QSlider* thrSlider = new QSlider(Qt::Horizontal);
-  thrSlider->setRange(20, 260);
-  thrSlider->setValue(g.largeTouchThreshold);
-  QLabel* thrVal = new QLabel(QString::number(g.largeTouchThreshold));
-  QObject::connect(thrSlider, &QSlider::valueChanged, [thrVal](int v) {
-    g.largeTouchThreshold = v;
-    thrVal->setText(QString::number(v));
-    wpsSaveSettings();
-  });
+  lay->addWidget(thrLabel);
   lay->addLayout(makeSliderRow(thrSlider, thrVal));
-
-  // 大触点橡皮倍率（×0.1）
-  lay->addWidget(new QLabel(QString::fromUtf8("大触点橡皮倍率")));
-  QSlider* scSlider = new QSlider(Qt::Horizontal);
-  scSlider->setRange(8, 25);      // 0.8 ~ 2.5
-  scSlider->setValue(g.largeEraseScale10);
-  QLabel* scVal = new QLabel(QString::number(g.largeEraseScale10 / 10.0, 'f', 1));
-  QObject::connect(scSlider, &QSlider::valueChanged, [scVal](int v) {
-    g.largeEraseScale10 = v;
-    scVal->setText(QString::number(v / 10.0, 'f', 1));
-    wpsSaveSettings();
-  });
+  lay->addWidget(scLabel);
   lay->addLayout(makeSliderRow(scSlider, scVal));
 
   // 清空调试日志（防止不熟悉的人让日志越积越多）
