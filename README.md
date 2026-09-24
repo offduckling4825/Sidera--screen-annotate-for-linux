@@ -28,10 +28,10 @@
 **方式一：安装预编译 DEB 包（推荐）**  
 教室机或 Debian / Ubuntu 系发行版可直接安装对应的 release 包：  
 # amd64 (x86_64)  
- sudo dpkg -i sidera_2.6-Geo-stable_amd64.deb  
+ sudo dpkg -i sidera_Electro-testing_amd64.deb  
    
  # aarch64 (arm64)  
- sudo dpkg -i sidera_2.6-Geo-stable_arm64.deb  
+ sudo dpkg -i sidera_Electro-testing_arm64.deb  
    
 **方式二：从源码编译**  
 ***1. 安装编译依赖***  

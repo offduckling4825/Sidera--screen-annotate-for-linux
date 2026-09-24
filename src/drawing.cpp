@@ -66,29 +66,45 @@ QPixmap sideraIconPixmap(int px) {
   return pm;
 }
 
-void strokeSegment(QPoint a, QPoint b, bool erase, int width) {
-  if (!g.canvas) return;
-  QPainter p(g.canvas);
-  if (erase) {
-    p.setCompositionMode(QPainter::CompositionMode_Clear);
-    QPen ep(Qt::transparent, width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    p.setPen(ep);
-  } else {
-    p.setCompositionMode(QPainter::CompositionMode_SourceOver);
-    QPen pen(g.penColor(), width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    p.setPen(pen);
-    p.setRenderHint(QPainter::Antialiasing, true);
-    g.pageHasInk = true;
-  }
+// 纯函数版：把一段画笔笔迹画到指定设备（不依赖全局 g，供 X11 与 Wayland 共用）
+void drawPenSegment(QPaintDevice* dev, const QColor& color, QPoint a, QPoint b, int width) {
+  if (!dev) return;
+  QPainter p(dev);
+  p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+  QPen pen(color, width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+  p.setPen(pen);
+  p.setRenderHint(QPainter::Antialiasing, true);
   if (a == b) {
-    // 同点：画/擦一个实心圆点，确保轻点一定可见
     p.setPen(Qt::NoPen);
-    p.setBrush(erase ? QBrush(Qt::black) : QBrush(g.penColor()));
+    p.setBrush(QBrush(color));
     p.drawEllipse(QPointF(a), width / 2.0, width / 2.0);
   } else {
     p.drawLine(a, b);
   }
   p.end();
+}
+
+// 纯函数版：把一段橡皮擦（清除）笔迹画到指定设备
+void drawEraseSegment(QPaintDevice* dev, QPoint a, QPoint b, int width) {
+  if (!dev) return;
+  QPainter p(dev);
+  p.setCompositionMode(QPainter::CompositionMode_Clear);
+  QPen ep(Qt::transparent, width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+  p.setPen(ep);
+  if (a == b) {
+    p.setPen(Qt::NoPen);
+    p.setBrush(Qt::black);
+    p.drawEllipse(QPointF(a), width / 2.0, width / 2.0);
+  } else {
+    p.drawLine(a, b);
+  }
+  p.end();
+}
+
+void strokeSegment(QPoint a, QPoint b, bool erase, int width) {
+  if (!g.canvas) return;
+  if (erase) drawEraseSegment(g.canvas, a, b, width);
+  else       { g.pageHasInk = true; drawPenSegment(g.canvas, g.penColor(), a, b, width); }
 }
 
 // 画一段笔迹到 g.canvas（画笔/橡皮擦共用，鼠标和触摸都调用）
@@ -107,16 +123,15 @@ int timedPenWidth() {
   return minw + int(qRound((base - minw) * t));
 }
 
-// 宽度沿笔画渐变的画笔笔迹（像墨水由细到粗扩散）：把一段拆成若干子段，宽度线性插值
-void strokeTapered(QPoint a, QPoint b, int wStart, int wEnd) {
-  if (!g.canvas) return;
-  g.pageHasInk = true;
-  QPainter p(g.canvas);
+// 纯函数版：宽度沿笔画渐变的画笔笔迹（供 X11 与 Wayland 共用）
+void drawPenTapered(QPaintDevice* dev, const QColor& color, QPoint a, QPoint b, int wStart, int wEnd) {
+  if (!dev) return;
+  QPainter p(dev);
   p.setCompositionMode(QPainter::CompositionMode_SourceOver);
   p.setRenderHint(QPainter::Antialiasing, true);
   p.setBrush(Qt::NoBrush);
   if (a == b) {
-    QPen pen(g.penColor(), qMax(1, wStart), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    QPen pen(color, qMax(1, wStart), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     p.setPen(pen);
     p.drawPoint(a);
     p.end();
@@ -129,11 +144,18 @@ void strokeTapered(QPoint a, QPoint b, int wStart, int wEnd) {
     QPointF p0(a.x() + (b.x() - a.x()) * t0, a.y() + (b.y() - a.y()) * t0);
     QPointF p1(a.x() + (b.x() - a.x()) * t1, a.y() + (b.y() - a.y()) * t1);
     int w = qRound(wStart + (wEnd - wStart) * ((t0 + t1) / 2.0));
-    QPen pen(g.penColor(), qMax(1, w), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    QPen pen(color, qMax(1, w), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     p.setPen(pen);
     p.drawLine(p0, p1);
   }
   p.end();
+}
+
+// 宽度沿笔画渐变的画笔笔迹（像墨水由细到粗扩散）：把一段拆成若干子段，宽度线性插值
+void strokeTapered(QPoint a, QPoint b, int wStart, int wEnd) {
+  if (!g.canvas) return;
+  g.pageHasInk = true;
+  drawPenTapered(g.canvas, g.penColor(), a, b, wStart, wEnd);
 }
 
 // ===== 撤回：每笔落笔前存快照，撤回时恢复上一张 =====

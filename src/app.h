@@ -235,6 +235,9 @@ QPixmap makePenIcon(int s);
 QPixmap makeEraserIcon(int s);
 QString sideraIconPath();
 QPixmap sideraIconPixmap(int px);
+void drawPenSegment(QPaintDevice* dev, const QColor& color, QPoint a, QPoint b, int width);
+void drawEraseSegment(QPaintDevice* dev, QPoint a, QPoint b, int width);
+void drawPenTapered(QPaintDevice* dev, const QColor& color, QPoint a, QPoint b, int wStart, int wEnd);
 void strokeSegment(QPoint a, QPoint b, bool erase, int width);
 void strokeToCanvas(QPoint a, QPoint b);
 void strokeTapered(QPoint a, QPoint b, int wStart, int wEnd);   // 宽度沿笔画渐变的画笔笔迹

@@ -17,6 +17,11 @@ moc_*.cpp
 ui_*.h
 qrc_*.cpp
 
+# ===== Wayland 协议绑定生成物（wayland-scanner 输出，构建时落在 build/）=====
+# protocols/ 下的 .xml 为源文件，需要入库；生成的头/源文件一律忽略。
+*-client-protocol.h
+*-protocol.c
+
 # ===== deb 打包产物与临时目录 =====
 *.deb
 screen-annotate_*/
