@@ -1,5 +1,6 @@
 // Sidera - WPS 联动/缓存/HTTP 服务
 // Copyright (C) 2026 Carl_Jin   GNU GPL v3
+#include "wps_registration.h"
 #include "app.h"
 
 // 当前生效的笔迹缓存：白板模式与普通/放映模式各自独立
@@ -145,28 +146,13 @@ void wpsLoadSettings() {
 
 // ---------------- 加载项自动注册（写当前用户 jsaddons/publish.xml） ----------------
 static void ensureWpsAddinRegistered() {
-  QString path = QDir::homePath() + "/.local/share/Kingsoft/wps/jsaddons/publish.xml";
-  QString entry = "  <jspluginonline name=\"sidera-bridge\" type=\"wpp\" "
-                  "url=\"http://127.0.0.1:16666/\" debug=\"\" enable=\"enable\" install=\"null\"/>\n";
-  QDir().mkpath(QFileInfo(path).absolutePath());
-  QFile f(path);
-  QString content;
-  if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-    content = QString::fromUtf8(f.readAll());
-    f.close();
-  }
-  if (content.contains("sidera-bridge") || content.contains("screen-annotate-bridge")) return;   // 已登记，静默
-  if (!content.isEmpty() && content.contains("<jsplugins>") && content.contains("</jsplugins>"))
-    content.replace("</jsplugins>", entry + "</jsplugins>");
-  else
-    content = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<jsplugins>\n"
-            + entry + "</jsplugins>\n";
-  if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
-    QTextStream ts(&f);
-    ts << content;
-    f.close();
+  const QString path = WpsRegistration::registryPath();
+  QString error;
+  const auto result = WpsRegistration::registerAddin(path, &error);
+  if (result == WpsRegistration::Result::Added)
     wpsLog("已自动登记加载项 → " + path);
-  }
+  else if (result == WpsRegistration::Result::Failed)
+    wpsLog("加载项自动登记失败 → " + path + "：" + error);
 }
 
 static void wpsHandleHttp(QTcpSocket* s);

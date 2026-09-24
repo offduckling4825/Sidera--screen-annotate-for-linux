@@ -19,4 +19,7 @@ clean:
 test:
 	python3 tests/test_bridge_api.py
 
-.PHONY: all clean test
+test-registration: annotate_amd64
+	python3 tests/test_wps_registration.py
+
+.PHONY: all clean test test-registration

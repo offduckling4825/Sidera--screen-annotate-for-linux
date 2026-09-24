@@ -8,6 +8,9 @@ app 侧需开启 `设置 → WPS 接口调试模式`（内容由此服务的 127
 ```bash
 ./install.sh            # 或安装 deb 后用: sidera-wps-addin-install
 ```
+请先编译或安装新版 Sidera。脚本调用 `sidera --register-wps-addin`（源码目录优先使用本机架构的构建产物），无需启动桌面窗口。
+手动安装和 app 自动注册共用同一逻辑：保留已有加载项，仅在缺少时追加 Sidera；已登记的旧名称 `screen-annotate-bridge` 也不会重复添加。
+已有 `publish.xml` 为空、损坏或无法读取时会报错并保留原文件，请检查后重试。保存使用原子替换，写入失败不会截断原文件。
 
 ## 使用顺序
 1. 启动Sidera app，并在设置里开启“WPS 接口调试”（或 WPS_API_DEBUG=1 启动）。
@@ -16,8 +19,11 @@ app 侧需开启 `设置 → WPS 接口调试模式`（内容由此服务的 127
 
 ## 文件说明
 - manifest.xml / ribbon.xml / main.js / js/bridge.js ：加载项本体
-- publish.xml ：登记文件（install.sh 拷入 ~/.local/share/Kingsoft/wps/jsaddons/）
+- publish.xml ：登记格式示例；安装程序合并更新 ~/.local/share/Kingsoft/wps/jsaddons/publish.xml
 - 内容由 app 的 HTTP 服务(16666)实时提供，无需额外服务器
 
 ## 卸载
 删除 ~/.local/share/Kingsoft/wps/jsaddons/publish.xml 中对应条目即可。
+
+## 回归测试
+在项目根目录执行 `make test-registration`，使用临时用户目录测试注册，不需要 WPS 或桌面会话，也不会修改当前用户的 WPS 配置。
