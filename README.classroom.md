@@ -9,7 +9,7 @@ sudo dpkg -i sidera_2.6-Geo-stable_arm64.deb    # arm64 教室机
 ## 无需手动配置项（本包已自动处理）
 - 调试模式默认开启（重启后仍保持）；可在 设置→WPS 接口调试 关闭，状态会保存。
 - 首次以调试模式运行时，会**自动把加载项写入当前用户** `~/.local/share/Kingsoft/wps/jsaddons/publish.xml`
-  （已有文件只插入本加载项，不影响其它项）。
+  （已有文件只插入本加载项，不影响其它项；文件为空、损坏或无法读取时保留原文件并记录错误）。
 - app 内「开机自启动」开启后：登录即起服务（127.0.0.1:16666），WPS 加载项内容由此服务提供。
 
 ## 使用顺序（每节课）
@@ -21,7 +21,7 @@ sudo dpkg -i sidera_2.6-Geo-stable_arm64.deb    # arm64 教室机
 ```bash
 sudo dpkg -r sidera
 # 如需清掉加载项登记：删除 ~/.local/share/Kingsoft/wps/jsaddons/publish.xml 中
-# sidera-bridge 对应条目（或整个文件）。
+# sidera-bridge 对应条目，保留其它加载项的登记。
 ```
 
 ## 日志

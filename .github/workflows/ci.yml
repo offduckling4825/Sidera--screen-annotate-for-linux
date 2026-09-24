@@ -35,3 +35,6 @@ jobs:
         run: |
           test -f annotate_amd64
           echo "annotate_amd64 built successfully."
+
+      - name: Verify WPS registration preserves existing XML
+        run: make test-registration

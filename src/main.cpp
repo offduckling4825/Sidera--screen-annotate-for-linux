@@ -1,5 +1,6 @@
 // Sidera - 程序入口
 // Copyright (C) 2026 Carl_Jin   GNU GPL v3
+#include "wps_registration.h"
 #include "app.h"
 #include "widget.h"
 
@@ -70,6 +71,19 @@ static void processX11Hotkeys() {
 // 13. main
 // ============================================================
 int main(int argc, char* argv[]) {
+  // 安装脚本共用注册逻辑；不启动 GUI，也不受已运行实例影响。
+  if (argc == 2 && QString::fromLocal8Bit(argv[1]) == "--register-wps-addin") {
+    QCoreApplication app(argc, argv);
+    QString error;
+    const QString path = WpsRegistration::registryPath();
+    const auto result = WpsRegistration::registerAddin(path, &error);
+    if (result == WpsRegistration::Result::Failed) {
+      qCritical().noquote() << "加载项登记失败：" << error << "→" << path;
+      return 1;
+    }
+    qInfo().noquote() << (result == WpsRegistration::Result::Added ? "已登记加载项：" : "加载项已登记：") << path;
+    return 0;
+  }
   setupSoftwareRendering();
   QCoreApplication::setAttribute(Qt::AA_CompressHighFrequencyEvents, false); // 触摸/鼠标移动不压缩，绘制更顺
   QApplication app(argc, argv);
