@@ -886,8 +886,10 @@ pub(crate) fn handle_touch(
             ip.touch_ids.insert(id);
             if over_ui(app, x, y) {
                 ip.touch_over_ui.insert(id, true);
-                on_press(rt, app, ip, wps, x, y, 1);
+                // 先清掉陈旧拖动状态，再交给 on_press：命中侧栏空白会置 dragging=true，
+                // 命中按钮/滑条则不会，从而保留触屏拖动侧边栏的能力。
                 ip.dragging = false;
+                on_press(rt, app, ip, wps, x, y, 1);
             } else {
                 ip.touch_over_ui.insert(id, false);
                 if let Some(_r) = gesture::touch_event(app, id, x, y, TouchKind::Begin, diameter) {
@@ -901,6 +903,9 @@ pub(crate) fn handle_touch(
                 return;
             }
             if ip.touch_over_ui.get(&id).copied().unwrap_or(false) {
+                if ip.dragging {
+                    on_motion(rt, app, ip, x, y);
+                }
                 return;
             }
             if over_ui(app, x, y) {
@@ -919,12 +924,26 @@ pub(crate) fn handle_touch(
                 app::save_settings(app);
             }
             if over {
+                if ip.dragging {
+                    on_release(rt, app, ip, x, y);
+                }
                 return;
             }
             if let Some(r) = gesture::touch_event(app, id, x, y, TouchKind::End, 0.0) {
                 rt.redraw(app, r);
             }
         }
+    }
+}
+
+/// X11 事件坐标是物理像素，需换算成逻辑像素；Wayland 事件本就是逻辑坐标（比例为 1）
+#[inline]
+fn to_logical(rt: &Rt, v: i32) -> i32 {
+    let s = rt.backend.device_pixel_ratio();
+    if s <= 0.0 {
+        v
+    } else {
+        (v as f64 / s).round() as i32
     }
 }
 
@@ -947,15 +966,35 @@ fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev
             if std::env::var("SIDERA_TRACE").is_ok() {
                 log::info!("[BTN] at ({},{}) detail={}", e.event_x, e.event_y, e.detail);
             }
-            on_press(rt, app, ip, wps, e.event_x as i32, e.event_y as i32, e.detail)
+            on_press(
+                rt,
+                app,
+                ip,
+                wps,
+                to_logical(rt, e.event_x as i32),
+                to_logical(rt, e.event_y as i32),
+                e.detail,
+            )
         }
         Event::MotionNotify(e) => {
             if std::env::var("SIDERA_TRACE").is_ok() {
                 log::info!("[MOTION] ({},{})", e.event_x, e.event_y);
             }
-            on_motion(rt, app, ip, e.event_x as i32, e.event_y as i32)
+            on_motion(
+                rt,
+                app,
+                ip,
+                to_logical(rt, e.event_x as i32),
+                to_logical(rt, e.event_y as i32),
+            )
         }
-        Event::ButtonRelease(e) => on_release(rt, app, ip, e.event_x as i32, e.event_y as i32),
+        Event::ButtonRelease(e) => on_release(
+            rt,
+            app,
+            ip,
+            to_logical(rt, e.event_x as i32),
+            to_logical(rt, e.event_y as i32),
+        ),
         Event::LeaveNotify(_) => {
             if app.hover.is_some() {
                 app.hover = None;
@@ -990,8 +1029,8 @@ fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev
             ip.touch_shape.remove(&(e.detail as i32));
         }
         Event::XinputTouchBegin(e) => {
-            let x = (e.event_x as f64 / 65536.0).round() as i32;
-            let y = (e.event_y as f64 / 65536.0).round() as i32;
+            let x = to_logical(rt, (e.event_x as f64 / 65536.0).round() as i32);
+            let y = to_logical(rt, (e.event_y as f64 / 65536.0).round() as i32);
             let d = ip.touch_shape.get(&(e.detail as i32)).copied().unwrap_or_else(|| {
                 rt.backend
                     .as_any()
@@ -1002,8 +1041,8 @@ fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev
             handle_touch(rt, app, ip, wps, e.detail as i32, x, y, TouchKind::Begin, d);
         }
         Event::XinputTouchUpdate(e) => {
-            let x = (e.event_x as f64 / 65536.0).round() as i32;
-            let y = (e.event_y as f64 / 65536.0).round() as i32;
+            let x = to_logical(rt, (e.event_x as f64 / 65536.0).round() as i32);
+            let y = to_logical(rt, (e.event_y as f64 / 65536.0).round() as i32);
             let d = ip.touch_shape.get(&(e.detail as i32)).copied().unwrap_or_else(|| {
                 rt.backend
                     .as_any()
@@ -1014,8 +1053,8 @@ fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev
             handle_touch(rt, app, ip, wps, e.detail as i32, x, y, TouchKind::Update, d);
         }
         Event::XinputTouchEnd(e) => {
-            let x = (e.event_x as f64 / 65536.0).round() as i32;
-            let y = (e.event_y as f64 / 65536.0).round() as i32;
+            let x = to_logical(rt, (e.event_x as f64 / 65536.0).round() as i32);
+            let y = to_logical(rt, (e.event_y as f64 / 65536.0).round() as i32);
             handle_touch(rt, app, ip, wps, e.detail as i32, x, y, TouchKind::End, 0.0);
         }
         _ => {}
@@ -1252,7 +1291,17 @@ fn main() {
             return;
         }
     };
-    log::info!("[INFO] 平台: x11  屏幕 {}x{}", x11.width, x11.height);
+    let scale = x11.detect_scale();
+    let logical_w = ((x11.width as f64) / scale).round().max(1.0) as i32;
+    let logical_h = ((x11.height as f64) / scale).round().max(1.0) as i32;
+    log::info!(
+        "[INFO] 平台: x11  屏幕 {}x{} (物理 {}x{})  缩放 {}",
+        logical_w,
+        logical_h,
+        x11.width,
+        x11.height,
+        scale
+    );
 
     let (win, gc) = match x11.create_overlay() {
         Ok(v) => v,
@@ -1282,8 +1331,10 @@ fn main() {
 
     let mut canvas = Pixmap::new(x11.width as u32, x11.height as u32).unwrap();
     canvas.fill(tiny_skia::Color::TRANSPARENT);
-    let mut app = App::new(canvas, x11.width, x11.height);
+    let mut app = App::new(canvas, logical_w, logical_h);
     app::load_settings(&mut app);
+    // X11 DPI 缩放：逻辑尺寸 × scale = 物理分辨率画布
+    app.set_scale(scale);
     // 环境变量仅本次运行覆盖（不落盘），与 C++ 版一致
     if let Ok(v) = std::env::var("WPS_API_DEBUG") {
         app.wps_debug = v == "1";
@@ -1296,6 +1347,7 @@ fn main() {
         icon,
         icon_big,
     };
+    rt.backend.set_scale(scale);
 
     let xp = rt
         .backend

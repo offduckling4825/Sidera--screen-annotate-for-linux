@@ -2,7 +2,7 @@
 # ============================================================
 # Rust 版 Sidera DEB 打包脚本
 #   用法: ./build_deb.sh [amd64|aarch64]
-#   产物: <repo>/sidera_Electro-rust-testing_<amd64|arm64>.deb
+#   产物: <repo>/sidera_3.0-Electro-testing_<amd64|arm64>.deb
 #
 # 依赖：dpkg-deb（Debian/Ubuntu 自带）
 # 前置：先用 ./build_container.sh <arch> 编译出二进制
@@ -25,9 +25,9 @@ case "$ARG" in
 esac
 
 PKG_NAME="sidera"
-# 注意：dpkg 要求 Version 以数字开头，纯 "Electro-rust-testing" 会被拒绝，
-# 因此加 "2-" 前缀；如需改数字只改这里即可。
-VERSION="2-Electro-rust-testing"
+# 注意：dpkg 要求 Version 以数字开头，故采用 "3.0-Electro-testing"；
+# 如需改版本只改这里即可。
+VERSION="3.0-Electro-testing"
 
 # 优先容器构建产物，其次普通 release
 BIN="$HERE/target/container-$SRC_ARCH/release/sidera"

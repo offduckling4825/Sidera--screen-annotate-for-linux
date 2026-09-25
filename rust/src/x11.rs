@@ -13,7 +13,7 @@ use x11rb::protocol::xproto::{
 use x11rb::protocol::xinput::{self, DeviceClassData, Fp3232};
 use x11rb::protocol::xtest;
 use x11rb::rust_connection::RustConnection;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 pub type XResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -343,6 +343,60 @@ impl X11 {
         true
     }
 
+    /// 检测 X11 设备缩放（逻辑像素 → 物理像素的比例）。
+    /// 优先 SIDERA_SCALE 覆盖，其次根窗口 Xft.dpi，再退回 QT/GDK 环境变量。
+    pub fn detect_scale(&self) -> f64 {
+        if let Ok(v) = std::env::var("SIDERA_SCALE") {
+            if let Ok(f) = v.parse::<f64>() {
+                if f > 0.1 {
+                    return f.clamp(1.0, 4.0);
+                }
+            }
+        }
+        if let Ok(dpi) = self.xft_dpi() {
+            if dpi > 1.0 {
+                return (dpi / 96.0).clamp(1.0, 4.0);
+            }
+        }
+        for key in ["QT_SCALE_FACTOR", "GDK_SCALE"] {
+            if let Ok(v) = std::env::var(key) {
+                if let Ok(f) = v.parse::<f64>() {
+                    if f > 0.1 {
+                        return f.clamp(1.0, 4.0);
+                    }
+                }
+            }
+        }
+        1.0
+    }
+
+    /// 读取根窗口 RESOURCE_MANAGER 里的 Xft.dpi
+    fn xft_dpi(&self) -> Result<f64, Box<dyn std::error::Error>> {
+        let atom = xproto::intern_atom(&self.conn, true, b"RESOURCE_MANAGER")?
+            .reply()?
+            .atom;
+        let prop = xproto::get_property(
+            &self.conn,
+            false,
+            self.root,
+            atom,
+            AtomEnum::STRING,
+            0,
+            4096,
+        )?
+        .reply()?;
+        let text = String::from_utf8_lossy(&prop.value);
+        for line in text.lines() {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix("Xft.dpi:") {
+                if let Ok(f) = rest.trim().parse::<f64>() {
+                    return Ok(f);
+                }
+            }
+        }
+        Err("Xft.dpi not set".into())
+    }
+
     pub fn has_compositor(&self) -> bool {
         if let Ok(cookie) = xproto::get_selection_owner(&self.conn, self.net_wm_cm) {
             if let Ok(reply) = cookie.reply() {
@@ -497,6 +551,7 @@ pub struct X11Plat {
     pub x11: X11,
     pub win: Window,
     pub gc: Gcontext,
+    scale: Cell<f64>,
     touch_axis: RefCell<HashMap<u8, TouchAxis>>,
 }
 
@@ -514,6 +569,7 @@ impl X11Plat {
             x11,
             win,
             gc,
+            scale: Cell::new(1.0),
             touch_axis: RefCell::new(HashMap::new()),
         }
     }
@@ -531,12 +587,14 @@ impl X11Plat {
         let Some(mv) = fp_value(mask, values, mi) else {
             return 0.0;
         };
-        let scale = if axis.posx_max > axis.posx_min {
+        let axis_scale = if axis.posx_max > axis.posx_min {
             (self.x11.width as f64) / (axis.posx_max - axis.posx_min)
         } else {
             1.0
         };
-        (mv * scale).clamp(0.0, 4096.0)
+        // axis_scale 把 valuator 值换算成物理像素；再除以设备缩放得到逻辑像素直径
+        let physical = (mv * axis_scale).clamp(0.0, 4096.0);
+        physical / self.scale.get().max(0.001)
     }
 
     fn load_touch_axis(&self, devid: u8) -> TouchAxis {
@@ -605,19 +663,27 @@ impl crate::backend::Backend for X11Plat {
         self
     }
     fn screen_size(&self) -> (i32, i32) {
-        (self.x11.width, self.x11.height)
+        let sc = self.scale.get().max(0.001);
+        (
+            ((self.x11.width as f64) / sc).round() as i32,
+            ((self.x11.height as f64) / sc).round() as i32,
+        )
     }
     fn present(&self, pm: &tiny_skia::Pixmap, x: i32, y: i32) {
-        let _ = self.x11.put_pixmap(self.win, self.gc, pm, x, y);
+        let sc = self.scale.get();
+        let px = ((x as f64) * sc).round() as i32;
+        let py = ((y as f64) * sc).round() as i32;
+        let _ = self.x11.put_pixmap(self.win, self.gc, pm, px, py);
     }
     fn set_input_region(&self, rects: &[crate::backend::IRect], full: bool) {
+        let sc = self.scale.get();
         let xr: Vec<Rectangle> = rects
             .iter()
             .map(|r| Rectangle {
-                x: r.x as i16,
-                y: r.y as i16,
-                width: r.w.max(0) as u16,
-                height: r.h.max(0) as u16,
+                x: ((r.x as f64) * sc).round() as i16,
+                y: ((r.y as f64) * sc).round() as i16,
+                width: (((r.w as f64) * sc).round() as i32).max(0) as u16,
+                height: (((r.h as f64) * sc).round() as i32).max(0) as u16,
             })
             .collect();
         let _ = self.x11.set_input_shape(self.win, &xr, full);
@@ -632,7 +698,11 @@ impl crate::backend::Backend for X11Plat {
         self.x11.fake_key(kc);
     }
     fn virtual_right_click(&self, x: i32, y: i32) {
-        self.x11.virtual_right_click(x, y);
+        let sc = self.scale.get();
+        self.x11.virtual_right_click(
+            ((x as f64) * sc).round() as i32,
+            ((y as f64) * sc).round() as i32,
+        );
     }
     fn screenshot(&self) -> Option<(Vec<u8>, u32, u32)> {
         self.x11.screenshot()
@@ -648,6 +718,12 @@ impl crate::backend::Backend for X11Plat {
     }
     fn grab_hotkey(&self) -> bool {
         self.x11.grab_hotkey()
+    }
+    fn set_scale(&self, s: f64) {
+        self.scale.set(s.clamp(1.0, 4.0));
+    }
+    fn device_pixel_ratio(&self) -> f64 {
+        self.scale.get()
     }
     fn show_splash(&self, fonts: &crate::text::Fonts, icon: Option<&tiny_skia::Pixmap>, dur_ms: u64) {
         crate::splash::show(&self.x11, fonts, icon, dur_ms);

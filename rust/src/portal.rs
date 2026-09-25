@@ -38,7 +38,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     let mut found_uri: Option<String> = None;
-    for msg in req.receive_signal("Response")? {
+    if let Some(msg) = req.receive_signal("Response")?.next() {
         let body = msg.body();
         let (code, results): (u32, HashMap<String, Value>) = body.deserialize()?;
         if code == 0 {
@@ -46,7 +46,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 found_uri = Some(uri.to_string());
             }
         }
-        break;
     }
 
     let Some(uri) = found_uri else {

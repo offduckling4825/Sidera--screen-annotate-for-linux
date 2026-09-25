@@ -173,11 +173,12 @@ impl WlPlat {
             }
             return;
         }
-        self.dims.set((pw, ph));
         let frame_bytes = (pw as usize) * (ph as usize) * 4;
         if self.raw.borrow_mut().resize(2 * frame_bytes).is_err() {
+            // 池扩容失败：保持旧 dims，避免后续 flush 用新尺寸索引旧 mmap 越界
             return;
         }
+        self.dims.set((pw, ph));
         for i in 0..2 {
             if let Some(b) = self.bufs.borrow_mut()[i].take() {
                 b.destroy();

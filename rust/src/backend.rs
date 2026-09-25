@@ -56,8 +56,13 @@ pub trait Backend: 'static {
     fn show_splash(&self, fonts: &crate::text::Fonts, icon: Option<&Pixmap>, dur_ms: u64);
     /// 窗口尺寸变化（Wayland layer 配置回调），逻辑尺寸
     fn on_configure(&self, _w: i32, _h: i32) {}
-    /// 设备缩放变化（Wayland fractional scale）
+    /// 设备缩放变化（X11 DPI / Wayland fractional scale）
     fn set_scale(&self, _scale: f64) {}
+    /// 逻辑像素 → 物理像素的比例；用于把事件坐标从物理换算回逻辑。
+    /// Wayland 事件本身就是逻辑坐标，故默认 1.0；X11 在 DPI 缩放下 >1。
+    fn device_pixel_ratio(&self) -> f64 {
+        1.0
+    }
     /// 把累积的脏区域上屏（Wayland 用，X11 即时上屏故默认空实现）
     fn flush(&self) {}
 }

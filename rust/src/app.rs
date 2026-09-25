@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use tiny_skia::{Color, Pixmap};
 
 // ---------------- 常量（与原 C++ app.h 对齐） ----------------
-pub const VERSION: &str = "Electro-rust-testing";
+pub const VERSION: &str = "3.0-Electro-testing";
 // 侧边栏基准尺寸（比 C++ 版放大，便于看清文字 / 触摸点击）
 pub const SB_BASE_W: f64 = 72.0;
 pub const SB_BASE_BTN: f64 = 48.0;

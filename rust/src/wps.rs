@@ -5,6 +5,7 @@
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -41,6 +42,19 @@ impl Default for WpsShared {
 
 pub struct WpsBridge {
     pub shared: Arc<Mutex<WpsShared>>,
+    shutdown: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for WpsBridge {
+    fn drop(&mut self) {
+        // 通知服务线程退出并等待其结束，确保 16666 端口被释放，
+        // 否则关闭 WPS 调试后再打开会因端口被旧线程占用而无法重新绑定。
+        self.shutdown.store(true, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
 }
 
 pub fn log_file() -> std::path::PathBuf {
@@ -325,15 +339,27 @@ fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>) {
 impl WpsBridge {
     pub fn start() -> Option<WpsBridge> {
         let listener = TcpListener::bind(("127.0.0.1", 16666)).ok()?;
+        let _ = listener.set_nonblocking(true);
         let shared = Arc::new(Mutex::new(WpsShared::default()));
+        let shutdown = Arc::new(AtomicBool::new(false));
         let s2 = shared.clone();
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                if let Ok(mut st) = stream {
-                    let _ = st.set_read_timeout(Some(Duration::from_secs(2)));
-                    handle_conn(&mut st, &s2);
+        let sd = shutdown.clone();
+        let handle = std::thread::spawn(move || {
+            while !sd.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut st, _)) => {
+                        let _ = st.set_read_timeout(Some(Duration::from_secs(1)));
+                        handle_conn(&mut st, &s2);
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
                 }
             }
+            // listener 随线程结束被 drop，端口在此释放
         });
         wps_log("WPS 桥已启动，监听 127.0.0.1:16666");
         match addin_dir() {
@@ -341,7 +367,11 @@ impl WpsBridge {
             None => wps_log("警告: 未找到 wps-addin 目录，静态分发将返回空（请设置 WPS_ADDIN_DIR）"),
         }
         ensure_addin_registered();
-        Some(WpsBridge { shared })
+        Some(WpsBridge {
+            shared,
+            shutdown,
+            handle: Some(handle),
+        })
     }
 
     pub fn connected(&self) -> bool {
@@ -442,5 +472,13 @@ mod tests {
                 "静态 manifest 分发异常: {m:?}"
             );
         }
+
+        // 回归：关闭后必须能重新绑定 16666（Drop 需停止线程并释放端口）
+        drop(bridge);
+        let restarted = WpsBridge::start();
+        assert!(
+            restarted.is_some(),
+            "关闭 WPS 桥后无法重新启动：端口/线程未释放"
+        );
     }
 }

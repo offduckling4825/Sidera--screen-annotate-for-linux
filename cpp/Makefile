@@ -36,53 +36,56 @@ endif
 C_OBJS   = $(WL_C:.c=.o)
 CPP_OBJS = $(CPP_SRC:.cpp=.o)
 
-all: annotate_amd64
+# 输出文件名（在 aarch64 容器里用 make OUT=annotate_aarch64）
+OUT ?= annotate_amd64
 
-build/wlr-layer-shell-unstable-v1-client-protocol.h: protocols/wlr-layer-shell-unstable-v1.xml
+all: $(OUT)
+
+build/wlr-layer-shell-unstable-v1-client-protocol.h: ../protocols/wlr-layer-shell-unstable-v1.xml
 	@mkdir -p build
 	$(WL_SCANNER) client-header $< $@
 
-build/wlr-layer-shell-unstable-v1-protocol.c: protocols/wlr-layer-shell-unstable-v1.xml
+build/wlr-layer-shell-unstable-v1-protocol.c: ../protocols/wlr-layer-shell-unstable-v1.xml
 	@mkdir -p build
 	$(WL_SCANNER) private-code $< $@
 
-build/xdg-shell-client-protocol.h: protocols/xdg-shell.xml
+build/xdg-shell-client-protocol.h: ../protocols/xdg-shell.xml
 	@mkdir -p build
 	$(WL_SCANNER) client-header $< $@
 
-build/xdg-shell-protocol.c: protocols/xdg-shell.xml
+build/xdg-shell-protocol.c: ../protocols/xdg-shell.xml
 	@mkdir -p build
 	$(WL_SCANNER) private-code $< $@
 
-build/fractional-scale-v1-client-protocol.h: protocols/fractional-scale-v1.xml
+build/fractional-scale-v1-client-protocol.h: ../protocols/fractional-scale-v1.xml
 	@mkdir -p build
 	$(WL_SCANNER) client-header $< $@
 
-build/fractional-scale-v1-protocol.c: protocols/fractional-scale-v1.xml
+build/fractional-scale-v1-protocol.c: ../protocols/fractional-scale-v1.xml
 	@mkdir -p build
 	$(WL_SCANNER) private-code $< $@
 
-build/viewporter-client-protocol.h: protocols/viewporter.xml
+build/viewporter-client-protocol.h: ../protocols/viewporter.xml
 	@mkdir -p build
 	$(WL_SCANNER) client-header $< $@
 
-build/viewporter-protocol.c: protocols/viewporter.xml
+build/viewporter-protocol.c: ../protocols/viewporter.xml
 	@mkdir -p build
 	$(WL_SCANNER) private-code $< $@
 
-build/virtual-keyboard-unstable-v1-client-protocol.h: protocols/virtual-keyboard-unstable-v1.xml
+build/virtual-keyboard-unstable-v1-client-protocol.h: ../protocols/virtual-keyboard-unstable-v1.xml
 	@mkdir -p build
 	$(WL_SCANNER) client-header $< $@
 
-build/virtual-keyboard-unstable-v1-protocol.c: protocols/virtual-keyboard-unstable-v1.xml
+build/virtual-keyboard-unstable-v1-protocol.c: ../protocols/virtual-keyboard-unstable-v1.xml
 	@mkdir -p build
 	$(WL_SCANNER) private-code $< $@
 
-build/wlr-screencopy-unstable-v1-client-protocol.h: protocols/wlr-screencopy-unstable-v1.xml
+build/wlr-screencopy-unstable-v1-client-protocol.h: ../protocols/wlr-screencopy-unstable-v1.xml
 	@mkdir -p build
 	$(WL_SCANNER) client-header $< $@
 
-build/wlr-screencopy-unstable-v1-protocol.c: protocols/wlr-screencopy-unstable-v1.xml
+build/wlr-screencopy-unstable-v1-protocol.c: ../protocols/wlr-screencopy-unstable-v1.xml
 	@mkdir -p build
 	$(WL_SCANNER) private-code $< $@
 
@@ -92,7 +95,7 @@ build/wlr-screencopy-unstable-v1-protocol.c: protocols/wlr-screencopy-unstable-v
 %.o: %.c
 	$(CC) -O2 -fPIC -c $< -o $@
 
-annotate_amd64: $(CPP_OBJS) $(C_OBJS)
+$(OUT): $(CPP_OBJS) $(C_OBJS)
 	$(CXX) $(CPP_OBJS) $(C_OBJS) $(QTLIBS) $(LIBS) -o $@
 
 clean:
