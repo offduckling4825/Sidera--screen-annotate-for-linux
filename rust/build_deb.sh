@@ -68,6 +68,24 @@ cp "$REPO/sidera.svg" "$PKG_DIR/usr/share/icons/hicolor/scalable/apps/sidera.svg
 cp "$REPO/sidera.svg" "$PKG_DIR/usr/share/pixmaps/sidera.svg"
 cp "$REPO/sidera.png" "$PKG_DIR/usr/share/icons/hicolor/256x256/apps/sidera.png"
 
+# ---------- uinput 权限（KWin 等无虚拟键盘协议时，用内核虚拟键盘发翻页键）----------
+mkdir -p "$PKG_DIR/lib/udev/rules.d" "$PKG_DIR/etc/modules-load.d"
+cat > "$PKG_DIR/lib/udev/rules.d/70-sidera-uinput.rules" << 'EOF'
+# Sidera: 允许当前登录用户访问 /dev/uinput（用于注入翻页/退出按键）
+KERNEL=="uinput", TAG+="uaccess", OPTIONS+="static_node=uinput"
+EOF
+echo "uinput" > "$PKG_DIR/etc/modules-load.d/sidera-uinput.conf"
+
+cat > "$PKG_DIR/DEBIAN/postinst" << 'EOF'
+#!/bin/sh
+set -e
+modprobe uinput 2>/dev/null || true
+udevadm control --reload-rules 2>/dev/null || true
+udevadm trigger --name-match=uinput 2>/dev/null || true
+exit 0
+EOF
+chmod 755 "$PKG_DIR/DEBIAN/postinst"
+
 # ---------- DEBIAN/control ----------
 cat > "$PKG_DIR/DEBIAN/control" << EOF
 Package: ${PKG_NAME}

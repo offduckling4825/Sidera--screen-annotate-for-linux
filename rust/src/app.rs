@@ -9,6 +9,11 @@ use tiny_skia::{Color, Pixmap};
 
 // ---------------- 常量（与原 C++ app.h 对齐） ----------------
 pub const VERSION: &str = "Electro-rust-testing";
+// 侧边栏基准尺寸（比 C++ 版放大，便于看清文字 / 触摸点击）
+pub const SB_BASE_W: f64 = 72.0;
+pub const SB_BASE_BTN: f64 = 48.0;
+pub const SB_BASE_ICON: f64 = 32.0;
+pub const SB_BASE_DOT: f64 = 24.0;
 pub const MAX_UNDO: usize = 12;
 pub const CACHE_WPS: i32 = 20;
 pub const CACHE_BOARD: i32 = 10;
@@ -61,6 +66,13 @@ pub struct App {
     pub more_menu_open: bool,
     pub settings_open: bool,
     pub popup_on_right: bool,
+
+    // 悬停高亮 / 弹窗淡入动画 / 设置里的确认与诊断
+    pub hover: Option<(crate::ui::Btn, bool)>,
+    pub open_anim: i64,
+    pub confirm_quit: bool,
+    pub show_diag: bool,
+    pub diag_text: String,
 
     // 白板
     pub whiteboard: bool,
@@ -120,6 +132,9 @@ pub struct App {
     pub t_begin_pos: (i32, i32),
     pub t_begin_role: i32,
 
+    // 进行中的画笔笔画（采样点 x,y,宽度），松手时一次性提交，保证边缘平滑
+    pub stroke_pts: Vec<(f32, f32, f32)>,
+
     // 撤回栈（原始 RGBA 快照）
     pub undo: VecDeque<Vec<u8>>,
 
@@ -127,6 +142,8 @@ pub struct App {
     pub canvas: Pixmap,
     pub screen_w: i32,
     pub screen_h: i32,
+    /// 设备缩放（Wayland fractional scale）；逻辑坐标 → 物理像素 = *scale
+    pub scale: f64,
 
     // 撤销/调试提示：设置面板里“清空日志”反馈
     pub log_cleared_until: i64,
@@ -147,6 +164,11 @@ impl App {
             more_menu_open: false,
             settings_open: false,
             popup_on_right: false,
+            hover: None,
+            open_anim: 0,
+            confirm_quit: false,
+            show_diag: false,
+            diag_text: String::new(),
             whiteboard: false,
             whiteboard_bg_index: 1,
             collapsed: false,
@@ -185,26 +207,51 @@ impl App {
             t_moved: false,
             t_begin_pos: (0, 0),
             t_begin_role: 0,
+            stroke_pts: Vec::new(),
             undo: VecDeque::new(),
             canvas,
             screen_w,
             screen_h,
+            scale: 1.0,
             log_cleared_until: 0,
         }
     }
 
+    pub fn canvas_w(&self) -> u32 {
+        ((self.screen_w as f64) * self.scale).round().max(1.0) as u32
+    }
+    pub fn canvas_h(&self) -> u32 {
+        ((self.screen_h as f64) * self.scale).round().max(1.0) as u32
+    }
+    fn rebuild_canvas(&mut self) {
+        self.canvas = Pixmap::new(self.canvas_w(), self.canvas_h()).unwrap();
+        self.canvas.fill(Color::TRANSPARENT);
+        self.stroke_pts.clear();
+        self.page_has_ink = false;
+        self.clear_undo();
+    }
+    /// 设置设备缩放（改变时重建物理分辨率画布）
+    pub fn set_scale(&mut self, s: f64) {
+        let s = s.clamp(1.0, 4.0);
+        if (self.scale - s).abs() < 1e-3 {
+            return;
+        }
+        self.scale = s;
+        self.rebuild_canvas();
+    }
+
     // ---- 侧边栏尺寸 ----
     pub fn sb_width(&self) -> i32 {
-        (56.0 * self.sb_scale) as i32
+        (SB_BASE_W * self.sb_scale) as i32
     }
     pub fn sb_btn(&self) -> i32 {
-        (34.0 * self.sb_scale) as i32
+        (SB_BASE_BTN * self.sb_scale) as i32
     }
     pub fn sb_icon(&self) -> i32 {
-        (24.0 * self.sb_scale) as i32
+        (SB_BASE_ICON * self.sb_scale) as i32
     }
     pub fn sb_dot(&self) -> i32 {
-        (19.0 * self.sb_scale) as i32
+        (SB_BASE_DOT * self.sb_scale) as i32
     }
     pub fn sb_height(&self) -> i32 {
         // 22 + 11 个按钮 + 10 个间距(6)
@@ -275,9 +322,22 @@ impl App {
 
     // ---- 画布 ----
     pub fn clear_canvas(&mut self) {
+        self.stroke_pts.clear();
         self.canvas.fill(Color::TRANSPARENT);
         self.page_has_ink = false;
         self.clear_undo();
+    }
+
+    /// 屏幕尺寸变化：重建画布并重置相关状态
+    pub fn resize_screen(&mut self, w: i32, h: i32) {
+        if w <= 0 || h <= 0 || (self.screen_w == w && self.screen_h == h) {
+            return;
+        }
+        self.screen_w = w;
+        self.screen_h = h;
+        self.rebuild_canvas();
+        let sbh = if self.collapsed { self.collapsed_h() } else { self.sb_height() };
+        self.sb_y = ((h - sbh) / 2).clamp(0, (h - sbh).max(0));
     }
 
     // ---- 当前生效缓存 ----
@@ -299,8 +359,10 @@ impl App {
 
     pub fn save_current_page(&mut self) {
         if !self.page_has_ink {
+            crate::wps::wps_log(&format!("[PAGE] save 跳过 page={} (无笔迹)", self.current_slide));
             return;
         }
+        crate::wps::wps_log(&format!("[PAGE] save page={}", self.current_slide));
         let cap = self.cache_capacity();
         let slide = self.current_slide;
         if self.whiteboard {
@@ -330,6 +392,13 @@ impl App {
     }
 
     pub fn load_page(&mut self, page: i32) {
+        let cached = if self.whiteboard {
+            self.whiteboard_cache.get(&page).is_some()
+        } else {
+            self.slide_cache.get(&page).is_some()
+        };
+        crate::wps::wps_log(&format!("[PAGE] load page={} has_cache={}", page, cached));
+        self.stroke_pts.clear();
         self.canvas.fill(Color::TRANSPARENT);
         let cached = if self.whiteboard {
             self.whiteboard_cache.get(&page)
@@ -348,6 +417,8 @@ impl App {
     }
 
     pub fn clear_all_pages(&mut self) {
+        crate::wps::wps_log("[PAGE] clear_all_pages");
+        self.stroke_pts.clear();
         self.slide_cache.clear();
         self.whiteboard_cache.clear();
         self.current_slide = 1;
@@ -358,6 +429,7 @@ impl App {
     }
 
     pub fn clear_current_strokes(&mut self) {
+        self.stroke_pts.clear();
         if self.whiteboard {
             self.whiteboard_cache.remove(&self.current_slide);
         } else {
@@ -369,6 +441,7 @@ impl App {
     }
 
     pub fn toggle_whiteboard(&mut self) {
+        self.stroke_pts.clear();
         if !self.whiteboard {
             self.save_current_page();
             self.saved_slide = self.current_slide;
@@ -389,7 +462,7 @@ impl App {
 }
 
 pub fn sb_height_of(scale: f64) -> i32 {
-    22 + 11 * (34.0 * scale) as i32 + 60
+    22 + 11 * (SB_BASE_BTN * scale) as i32 + 60
 }
 
 // ---------------- 配置持久化 ~/.config/sidera/config ----------------

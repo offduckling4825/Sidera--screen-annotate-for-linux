@@ -13,6 +13,7 @@ use crate::app::now_ms;
 #[derive(Clone, Debug)]
 pub enum WpsEvent {
     SlideshowBegin(i32),
+    SlideshowEnd,
     RealPos(i32),
 }
 
@@ -78,6 +79,8 @@ fn addin_dir() -> Option<std::path::PathBuf> {
             cands.push(dir.join("../wps-addin"));
             cands.push(dir.join("../../wps-addin"));
             cands.push(dir.join("../../../wps-addin"));
+            cands.push(dir.join("../../../../wps-addin"));
+            cands.push(dir.join("../../../../../wps-addin"));
         }
     }
     cands.push(std::path::PathBuf::from("/usr/share/sidera/wps-addin"));
@@ -91,22 +94,40 @@ pub fn ensure_addin_registered() {
     let path = home.join(".local/share/Kingsoft/wps/jsaddons/publish.xml");
     let entry = "  <jspluginonline name=\"sidera-bridge\" type=\"wpp\" url=\"http://127.0.0.1:16666/\" debug=\"\" enable=\"enable\" install=\"null\"/>\n";
     let content = std::fs::read_to_string(&path).unwrap_or_default();
-    if content.contains("sidera-bridge") || content.contains("screen-annotate-bridge") {
-        return;
+
+    // 去掉旧的 screen-annotate-bridge 条目（它常是 enable_dev，WPS 正常模式不加载）
+    let mut working = content.clone();
+    if working.contains("screen-annotate-bridge") {
+        working = working
+            .lines()
+            .filter(|l| !l.contains("screen-annotate-bridge"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !working.ends_with('\n') {
+            working.push('\n');
+        }
     }
-    let new = if content.contains("<jsplugins>") && content.contains("</jsplugins>") {
-        content.replace("</jsplugins>", &format!("{}</jsplugins>", entry))
+
+    let has_sidera = working.contains("sidera-bridge");
+    let new = if has_sidera {
+        working
+    } else if working.contains("<jsplugins>") && working.contains("</jsplugins>") {
+        working.replace("</jsplugins>", &format!("{}</jsplugins>", entry))
     } else {
         format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<jsplugins>\n{}</jsplugins>\n",
             entry
         )
     };
+
+    if new == content {
+        return;
+    }
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     if std::fs::write(&path, new).is_ok() {
-        wps_log(&format!("已自动登记加载项 → {}", path.display()));
+        wps_log(&format!("已自动登记/规范化加载项 → {}", path.display()));
     }
 }
 
@@ -185,7 +206,7 @@ fn reply_file(stream: &mut TcpStream, path: &str) {
         "text/plain"
     };
     let header = format!(
-        "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: {}; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store, no-cache, must-revalidate\r\nPragma: no-cache\r\nExpires: 0\r\nContent-Type: {}; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         ct,
         body.len()
     );
@@ -216,6 +237,11 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
         let p = if pos > 0 { pos } else { 1 };
         s.real_pos = p;
         s.events.push(WpsEvent::SlideshowBegin(p));
+        return;
+    }
+    if name == "SlideShowEnd" {
+        s.real_pos = -1;
+        s.events.push(WpsEvent::SlideshowEnd);
         return;
     }
     if pos > 0 && pos != s.real_pos {
@@ -287,6 +313,9 @@ fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>) {
                 let mut s = shared.lock().unwrap();
                 s.queue.pop_front()
             };
+            if let Some(c) = &cmd {
+                wps_log(&format!("加载项取走 {}", c));
+            }
             reply(stream, cmd.unwrap_or_default().as_bytes());
         }
         _ => reply_file(stream, path),
@@ -307,6 +336,10 @@ impl WpsBridge {
             }
         });
         wps_log("WPS 桥已启动，监听 127.0.0.1:16666");
+        match addin_dir() {
+            Some(d) => wps_log(&format!("加载项目录: {}", d.display())),
+            None => wps_log("警告: 未找到 wps-addin 目录，静态分发将返回空（请设置 WPS_ADDIN_DIR）"),
+        }
         ensure_addin_registered();
         Some(WpsBridge { shared })
     }
@@ -317,6 +350,7 @@ impl WpsBridge {
 
     pub fn enqueue(&self, cmd: &str) {
         self.shared.lock().unwrap().queue.push_back(cmd.to_string());
+        wps_log(&format!("入队指令 {}", cmd));
     }
 
     pub fn set_whiteboard(&self, on: bool) {
@@ -333,7 +367,7 @@ impl WpsBridge {
         let mut s = self.shared.lock().unwrap();
         if s.connected && now_ms() - s.last_seen > 3000 {
             s.connected = false;
-            s.real_pos = -1;
+            // 不再清 real_pos（避免重连把同页误判为换页）
             drop(s);
             wps_log("客户端离线（3s 无请求）");
             return true;

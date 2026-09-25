@@ -10,8 +10,11 @@ use x11rb::protocol::xproto::{
     CreateWindowAux, Drawable, EventMask, Gcontext, ImageFormat, Keycode, ModMask, Rectangle,
     VisualClass, Window, WindowClass,
 };
+use x11rb::protocol::xinput::{self, DeviceClassData, Fp3232};
 use x11rb::protocol::xtest;
 use x11rb::rust_connection::RustConnection;
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 pub type XResult<T> = Result<T, Box<dyn std::error::Error>>;
 
@@ -37,6 +40,9 @@ pub struct X11 {
     pub key_up: Keycode,
     pub key_down: Keycode,
     pub key_d: Keycode,
+    pub atom_touch_major: Atom,
+    pub atom_touch_minor: Atom,
+    pub atom_pos_x: Atom,
 }
 
 impl X11 {
@@ -71,6 +77,11 @@ impl X11 {
         let net_wm_fullscreen =
             xproto::intern_atom(&conn, false, b"_NET_WM_STATE_FULLSCREEN")?.reply()?.atom;
         let net_wm_cm = xproto::intern_atom(&conn, false, b"_NET_WM_CM_S0")?.reply()?.atom;
+        let atom_touch_major =
+            xproto::intern_atom(&conn, false, b"Abs MT Touch Major")?.reply()?.atom;
+        let atom_touch_minor =
+            xproto::intern_atom(&conn, false, b"Abs MT Touch Minor")?.reply()?.atom;
+        let atom_pos_x = xproto::intern_atom(&conn, false, b"Abs MT Position X")?.reply()?.atom;
 
         let mut x = X11 {
             conn,
@@ -88,6 +99,9 @@ impl X11 {
             key_up: 0,
             key_down: 0,
             key_d: 0,
+            atom_touch_major,
+            atom_touch_minor,
+            atom_pos_x,
         };
         x.key_escape = x.keysym_to_keycode(XK_ESCAPE);
         x.key_up = x.keysym_to_keycode(XK_UP);
@@ -132,6 +146,7 @@ impl X11 {
             | EventMask::BUTTON1_MOTION
             | EventMask::BUTTON3_MOTION
             | EventMask::KEY_PRESS
+            | EventMask::LEAVE_WINDOW
             | EventMask::STRUCTURE_NOTIFY;
         let aux = CreateWindowAux::new()
             .background_pixel(0u32)
@@ -472,5 +487,169 @@ impl X11 {
             .ok()
             .and_then(|c| c.reply().ok())
             .is_some()
+    }
+}
+
+// ============================================================
+// X11 后端实现（Backend trait）
+// ============================================================
+pub struct X11Plat {
+    pub x11: X11,
+    pub win: Window,
+    pub gc: Gcontext,
+    touch_axis: RefCell<HashMap<u8, TouchAxis>>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct TouchAxis {
+    major: Option<u16>,
+    posx: Option<u16>,
+    posx_min: f64,
+    posx_max: f64,
+}
+
+impl X11Plat {
+    pub fn new(x11: X11, win: Window, gc: Gcontext) -> Self {
+        X11Plat {
+            x11,
+            win,
+            gc,
+            touch_axis: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// 由 XI2 触摸事件的 valuator 计算触点直径（像素）
+    pub fn touch_diameter(&self, devid: u8, mask: &[u32], values: &[Fp3232]) -> f64 {
+        if !self.touch_axis.borrow().contains_key(&devid) {
+            let info = self.load_touch_axis(devid);
+            self.touch_axis.borrow_mut().insert(devid, info);
+        }
+        let axis = *self.touch_axis.borrow().get(&devid).unwrap();
+        let Some(mi) = axis.major else {
+            return 0.0;
+        };
+        let Some(mv) = fp_value(mask, values, mi) else {
+            return 0.0;
+        };
+        let scale = if axis.posx_max > axis.posx_min {
+            (self.x11.width as f64) / (axis.posx_max - axis.posx_min)
+        } else {
+            1.0
+        };
+        (mv * scale).clamp(0.0, 4096.0)
+    }
+
+    fn load_touch_axis(&self, devid: u8) -> TouchAxis {
+        let mut a = TouchAxis::default();
+        if let Some(reply) = xinput::xi_query_device(&self.x11.conn, devid)
+            .ok()
+            .and_then(|c| c.reply().ok())
+        {
+            for info in &reply.infos {
+                if info.deviceid as u8 != devid {
+                    continue;
+                }
+                for class in &info.classes {
+                    if let DeviceClassData::Valuator(v) = &class.data {
+                        if v.label == self.x11.atom_touch_major
+                            || v.label == self.x11.atom_touch_minor
+                        {
+                            if a.major.is_none() {
+                                a.major = Some(v.number);
+                            }
+                        } else if v.label == self.x11.atom_pos_x {
+                            a.posx = Some(v.number);
+                            a.posx_min = fp3232_to_f64(v.min);
+                            a.posx_max = fp3232_to_f64(v.max);
+                        }
+                    }
+                }
+            }
+        }
+        log::info!(
+            "[TOUCH] dev {} major_idx={:?} posx={:?} range=({:.0},{:.0})",
+            devid,
+            a.major,
+            a.posx,
+            a.posx_min,
+            a.posx_max
+        );
+        a
+    }
+}
+
+fn fp3232_to_f64(v: Fp3232) -> f64 {
+    v.integral as f64 + (v.frac as f64) / 4294967296.0
+}
+
+/// 从 XI2 valuator_mask/axisvalues 中取指定 valuator 的值
+fn fp_value(mask: &[u32], values: &[Fp3232], idx: u16) -> Option<f64> {
+    let mut k = 0usize;
+    for (i, m) in mask.iter().enumerate() {
+        let mut bits = *m;
+        while bits != 0 {
+            let b = bits.trailing_zeros();
+            let number = (i as u32) * 32 + b;
+            if number as u16 == idx {
+                return values.get(k).map(|v| fp3232_to_f64(*v));
+            }
+            k += 1;
+            bits &= bits - 1;
+        }
+    }
+    None
+}
+
+impl crate::backend::Backend for X11Plat {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn screen_size(&self) -> (i32, i32) {
+        (self.x11.width, self.x11.height)
+    }
+    fn present(&self, pm: &tiny_skia::Pixmap, x: i32, y: i32) {
+        let _ = self.x11.put_pixmap(self.win, self.gc, pm, x, y);
+    }
+    fn set_input_region(&self, rects: &[crate::backend::IRect], full: bool) {
+        let xr: Vec<Rectangle> = rects
+            .iter()
+            .map(|r| Rectangle {
+                x: r.x as i16,
+                y: r.y as i16,
+                width: r.w.max(0) as u16,
+                height: r.h.max(0) as u16,
+            })
+            .collect();
+        let _ = self.x11.set_input_shape(self.win, &xr, full);
+    }
+    fn fake_key(&self, key: crate::backend::Key) {
+        use crate::backend::Key;
+        let kc = match key {
+            Key::Up => self.x11.key_up,
+            Key::Down => self.x11.key_down,
+            Key::Escape => self.x11.key_escape,
+        };
+        self.x11.fake_key(kc);
+    }
+    fn virtual_right_click(&self, x: i32, y: i32) {
+        self.x11.virtual_right_click(x, y);
+    }
+    fn screenshot(&self) -> Option<(Vec<u8>, u32, u32)> {
+        self.x11.screenshot()
+    }
+    fn is_presentation_fullscreen(&self) -> bool {
+        self.x11.is_presentation_fullscreen(self.win)
+    }
+    fn has_compositor(&self) -> bool {
+        self.x11.has_compositor()
+    }
+    fn shape_available(&self) -> bool {
+        self.x11.shape_available()
+    }
+    fn grab_hotkey(&self) -> bool {
+        self.x11.grab_hotkey()
+    }
+    fn show_splash(&self, fonts: &crate::text::Fonts, icon: Option<&tiny_skia::Pixmap>, dur_ms: u64) {
+        crate::splash::show(&self.x11, fonts, icon, dur_ms);
     }
 }

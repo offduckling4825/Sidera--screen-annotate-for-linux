@@ -18,6 +18,17 @@ dirs = "5"
 libc = "0.2"
 log = "0.4"
 env_logger = "0.11"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "unstable", "staging"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+calloop = "0.13"
+calloop-wayland-source = "0.3"
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop"] }
+wayland-scanner = "0.31"
+wayland-backend = "0.3"
+evdev = "0.13.2"
+arboard = "3"
+zbus = "4"
 
 [profile.release]
 opt-level = 2

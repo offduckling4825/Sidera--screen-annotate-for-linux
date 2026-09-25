@@ -35,7 +35,7 @@ fn paint_shader(shader: Shader<'static>) -> Paint<'static> {
     }
 }
 
-fn draw(fonts: &Fonts, icon: Option<&Pixmap>, w: u32, h: u32, progress: u32) -> Pixmap {
+pub fn draw(fonts: &Fonts, icon: Option<&Pixmap>, w: u32, h: u32, progress: u32) -> Pixmap {
     let mut pm = Pixmap::new(w, h).unwrap();
     let fw = w as f32;
     let fh = h as f32;
