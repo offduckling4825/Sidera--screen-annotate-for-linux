@@ -1,0 +1,9 @@
+[package]
+name = "sidera"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+description = "Sidera command-line entry point during the Rust migration"
+
+[dependencies]
+sidera-bridge = { path = "../sidera-bridge" }

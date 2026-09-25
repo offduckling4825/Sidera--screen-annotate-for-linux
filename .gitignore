@@ -22,6 +22,9 @@ qrc_*.cpp
 screen-annotate_*/
 sidera_*/
 
+# ===== Rust build output =====
+target/
+
 # ===== 编辑器 / 系统杂项 =====
 *.swp
 *.swo

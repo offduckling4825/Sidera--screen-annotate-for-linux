@@ -1,0 +1,9 @@
+[package]
+name = "sidera-bridge"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+description = "Dependency-free local HTTP bridge for Sidera and the WPS add-in"
+
+[dependencies]
+sidera-core = { path = "../sidera-core" }
