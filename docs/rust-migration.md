@@ -21,6 +21,7 @@
 - [x] Cargo workspace。
 - [x] `sidera-core`：模式、笔画数据模型、撤回历史、多页缓存、WPS 事件解析。
 - [x] `sidera-bridge`：无第三方运行时依赖的本地 HTTP bridge 和静态加载项服务。
+- [x] bridge 按 3 秒无请求判定 WPS 加载项离线，并清除旧的真实页号。
 - [x] `sidera` CLI：`help`、`diagnose`、`serve`。
 - [x] core/bridge 单元测试与 GitHub Actions 检查。
 - [ ] GUI overlay 尚未迁移；当前 GUI 仍由原 C++/Qt5 程序提供。
@@ -64,3 +65,5 @@ cargo run -p sidera -- serve --port 17666
 ```
 
 M0 的 `serve` 只提供 bridge 和 WPS 加载项静态资源，不绘制屏幕，也不会替换原版 GUI；这是刻意的边界。
+
+白板缓存是一次白板会话内的临时状态：进入白板时保存当前普通/放映页，退出白板时丢弃白板笔迹并恢复原页；白板笔迹不会写入放映页缓存。

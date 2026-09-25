@@ -9,8 +9,8 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, Weak};
+use std::time::{Duration, Instant};
 
 pub const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 16_666;
@@ -171,6 +171,7 @@ impl Bridge {
     }
 
     pub fn serve(&self, listener: TcpListener) -> io::Result<()> {
+        self.start_heartbeat_monitor();
         for incoming in listener.incoming() {
             match incoming {
                 Ok(stream) => {
@@ -185,6 +186,11 @@ impl Bridge {
             }
         }
         Ok(())
+    }
+
+    fn start_heartbeat_monitor(&self) {
+        let state = Arc::downgrade(&self.state);
+        std::thread::spawn(move || heartbeat_loop(state));
     }
 
     fn serve_stream(&self, mut stream: TcpStream) -> io::Result<()> {
@@ -241,6 +247,17 @@ impl Bridge {
             return HttpResponse::text(500, "Internal Server Error", "cannot read file\n");
         };
         HttpResponse::new(200, "OK", content_type(&file_path), body)
+    }
+}
+
+fn heartbeat_loop(state: Weak<Mutex<AnnotationState>>) {
+    loop {
+        std::thread::sleep(Duration::from_secs(1));
+        let Some(state) = state.upgrade() else {
+            return;
+        };
+        let mut state = state.lock().expect("bridge state mutex poisoned");
+        state.expire_bridge_if_stale(Instant::now());
     }
 }
 

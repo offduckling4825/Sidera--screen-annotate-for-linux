@@ -5,11 +5,13 @@
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, VecDeque};
+use std::time::{Duration, Instant};
 
 pub const MAX_UNDO: usize = 12;
 pub const WPS_CACHE_CAPACITY: usize = 20;
 pub const WHITEBOARD_CACHE_CAPACITY: usize = 10;
 pub const OTHER_CACHE_CAPACITY: usize = 2;
+pub const WPS_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -256,6 +258,7 @@ pub struct AnnotationState {
     pub undo: UndoHistory,
     pub wps_connected: bool,
     pub wps_real_position: Option<u32>,
+    wps_last_seen: Option<Instant>,
     commands: VecDeque<Command>,
 }
 
@@ -279,6 +282,7 @@ impl AnnotationState {
             undo: UndoHistory::default(),
             wps_connected: false,
             wps_real_position: None,
+            wps_last_seen: None,
             commands: VecDeque::new(),
         }
     }
@@ -390,11 +394,26 @@ impl AnnotationState {
 
     pub fn mark_bridge_seen(&mut self) {
         self.wps_connected = true;
+        self.wps_last_seen = Some(Instant::now());
     }
 
     pub fn mark_bridge_disconnected(&mut self) {
         self.wps_connected = false;
         self.wps_real_position = None;
+        self.wps_last_seen = None;
+    }
+
+    pub fn expire_bridge_if_stale(&mut self, now: Instant) -> bool {
+        if self.wps_connected
+            && self
+                .wps_last_seen
+                .is_some_and(|last_seen| now.duration_since(last_seen) > WPS_HEARTBEAT_TIMEOUT)
+        {
+            self.mark_bridge_disconnected();
+            true
+        } else {
+            false
+        }
     }
 
     pub fn enqueue(&mut self, command: Command) {
@@ -505,6 +524,42 @@ mod tests {
         state.begin_stroke();
         state.add_stroke(ink(2.0));
         assert!(state.undo_last());
+        assert_eq!(state.current_strokes.len(), 1);
+        assert_eq!(state.current_strokes[0].points[0].x, 1.0);
+    }
+
+    #[test]
+    fn bridge_connection_expires_after_heartbeat_timeout() {
+        let mut state = AnnotationState::new();
+        state.mark_bridge_seen();
+        state.wps_real_position = Some(4);
+        let last_seen = state.wps_last_seen.unwrap();
+
+        assert!(!state.expire_bridge_if_stale(last_seen + WPS_HEARTBEAT_TIMEOUT));
+        assert!(state.wps_connected);
+        assert!(
+            state.expire_bridge_if_stale(
+                last_seen + WPS_HEARTBEAT_TIMEOUT + Duration::from_millis(1)
+            )
+        );
+        assert!(!state.wps_connected);
+        assert_eq!(state.wps_real_position, None);
+    }
+
+    #[test]
+    fn whiteboard_strokes_are_session_local() {
+        let mut state = AnnotationState::new();
+        state.begin_stroke();
+        state.add_stroke(ink(1.0));
+        state.set_whiteboard(true);
+        state.begin_stroke();
+        state.add_stroke(ink(2.0));
+        assert!(state.save_current_page());
+        assert!(state.whiteboard_cache.contains(1));
+
+        state.set_whiteboard(false);
+        assert!(!state.whiteboard);
+        assert!(state.whiteboard_cache.is_empty());
         assert_eq!(state.current_strokes.len(), 1);
         assert_eq!(state.current_strokes[0].points[0].x, 1.0);
     }
