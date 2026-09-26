@@ -33,7 +33,7 @@ VERSION="3.0-Electro-testing"
 BIN="$HERE/target/container-$SRC_ARCH/release/sidera"
 [ -f "$BIN" ] || BIN="$REPO/target/release/sidera"
 if [ ! -f "$BIN" ]; then
-  echo "错误: 找不到 $SRC_ARCH 二进制，请先运行: ./build_container.sh $ARG"
+  echo "错误: 找不到 $SRC_ARCH 二进制，请先运行: ./rust/build_container.sh $ARG"
   exit 1
 fi
 
