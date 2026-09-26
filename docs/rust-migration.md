@@ -16,7 +16,7 @@
 
 ## Milestones
 
-### M0：可编译的 Rust 基础层（当前阶段）
+### M0：可编译的 Rust 基础层
 
 - [x] Cargo workspace。
 - [x] `sidera-core`：模式、笔画数据模型、撤回历史、多页缓存、WPS 事件解析。
@@ -24,7 +24,7 @@
 - [x] bridge 按 3 秒无请求判定 WPS 加载项离线，并清除旧的真实页号。
 - [x] `sidera` CLI：`help`、`diagnose`、`serve`。
 - [x] core/bridge 单元测试与 GitHub Actions 检查。
-- [ ] GUI overlay 尚未迁移；当前 GUI 仍由原 C++/Qt5 程序提供。
+- [x] Rust GUI overlay：X11/Wayland 后端、绘制、输入、侧栏、弹窗、白板和 WPS 联动已进入 `rust/src`。
 
 ### M1：Rust bridge 替换与真实联调
 
@@ -38,7 +38,7 @@
 - 先迁移鼠标画笔/橡皮和撤回，再迁移触摸手势与笔迹渐粗。
 - 建立像素/几何回归样例，避免只验证“能编译”。
 
-### M3：X11 overlay 迁移
+### M3：X11/Wayland overlay 迁移
 
 - 使用 `x11rb` 或经过验证的窗口 toolkit 实现透明置顶窗口。
 - 迁移 XShape 输入区域、XTest、全局快捷键、合成器诊断。
@@ -46,9 +46,9 @@
 
 ### M4：Rust GUI 与发行包
 
-- 迁移侧边栏、弹窗、设置、截图、白板和单实例。
+- [x] 侧边栏、弹窗、设置、截图、白板和单实例已迁移到 Rust GUI。
 - 保留 Debian amd64/arm64 打包与 WPS add-in 安装路径。
-- Rust GUI 通过验收后，才考虑移除旧 C++ 构建路径。
+- Rust GUI 通过 X11/Wayland 实机验收后，再考虑移除旧 C++ 构建路径。
 
 ## 当前阶段如何运行
 
@@ -64,6 +64,6 @@ bridge 默认只监听 `127.0.0.1:16666`。指定端口可用于不影响旧版�
 cargo run -p sidera -- serve --port 17666
 ```
 
-M0 的 `serve` 只提供 bridge 和 WPS 加载项静态资源，不绘制屏幕，也不会替换原版 GUI；这是刻意的边界。
+workspace 中的 `sidera` GUI 已提供 X11/Wayland overlay；`serve` 子命令仍只提供 bridge 和 WPS 加载项静态资源，用于联调和协议测试。
 
 白板缓存是一次白板会话内的临时状态：进入白板时保存当前普通/放映页，退出白板时丢弃白板笔迹并恢复原页；白板笔迹不会写入放映页缓存。

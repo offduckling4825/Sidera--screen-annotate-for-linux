@@ -47,6 +47,7 @@ pub(crate) struct Ip {
     pub(crate) slider: Option<ui::SliderId>,
     // 每个触点的接触尺寸（直径，逻辑像素）：X11 由 raw touch 填，Wayland 由 wl_touch.shape 填
     pub(crate) touch_shape: HashMap<i32, f64>,
+    pub(crate) touch_pos: HashMap<i32, (i32, i32)>,
     // 画笔中断：当前笔画是否刚经过 UI 区域（用于从侧栏出来时断开续画）
     pub(crate) stroke_skipped: bool,
 }
@@ -63,8 +64,20 @@ impl Default for Ip {
             touch_over_ui: HashMap::new(),
             slider: None,
             touch_shape: HashMap::new(),
+            touch_pos: HashMap::new(),
             stroke_skipped: false,
         }
+    }
+}
+
+impl Ip {
+    pub(crate) fn reset_touch_state(&mut self) {
+        self.touch_ids.clear();
+        self.touch_over_ui.clear();
+        self.touch_shape.clear();
+        self.touch_pos.clear();
+        self.slider = None;
+        self.stroke_skipped = false;
     }
 }
 
@@ -1019,7 +1032,7 @@ fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev
         }
         Event::XinputRawTouchBegin(e) | Event::XinputRawTouchUpdate(e) => {
             if let Some(xp) = rt.backend.as_any().downcast_ref::<x11::X11Plat>() {
-                let d = xp.touch_diameter(e.deviceid as u8, &e.valuator_mask, &e.axisvalues_raw);
+                let d = xp.touch_diameter(e.deviceid, &e.valuator_mask, &e.axisvalues_raw);
                 if d > 0.0 {
                     ip.touch_shape.insert(e.detail as i32, d);
                 }
@@ -1035,7 +1048,7 @@ fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev
                 rt.backend
                     .as_any()
                     .downcast_ref::<x11::X11Plat>()
-                    .map(|xp| xp.touch_diameter(e.deviceid as u8, &e.valuator_mask, &e.axisvalues))
+                    .map(|xp| xp.touch_diameter(e.deviceid, &e.valuator_mask, &e.axisvalues))
                     .unwrap_or(0.0)
             });
             handle_touch(rt, app, ip, wps, e.detail as i32, x, y, TouchKind::Begin, d);
@@ -1047,7 +1060,7 @@ fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev
                 rt.backend
                     .as_any()
                     .downcast_ref::<x11::X11Plat>()
-                    .map(|xp| xp.touch_diameter(e.deviceid as u8, &e.valuator_mask, &e.axisvalues))
+                    .map(|xp| xp.touch_diameter(e.deviceid, &e.valuator_mask, &e.axisvalues))
                     .unwrap_or(0.0)
             });
             handle_touch(rt, app, ip, wps, e.detail as i32, x, y, TouchKind::Update, d);

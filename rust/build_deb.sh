@@ -15,8 +15,8 @@
 set -e
 
 ARG="${1:-amd64}"
-HERE="$(cd "$(dirname "$0")" && pwd)"      # .../cpp/rust
-REPO="$(cd "$HERE/.." && pwd)"             # .../cpp
+HERE="$(cd "$(dirname "$0")" && pwd)"      # .../repo/rust
+REPO="$(cd "$HERE/.." && pwd)"             # .../repo
 
 case "$ARG" in
   amd64)        SRC_ARCH=amd64;  DEB_ARCH=amd64;;

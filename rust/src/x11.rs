@@ -575,7 +575,7 @@ impl X11Plat {
     }
 
     /// 由 XI2 触摸事件的 valuator 计算触点直径（像素）
-    pub fn touch_diameter(&self, devid: u8, mask: &[u32], values: &[Fp3232]) -> f64 {
+    pub fn touch_diameter(&self, devid: u16, mask: &[u32], values: &[Fp3232]) -> f64 {
         if !self.touch_axis.borrow().contains_key(&devid) {
             let info = self.load_touch_axis(devid);
             self.touch_axis.borrow_mut().insert(devid, info);
@@ -597,14 +597,14 @@ impl X11Plat {
         physical / self.scale.get().max(0.001)
     }
 
-    fn load_touch_axis(&self, devid: u8) -> TouchAxis {
+    fn load_touch_axis(&self, devid: u16) -> TouchAxis {
         let mut a = TouchAxis::default();
         if let Some(reply) = xinput::xi_query_device(&self.x11.conn, devid)
             .ok()
             .and_then(|c| c.reply().ok())
         {
             for info in &reply.infos {
-                if info.deviceid as u8 != devid {
+                if info.deviceid != devid {
                     continue;
                 }
                 for class in &info.classes {

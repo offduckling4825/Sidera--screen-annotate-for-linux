@@ -2,9 +2,9 @@ name: Rust Build & Test
 
 on:
   push:
-    branches: [ main, rust-rewrite ]
+    branches: [ main, rust-testing, rust-rewrite ]
   pull_request:
-    branches: [ main, rust-rewrite ]
+    branches: [ main, rust-testing, rust-rewrite ]
 
 jobs:
   rust:
