@@ -2,9 +2,9 @@ name: Build & Verify
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, rust-testing, rust-rewrite ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, rust-testing, rust-rewrite ]
 
 jobs:
   build-amd64:
@@ -13,8 +13,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install Rust and system dependencies
         run: |
+          rustup component add rustfmt clippy
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
@@ -27,7 +28,19 @@ jobs:
             libxext-dev \
             libxtst-dev
 
-      - name: Compile Sidera
+      - name: Build Rust Sidera
+        run: cargo build --release --locked
+
+      - name: Test Rust Sidera
+        run: cargo test --locked
+
+      - name: Clippy Rust Sidera
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Verify Rust artifact
+        run: test -x target/release/sidera
+
+      - name: Compile legacy C++ fallback
         working-directory: cpp
         run: |
           make -j$(nproc)
@@ -36,42 +49,4 @@ jobs:
         working-directory: cpp
         run: |
           test -f annotate_amd64
-          echo "annotate_amd64 built successfully."
-
-  rust:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Ensure clippy
-        run: rustup component add clippy
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            rust/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Build (release)
-        working-directory: rust
-        run: cargo build --release --locked
-
-      - name: Test
-        working-directory: rust
-        run: cargo test --locked
-
-      - name: Clippy
-        working-directory: rust
-        run: cargo clippy --all-targets --locked
-
-      - name: Verify build artifact
-        working-directory: rust
-        run: |
-          test -f target/release/sidera
-          echo "sidera (rust) built successfully."
+          echo "legacy C++ fallback built successfully."

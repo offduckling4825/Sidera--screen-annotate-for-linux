@@ -3,18 +3,18 @@
 // 覆盖：ARGB 覆盖层窗口、XShape 输入穿透、XTest 假键/虚拟右键、
 //       全局热键、WPS 全屏检测、截图、合成器检测
 // ============================================================
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use x11rb::connection::Connection;
 use x11rb::protocol::shape::{self, SK, SO};
+use x11rb::protocol::xinput::{self, DeviceClassData, Fp3232};
 use x11rb::protocol::xproto::{
     self, Atom, AtomEnum, Colormap, ColormapAlloc, ConfigureWindowAux, CreateGCAux,
     CreateWindowAux, Drawable, EventMask, Gcontext, ImageFormat, Keycode, ModMask, Rectangle,
     VisualClass, Window, WindowClass,
 };
-use x11rb::protocol::xinput::{self, DeviceClassData, Fp3232};
 use x11rb::protocol::xtest;
 use x11rb::rust_connection::RustConnection;
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 
 pub type XResult<T> = Result<T, Box<dyn std::error::Error>>;
 
@@ -73,15 +73,24 @@ impl X11 {
         let cmap = conn.generate_id()?;
         xproto::create_colormap(&conn, ColormapAlloc::NONE, cmap, root, argb_visual)?;
 
-        let net_wm_state = xproto::intern_atom(&conn, false, b"_NET_WM_STATE")?.reply()?.atom;
-        let net_wm_fullscreen =
-            xproto::intern_atom(&conn, false, b"_NET_WM_STATE_FULLSCREEN")?.reply()?.atom;
-        let net_wm_cm = xproto::intern_atom(&conn, false, b"_NET_WM_CM_S0")?.reply()?.atom;
-        let atom_touch_major =
-            xproto::intern_atom(&conn, false, b"Abs MT Touch Major")?.reply()?.atom;
-        let atom_touch_minor =
-            xproto::intern_atom(&conn, false, b"Abs MT Touch Minor")?.reply()?.atom;
-        let atom_pos_x = xproto::intern_atom(&conn, false, b"Abs MT Position X")?.reply()?.atom;
+        let net_wm_state = xproto::intern_atom(&conn, false, b"_NET_WM_STATE")?
+            .reply()?
+            .atom;
+        let net_wm_fullscreen = xproto::intern_atom(&conn, false, b"_NET_WM_STATE_FULLSCREEN")?
+            .reply()?
+            .atom;
+        let net_wm_cm = xproto::intern_atom(&conn, false, b"_NET_WM_CM_S0")?
+            .reply()?
+            .atom;
+        let atom_touch_major = xproto::intern_atom(&conn, false, b"Abs MT Touch Major")?
+            .reply()?
+            .atom;
+        let atom_touch_minor = xproto::intern_atom(&conn, false, b"Abs MT Touch Minor")?
+            .reply()?
+            .atom;
+        let atom_pos_x = xproto::intern_atom(&conn, false, b"Abs MT Position X")?
+            .reply()?
+            .atom;
 
         let mut x = X11 {
             conn,
@@ -123,7 +132,7 @@ impl X11 {
                     return 0;
                 }
                 for (i, chunk) in reply.keysyms.chunks(per).enumerate() {
-                    if chunk.iter().any(|k| *k == ks) {
+                    if chunk.contains(&ks) {
                         return min + i as u8;
                     }
                 }
@@ -169,7 +178,12 @@ impl X11 {
             &aux,
         )?;
         let gc = self.conn.generate_id()?;
-        xproto::create_gc(&self.conn, gc, win, &CreateGCAux::new().graphics_exposures(0u32))?;
+        xproto::create_gc(
+            &self.conn,
+            gc,
+            win,
+            &CreateGCAux::new().graphics_exposures(0u32),
+        )?;
         xproto::map_window(&self.conn, win)?;
         xproto::configure_window(
             &self.conn,
@@ -324,8 +338,8 @@ impl X11 {
         let mods = ModMask::CONTROL | ModMask::SHIFT;
         let combos = [
             mods,
-            mods | ModMask::from(1u16 << 1),  // Mod2 (NumLock)
-            mods | ModMask::from(1u16),       // Lock (CapsLock)
+            mods | ModMask::from(1u16 << 1), // Mod2 (NumLock)
+            mods | ModMask::from(1u16),      // Lock (CapsLock)
             mods | ModMask::from(1u16 << 1) | ModMask::from(1u16),
         ];
         for m in combos {
@@ -438,7 +452,8 @@ impl X11 {
                         .and_then(|c| c.reply().ok());
                         if let Some(prop) = prop {
                             for chunk in prop.value.chunks_exact(4) {
-                                let a = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                                let a =
+                                    u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
                                 if a == self.net_wm_fullscreen {
                                     fullscreen = true;
                                     break;
@@ -552,7 +567,7 @@ pub struct X11Plat {
     pub win: Window,
     pub gc: Gcontext,
     scale: Cell<f64>,
-    touch_axis: RefCell<HashMap<u8, TouchAxis>>,
+    touch_axis: RefCell<HashMap<u16, TouchAxis>>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -575,7 +590,7 @@ impl X11Plat {
     }
 
     /// 由 XI2 触摸事件的 valuator 计算触点直径（像素）
-    pub fn touch_diameter(&self, devid: u8, mask: &[u32], values: &[Fp3232]) -> f64 {
+    pub fn touch_diameter(&self, devid: u16, mask: &[u32], values: &[Fp3232]) -> f64 {
         if !self.touch_axis.borrow().contains_key(&devid) {
             let info = self.load_touch_axis(devid);
             self.touch_axis.borrow_mut().insert(devid, info);
@@ -597,14 +612,14 @@ impl X11Plat {
         physical / self.scale.get().max(0.001)
     }
 
-    fn load_touch_axis(&self, devid: u8) -> TouchAxis {
+    fn load_touch_axis(&self, devid: u16) -> TouchAxis {
         let mut a = TouchAxis::default();
         if let Some(reply) = xinput::xi_query_device(&self.x11.conn, devid)
             .ok()
             .and_then(|c| c.reply().ok())
         {
             for info in &reply.infos {
-                if info.deviceid as u8 != devid {
+                if info.deviceid != devid {
                     continue;
                 }
                 for class in &info.classes {
@@ -725,7 +740,12 @@ impl crate::backend::Backend for X11Plat {
     fn device_pixel_ratio(&self) -> f64 {
         self.scale.get()
     }
-    fn show_splash(&self, fonts: &crate::text::Fonts, icon: Option<&tiny_skia::Pixmap>, dur_ms: u64) {
+    fn show_splash(
+        &self,
+        fonts: &crate::text::Fonts,
+        icon: Option<&tiny_skia::Pixmap>,
+        dur_ms: u64,
+    ) {
         crate::splash::show(&self.x11, fonts, icon, dur_ms);
     }
 }

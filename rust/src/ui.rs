@@ -1,4 +1,5 @@
 // ============================================================
+#![allow(clippy::needless_range_loop, clippy::unnecessary_cast)]
 // Sidera - 手绘 UI（侧边栏 / 弹窗 / 设置面板）与命中测试
 // 不再使用 QWidget：所有控件都是几何矩形 + tiny-skia 绘制
 // ============================================================
@@ -150,8 +151,7 @@ impl<'a> Ctx<'a> {
                 line_join: LineJoin::Round,
                 ..Default::default()
             };
-            self.pm
-                .stroke_path(&p, &solid(c), &st, self.tr, None);
+            self.pm.stroke_path(&p, &solid(c), &st, self.tr, None);
         }
     }
     pub fn fill_circle(&mut self, cx: f32, cy: f32, rad: f32, c: Color) {
@@ -201,7 +201,11 @@ impl<'a> Ctx<'a> {
 
 // ---------------- 几何 ----------------
 pub fn sidebar_rect(app: &App, right: bool) -> R {
-    let x = if right { app.sb_x_right() } else { app.sb_x_left() };
+    let x = if right {
+        app.sb_x_right()
+    } else {
+        app.sb_x_left()
+    };
     let h = if app.collapsed {
         app.collapsed_h()
     } else {
@@ -258,7 +262,15 @@ pub fn sidebar_buttons(app: &App, right: bool) -> Vec<(Btn, R)> {
     ];
     let mut v = Vec::new();
     for k in order {
-        v.push((k, R { x: bx, y, w: btn, h: btn }));
+        v.push((
+            k,
+            R {
+                x: bx,
+                y,
+                w: btn,
+                h: btn,
+            },
+        ));
         y += btn + 6;
     }
     v
@@ -348,7 +360,12 @@ pub fn pen_popup_hit(app: &App, x: i32, y: i32) -> Option<PopupHit> {
     let bw = (p.w - 32 - 20) / 3;
     for i in 0..3 {
         let bx = p.x + 16 + i as i32 * (bw + 10);
-        let rr = R { x: bx, y: sy, w: bw, h: 48 };
+        let rr = R {
+            x: bx,
+            y: sy,
+            w: bw,
+            h: 48,
+        };
         if rr.contains(x, y) {
             return Some(PopupHit::PenSize(i as usize));
         }
@@ -365,13 +382,23 @@ pub fn eraser_popup_hit(app: &App, x: i32, y: i32) -> Option<PopupHit> {
     let bw = (p.w - 32 - 20) / 3;
     for i in 0..3 {
         let bx = p.x + 16 + i as i32 * (bw + 10);
-        let rr = R { x: bx, y: sy, w: bw, h: 48 };
+        let rr = R {
+            x: bx,
+            y: sy,
+            w: bw,
+            h: 48,
+        };
         if rr.contains(x, y) {
             return Some(PopupHit::EraserSize(i as usize));
         }
     }
     let cy = p.y + 110;
-    let rr = R { x: p.x + 16, y: cy, w: p.w - 32, h: 48 };
+    let rr = R {
+        x: p.x + 16,
+        y: cy,
+        w: p.w - 32,
+        h: 48,
+    };
     if rr.contains(x, y) {
         return Some(PopupHit::ClearAll);
     }
@@ -450,18 +477,56 @@ pub fn settings_sliders(app: &App) -> Vec<SliderDef> {
         }
     };
     let mut v = vec![
-        mk(SliderId::Alpha, 0, 30.0, 255.0, app.sidebar_alpha as f32, 1.0, "侧边栏透明度", false),
-        mk(SliderId::Scale, 1, 0.6, 1.4, app.sb_scale as f32, 0.1, "侧边栏大小", true),
+        mk(
+            SliderId::Alpha,
+            0,
+            30.0,
+            255.0,
+            app.sidebar_alpha as f32,
+            1.0,
+            "侧边栏透明度",
+            false,
+        ),
+        mk(
+            SliderId::Scale,
+            1,
+            0.6,
+            1.4,
+            app.sb_scale as f32,
+            0.1,
+            "侧边栏大小",
+            true,
+        ),
     ];
     if !app.erase_by_finger {
-        v.push(mk(SliderId::Threshold, 6, 20.0, 260.0, app.large_touch_threshold as f32, 10.0, "大触点阈值", false));
-        v.push(mk(SliderId::EraseScale, 7, 0.8, 2.5, app.large_erase_scale10 as f32 / 10.0, 0.1, "大触点橡皮倍率", true));
+        v.push(mk(
+            SliderId::Threshold,
+            6,
+            20.0,
+            260.0,
+            app.large_touch_threshold as f32,
+            10.0,
+            "大触点阈值",
+            false,
+        ));
+        v.push(mk(
+            SliderId::EraseScale,
+            7,
+            0.8,
+            2.5,
+            app.large_erase_scale10 as f32 / 10.0,
+            0.1,
+            "大触点橡皮倍率",
+            true,
+        ));
     }
     v
 }
 
 pub fn settings_slider_hit(app: &App, x: i32, y: i32) -> Option<SliderDef> {
-    settings_sliders(app).into_iter().find(|s| s.hit.contains(x, y))
+    settings_sliders(app)
+        .into_iter()
+        .find(|s| s.hit.contains(x, y))
 }
 
 pub fn settings_controls(app: &App) -> Vec<(SetHit, R)> {
@@ -519,8 +584,18 @@ pub fn confirm_hit(app: &App, x: i32, y: i32) -> Option<ConfirmHit> {
     let p = confirm_rect(app);
     let by = p.y + 92;
     let half = (p.w - 60) / 2;
-    let no = R { x: p.x + 20, y: by, w: half, h: 40 };
-    let yes = R { x: p.x + 20 + half + 20, y: by, w: half, h: 40 };
+    let no = R {
+        x: p.x + 20,
+        y: by,
+        w: half,
+        h: 40,
+    };
+    let yes = R {
+        x: p.x + 20 + half + 20,
+        y: by,
+        w: half,
+        h: 40,
+    };
     if no.contains(x, y) {
         Some(ConfirmHit::No)
     } else if yes.contains(x, y) {
@@ -536,14 +611,29 @@ pub fn draw_confirm(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
     ctx.stroke_round(p, 10.0, color(0x66, 0x66, 0x66, 255), 2.0);
     ctx.text_center(
         fonts,
-        R { x: p.x, y: p.y + 24, w: p.w, h: 40 },
+        R {
+            x: p.x,
+            y: p.y + 24,
+            w: p.w,
+            h: 40,
+        },
         "确定要退出 Sidera 吗？",
         20.0,
         color(0xee, 0xee, 0xee, 255),
     );
     let half = (p.w - 60) / 2;
-    let no = R { x: p.x + 20, y: p.y + 92, w: half, h: 40 };
-    let yes = R { x: p.x + 20 + half + 20, y: p.y + 92, w: half, h: 40 };
+    let no = R {
+        x: p.x + 20,
+        y: p.y + 92,
+        w: half,
+        h: 40,
+    };
+    let yes = R {
+        x: p.x + 20 + half + 20,
+        y: p.y + 92,
+        w: half,
+        h: 40,
+    };
     ctx.fill_round(no, 8.0, color(0x44, 0x44, 0x44, 255));
     ctx.text_center(fonts, no, "取消", 18.0, Color::WHITE);
     ctx.fill_round(yes, 8.0, color(0x8a, 0x2f, 0x2f, 255));
@@ -563,7 +653,12 @@ pub fn diag_rect(app: &App) -> R {
 
 pub fn diag_close_hit(app: &App, x: i32, y: i32) -> bool {
     let p = diag_rect(app);
-    let r = R { x: p.x + 20, y: p.y + p.h - 52, w: p.w - 40, h: 38 };
+    let r = R {
+        x: p.x + 20,
+        y: p.y + p.h - 52,
+        w: p.w - 40,
+        h: 38,
+    };
     r.contains(x, y)
 }
 
@@ -573,7 +668,12 @@ pub fn draw_diag(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
     ctx.stroke_round(p, 10.0, color(0x66, 0x66, 0x66, 255), 2.0);
     ctx.text_center(
         fonts,
-        R { x: p.x, y: p.y + 12, w: p.w, h: 30 },
+        R {
+            x: p.x,
+            y: p.y + 12,
+            w: p.w,
+            h: 30,
+        },
         "系统诊断信息",
         18.0,
         color(0xee, 0xee, 0xee, 255),
@@ -583,14 +683,25 @@ pub fn draw_diag(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
         if yy > p.y + p.h - 70 {
             break;
         }
-        ctx.text(fonts, line, (p.x + 20) as f32, yy as f32, 13.0, color(0xcc, 0xcc, 0xcc, 255));
+        ctx.text(
+            fonts,
+            line,
+            (p.x + 20) as f32,
+            yy as f32,
+            13.0,
+            color(0xcc, 0xcc, 0xcc, 255),
+        );
         yy += 17;
     }
-    let close = R { x: p.x + 20, y: p.y + p.h - 52, w: p.w - 40, h: 38 };
+    let close = R {
+        x: p.x + 20,
+        y: p.y + p.h - 52,
+        w: p.w - 40,
+        h: 38,
+    };
     ctx.fill_round(close, 8.0, color(0x33, 0x77, 0xcc, 255));
     ctx.text_center(fonts, close, "关闭", 16.0, Color::WHITE);
 }
-
 
 // ---------------- 设置面板用到的外部状态 ----------------
 pub fn autostart_path() -> std::path::PathBuf {
@@ -665,10 +776,7 @@ pub fn render_region(
     }
 
     {
-        let mut ctx = Ctx {
-            pm: &mut pm,
-            tr,
-        };
+        let mut ctx = Ctx { pm: &mut pm, tr };
 
         // 手掌/大触点橡皮圆形预览
         if !app.palm_erase_preview.is_empty() {
@@ -772,14 +880,28 @@ fn draw_btn(app: &App, fonts: &Fonts, ctx: &mut Ctx, k: Btn, r: R, hov: bool) {
     let btn = app.sb_btn() as f32;
     match k {
         Btn::Collapse => {
-            ctx.fill_round(r, btn / 2.0, if hov { color(0x2f, 0x32, 0x50, 255) } else { color(0x22, 0x24, 0x36, 255) });
+            ctx.fill_round(
+                r,
+                btn / 2.0,
+                if hov {
+                    color(0x2f, 0x32, 0x50, 255)
+                } else {
+                    color(0x22, 0x24, 0x36, 255)
+                },
+            );
             ctx.stroke_round(r, btn / 2.0, color(255, 213, 74, 153), 2.0);
             let t = if app.collapsed {
                 "展\n开\n侧\n边\n栏"
             } else {
                 "收缩"
             };
-            ctx.text_multiline_center(fonts, r, t, (btn * 18.0 / 38.0).max(12.0), color(255, 213, 74, 255));
+            ctx.text_multiline_center(
+                fonts,
+                r,
+                t,
+                (btn * 18.0 / 38.0).max(12.0),
+                color(255, 213, 74, 255),
+            );
         }
         Btn::Cursor | Btn::Pen | Btn::Eraser => {
             let idx = match k {
@@ -803,22 +925,56 @@ fn draw_btn(app: &App, fonts: &Fonts, ctx: &mut Ctx, k: Btn, r: R, hov: bool) {
             }
         }
         Btn::Clear => {
-            ctx.fill_round(r, btn * 0.35, if hov { color(0x26, 0xc6, 0xda, 255) } else { color(0x00, 0xbc, 0xd4, 255) });
+            ctx.fill_round(
+                r,
+                btn * 0.35,
+                if hov {
+                    color(0x26, 0xc6, 0xda, 255)
+                } else {
+                    color(0x00, 0xbc, 0xd4, 255)
+                },
+            );
             ctx.stroke_round(r, btn * 0.35, color(0x4d, 0xd0, 0xe1, 255), 2.0);
-            ctx.text_center(fonts, r, "清除", (btn * 18.0 / 38.0).max(12.0), color(0x06, 0x34, 0x3a, 255));
+            ctx.text_center(
+                fonts,
+                r,
+                "清除",
+                (btn * 18.0 / 38.0).max(12.0),
+                color(0x06, 0x34, 0x3a, 255),
+            );
         }
         Btn::Undo => {
             if hov {
                 ctx.fill_round(r, btn * 0.35, color(255, 154, 60, 46));
             }
             ctx.stroke_round(r, btn * 0.35, color(255, 154, 60, 179), 2.0);
-            ctx.text_center(fonts, r, "撤回", (btn * 18.0 / 38.0).max(12.0), color(255, 154, 60, 255));
+            ctx.text_center(
+                fonts,
+                r,
+                "撤回",
+                (btn * 18.0 / 38.0).max(12.0),
+                color(255, 154, 60, 255),
+            );
         }
         Btn::Prev | Btn::Next => {
-            ctx.fill_round(r, btn / 2.0, if hov { color(0x55, 0x55, 0x6e, 255) } else { color(0x3a, 0x3a, 0x4a, 255) });
+            ctx.fill_round(
+                r,
+                btn / 2.0,
+                if hov {
+                    color(0x55, 0x55, 0x6e, 255)
+                } else {
+                    color(0x3a, 0x3a, 0x4a, 255)
+                },
+            );
             ctx.stroke_round(r, btn / 2.0, color(0x66, 0x88, 0xcc, 255), 1.5);
             let t = if k == Btn::Prev { "▲" } else { "▼" };
-            ctx.text_center(fonts, r, t, (btn * 12.0 / 19.0).max(10.0), color(0xcc, 0xcc, 0xff, 255));
+            ctx.text_center(
+                fonts,
+                r,
+                t,
+                (btn * 12.0 / 19.0).max(10.0),
+                color(0xcc, 0xcc, 0xff, 255),
+            );
         }
         Btn::Exit => {
             if app.whiteboard {
@@ -833,27 +989,67 @@ fn draw_btn(app: &App, fonts: &Fonts, ctx: &mut Ctx, k: Btn, r: R, hov: bool) {
                 } else {
                     Color::WHITE
                 };
-                ctx.text_multiline_center(fonts, r, "背景\n颜色", (btn * 13.0 / 34.0).max(10.0), fg);
+                ctx.text_multiline_center(
+                    fonts,
+                    r,
+                    "背景\n颜色",
+                    (btn * 13.0 / 34.0).max(10.0),
+                    fg,
+                );
             } else {
-                ctx.fill_round(r, 4.0, if hov { color(0xff, 0x4d, 0x4d, 255) } else { color(0xd3, 0x3a, 0x3a, 255) });
+                ctx.fill_round(
+                    r,
+                    4.0,
+                    if hov {
+                        color(0xff, 0x4d, 0x4d, 255)
+                    } else {
+                        color(0xd3, 0x3a, 0x3a, 255)
+                    },
+                );
                 ctx.stroke_round(r, 4.0, color(0xff, 0x80, 0x80, 255), 2.0);
-                ctx.text_multiline_center(fonts, r, "退出\n放映", (btn * 14.0 / 34.0).max(10.0), Color::WHITE);
+                ctx.text_multiline_center(
+                    fonts,
+                    r,
+                    "退出\n放映",
+                    (btn * 14.0 / 34.0).max(10.0),
+                    Color::WHITE,
+                );
             }
         }
         Btn::Whiteboard => {
             let (fill, txt, border) = if app.whiteboard {
-                (color(0xf4, 0xf4, 0xf4, 255), color(0x11, 0x11, 0x11, 255), color(0xff, 0x98, 0x00, 255))
+                (
+                    color(0xf4, 0xf4, 0xf4, 255),
+                    color(0x11, 0x11, 0x11, 255),
+                    color(0xff, 0x98, 0x00, 255),
+                )
             } else if hov {
-                (color(0x77, 0x77, 0x77, 255), color(0xff, 0xff, 0xff, 255), color(0xaa, 0xaa, 0xaa, 255))
+                (
+                    color(0x77, 0x77, 0x77, 255),
+                    color(0xff, 0xff, 0xff, 255),
+                    color(0xaa, 0xaa, 0xaa, 255),
+                )
             } else {
-                (color(0x55, 0x55, 0x55, 255), color(0xee, 0xee, 0xee, 255), color(0x99, 0x99, 0x99, 255))
+                (
+                    color(0x55, 0x55, 0x55, 255),
+                    color(0xee, 0xee, 0xee, 255),
+                    color(0x99, 0x99, 0x99, 255),
+                )
             };
             ctx.fill_round(r, btn * 0.35, fill);
             ctx.stroke_round(r, btn * 0.35, border, 2.0);
             ctx.text_center(fonts, r, "白板", (btn * 18.0 / 38.0).max(12.0), txt);
         }
         Btn::More => {
-            ctx.fill_round(r, btn / 2.0, if hov { color(0x22, 0x22, 0x22, 255) } else { color(0, 0, 0, 255) });
+            ctx.fill_round(
+                r,
+                btn / 2.0,
+                if hov {
+                    color(0x22, 0x22, 0x22, 255)
+                } else {
+                    color(0, 0, 0, 255)
+                },
+            );
             ctx.stroke_round(r, btn / 2.0, color(0x33, 0x33, 0x33, 255), 2.0);
             ctx.text_center(fonts, r, "⋯", (btn * 18.0 / 38.0).max(14.0), Color::WHITE);
         }
@@ -868,15 +1064,21 @@ fn icon_cursor(ctx: &mut Ctx, ox: f32, oy: f32, s: f32) {
     pb.line_to(ox + s * 0.55, oy + s - s * 0.14);
     pb.close();
     if let Some(p) = pb.finish() {
-        ctx.pm
-            .fill_path(&p, &solid(color(255, 255, 255, 200)), FillRule::Winding, ctx.tr, None);
+        ctx.pm.fill_path(
+            &p,
+            &solid(color(255, 255, 255, 200)),
+            FillRule::Winding,
+            ctx.tr,
+            None,
+        );
         let st = Stroke {
             width: 2.5,
             line_cap: LineCap::Round,
             line_join: LineJoin::Round,
             ..Default::default()
         };
-        ctx.pm.stroke_path(&p, &solid(Color::WHITE), &st, ctx.tr, None);
+        ctx.pm
+            .stroke_path(&p, &solid(Color::WHITE), &st, ctx.tr, None);
     }
 }
 
@@ -916,7 +1118,14 @@ fn draw_pen_popup(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
     if t < 0.02 {
         return;
     }
-    ctx.text(fonts, "画笔颜色", (p.x + 16) as f32, (p.y + 34) as f32, 20.0, color(0xcc, 0xcc, 0xcc, 255));
+    ctx.text(
+        fonts,
+        "画笔颜色",
+        (p.x + 16) as f32,
+        (p.y + 34) as f32,
+        20.0,
+        color(0xcc, 0xcc, 0xcc, 255),
+    );
     let start_y = p.y + 46;
     for i in 0..10usize {
         let row = (i / 4) as i32;
@@ -932,19 +1141,36 @@ fn draw_pen_popup(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
         };
         let w = if i == app.cur_color { 4.0 } else { 2.0 };
         ctx.stroke_round(
-            R { x: cx as i32 - 19, y: cy as i32 - 19, w: 38, h: 38 },
+            R {
+                x: cx as i32 - 19,
+                y: cy as i32 - 19,
+                w: 38,
+                h: 38,
+            },
             19.0,
             bd,
             w,
         );
     }
     let sy = p.y + 214;
-    ctx.text(fonts, "画笔粗细", (p.x + 16) as f32, (sy - 14) as f32, 20.0, color(0xcc, 0xcc, 0xcc, 255));
+    ctx.text(
+        fonts,
+        "画笔粗细",
+        (p.x + 16) as f32,
+        (sy - 14) as f32,
+        20.0,
+        color(0xcc, 0xcc, 0xcc, 255),
+    );
     let bw = (p.w - 32 - 20) / 3;
     let labels = ["细 3", "中 6", "粗 10"];
     for i in 0..3usize {
         let bx = p.x + 16 + i as i32 * (bw + 10);
-        let r = R { x: bx, y: sy, w: bw, h: 48 };
+        let r = R {
+            x: bx,
+            y: sy,
+            w: bw,
+            h: 48,
+        };
         let sel = i == app.cur_pen;
         ctx.fill_round(
             r,
@@ -955,7 +1181,16 @@ fn draw_pen_popup(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
                 color(0x44, 0x44, 0x44, 255)
             },
         );
-        ctx.stroke_round(r, 8.0, if sel { color(0x55, 0x99, 0xff, 255) } else { color(0x66, 0x66, 0x66, 255) }, 2.0);
+        ctx.stroke_round(
+            r,
+            8.0,
+            if sel {
+                color(0x55, 0x99, 0xff, 255)
+            } else {
+                color(0x66, 0x66, 0x66, 255)
+            },
+            2.0,
+        );
         ctx.text_center(fonts, r, labels[i], 20.0, Color::WHITE);
     }
 }
@@ -968,13 +1203,25 @@ fn draw_eraser_popup(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
     if t < 0.02 {
         return;
     }
-    ctx.text(fonts, "橡皮擦大小", (p.x + 16) as f32, (p.y + 34) as f32, 20.0, color(0xcc, 0xcc, 0xcc, 255));
+    ctx.text(
+        fonts,
+        "橡皮擦大小",
+        (p.x + 16) as f32,
+        (p.y + 34) as f32,
+        20.0,
+        color(0xcc, 0xcc, 0xcc, 255),
+    );
     let sy = p.y + 46;
     let bw = (p.w - 32 - 20) / 3;
     let labels = ["小 12", "中 24", "大 48"];
     for i in 0..3usize {
         let bx = p.x + 16 + i as i32 * (bw + 10);
-        let r = R { x: bx, y: sy, w: bw, h: 48 };
+        let r = R {
+            x: bx,
+            y: sy,
+            w: bw,
+            h: 48,
+        };
         let sel = i == app.cur_eraser;
         ctx.fill_round(
             r,
@@ -985,12 +1232,30 @@ fn draw_eraser_popup(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
                 color(0x44, 0x44, 0x44, 255)
             },
         );
-        ctx.stroke_round(r, 8.0, if sel { color(0xff, 0xaa, 0x00, 255) } else { color(0x66, 0x66, 0x66, 255) }, 2.0);
-        let fg = if sel { color(0, 0, 0, 255) } else { Color::WHITE };
+        ctx.stroke_round(
+            r,
+            8.0,
+            if sel {
+                color(0xff, 0xaa, 0x00, 255)
+            } else {
+                color(0x66, 0x66, 0x66, 255)
+            },
+            2.0,
+        );
+        let fg = if sel {
+            color(0, 0, 0, 255)
+        } else {
+            Color::WHITE
+        };
         ctx.text_center(fonts, r, labels[i], 20.0, fg);
     }
     let cy = p.y + 110;
-    let r = R { x: p.x + 16, y: cy, w: p.w - 32, h: 48 };
+    let r = R {
+        x: p.x + 16,
+        y: cy,
+        w: p.w - 32,
+        h: 48,
+    };
     ctx.fill_round(r, 8.0, color(0x55, 0x55, 0x55, 255));
     ctx.text_center(fonts, r, "清除全部", 20.0, Color::WHITE);
 }
@@ -1003,8 +1268,18 @@ fn draw_more_menu(fonts: &Fonts, ctx: &mut Ctx, app: &App) {
     if t < 0.02 {
         return;
     }
-    let r1 = R { x: m.x, y: m.y, w: m.w, h: 48 };
-    let r2 = R { x: m.x, y: m.y + 48, w: m.w, h: 48 };
+    let r1 = R {
+        x: m.x,
+        y: m.y,
+        w: m.w,
+        h: 48,
+    };
+    let r2 = R {
+        x: m.x,
+        y: m.y + 48,
+        w: m.w,
+        h: 48,
+    };
     ctx.text_center(fonts, r1, "截图", 20.0, color(0xee, 0xee, 0xee, 255));
     ctx.text_center(fonts, r2, "设置", 20.0, color(0xee, 0xee, 0xee, 255));
 }
@@ -1049,21 +1324,43 @@ fn draw_settings(app: &App, fonts: &Fonts, ctx: &mut Ctx, icon: Option<&Pixmap>)
     // 拖动滑条
     for s in &settings_sliders(app) {
         let ry = s.hit.y;
-        ctx.text(fonts, s.label, (p.x + 18) as f32, (ry + 26) as f32, 20.0, label_color);
+        ctx.text(
+            fonts,
+            s.label,
+            (p.x + 18) as f32,
+            (ry + 26) as f32,
+            20.0,
+            label_color,
+        );
         let track = s.track;
         ctx.fill_round(track, track.h as f32 / 2.0, track_bg);
         let fw = (track.w as f32 * s.t()) as i32;
         if fw > 1 {
             ctx.fill_round(
-                R { x: track.x, y: track.y, w: fw, h: track.h },
+                R {
+                    x: track.x,
+                    y: track.y,
+                    w: fw,
+                    h: track.h,
+                },
                 track.h as f32 / 2.0,
                 track_fg,
             );
         }
         let hx = track.x + fw;
-        ctx.fill_circle(hx as f32, (track.y + track.h / 2) as f32, 14.0, Color::WHITE);
+        ctx.fill_circle(
+            hx as f32,
+            (track.y + track.h / 2) as f32,
+            14.0,
+            Color::WHITE,
+        );
         ctx.stroke_round(
-            R { x: hx - 14, y: track.y + track.h / 2 - 14, w: 28, h: 28 },
+            R {
+                x: hx - 14,
+                y: track.y + track.h / 2 - 14,
+                w: 28,
+                h: 28,
+            },
             14.0,
             color(0x88, 0x99, 0xbb, 255),
             2.0,
@@ -1075,7 +1372,12 @@ fn draw_settings(app: &App, fonts: &Fonts, ctx: &mut Ctx, icon: Option<&Pixmap>)
         };
         ctx.text_center(
             fonts,
-            R { x: p.x + p.w - 96, y: ry, w: 80, h: 38 },
+            R {
+                x: p.x + p.w - 96,
+                y: ry,
+                w: 80,
+                h: 38,
+            },
             &vtxt,
             20.0,
             val_color,
@@ -1108,14 +1410,28 @@ fn draw_settings(app: &App, fonts: &Fonts, ctx: &mut Ctx, icon: Option<&Pixmap>)
     toggle(
         ctx,
         SetHit::RightClick,
-        &format!("右键归位光标: {}", if app.right_click_cursor_on { "开" } else { "关" }),
+        &format!(
+            "右键归位光标: {}",
+            if app.right_click_cursor_on {
+                "开"
+            } else {
+                "关"
+            }
+        ),
         app.right_click_cursor_on,
         color(0x2a, 0x5a, 0x6a, 255),
     );
     toggle(
         ctx,
         SetHit::EraseTrig,
-        &format!("橡皮触发: {}", if app.erase_by_finger { "多指" } else { "手背" }),
+        &format!(
+            "橡皮触发: {}",
+            if app.erase_by_finger {
+                "多指"
+            } else {
+                "手背"
+            }
+        ),
         app.erase_by_finger,
         color(0x2a, 0x5a, 0x6a, 255),
     );
@@ -1203,7 +1519,11 @@ mod tests {
         let app = app();
         for right in [false, true] {
             for (k, r) in sidebar_buttons(&app, right) {
-                assert!(r.contains(r.x + r.w / 2, r.y + r.h / 2), "{:?} 不在自身矩形内", k);
+                assert!(
+                    r.contains(r.x + r.w / 2, r.y + r.h / 2),
+                    "{:?} 不在自身矩形内",
+                    k
+                );
             }
         }
     }

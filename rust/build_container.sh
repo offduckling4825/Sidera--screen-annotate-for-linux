@@ -19,8 +19,8 @@
 set -e
 
 ARCH="${1:-amd64}"
-ROOT="$(cd "$(dirname "$0")" && pwd)"      # .../cpp/rust
-REPO="$(cd "$ROOT/.." && pwd)"             # .../cpp
+ROOT="$(cd "$(dirname "$0")" && pwd)"      # .../repo/rust
+REPO="$(cd "$ROOT/.." && pwd)"             # .../repo
 HOST_CARGO="${CARGO_HOME:-$HOME/.cargo}"
 HOST_RUSTUP="${RUSTUP_HOME:-$HOME/.rustup}"
 

@@ -2,7 +2,10 @@
 // Sidera - 笔迹绘制（画笔/橡皮，纯 tiny-skia 光栅）
 // 与原 C++ drawing.cpp 语义一致：画笔 SourceOver、橡皮 Clear
 // ============================================================
-use tiny_skia::{BlendMode, Color, FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Shader, Stroke, Transform};
+use tiny_skia::{
+    BlendMode, Color, FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Shader, Stroke,
+    Transform,
+};
 
 use crate::app::App;
 
@@ -15,7 +18,14 @@ fn solid(color: Color, blend: BlendMode) -> Paint<'static> {
     }
 }
 
-pub fn pen_segment(canvas: &mut Pixmap, color: Color, a: (i32, i32), b: (i32, i32), width: i32, tf: Transform) {
+pub fn pen_segment(
+    canvas: &mut Pixmap,
+    color: Color,
+    a: (i32, i32),
+    b: (i32, i32),
+    width: i32,
+    tf: Transform,
+) {
     let paint = solid(color, BlendMode::SourceOver);
     if a == b {
         let mut pb = PathBuilder::new();
@@ -63,7 +73,15 @@ pub fn erase_segment(canvas: &mut Pixmap, a: (i32, i32), b: (i32, i32), width: i
     }
 }
 
-pub fn pen_tapered(canvas: &mut Pixmap, color: Color, a: (i32, i32), b: (i32, i32), w0: i32, w1: i32, tf: Transform) {
+pub fn pen_tapered(
+    canvas: &mut Pixmap,
+    color: Color,
+    a: (i32, i32),
+    b: (i32, i32),
+    w0: i32,
+    w1: i32,
+    tf: Transform,
+) {
     if a == b {
         pen_segment(canvas, color, a, b, w0.max(1), tf);
         return;
@@ -147,7 +165,13 @@ pub fn commit_stroke(app: &mut App) {
     let c = app.pen_color();
     let tf = Transform::from_scale(app.scale as f32, app.scale as f32);
     if let Some(p) = build_stroke_path(&app.stroke_pts) {
-        app.canvas.fill_path(&p, &solid(c, BlendMode::SourceOver), FillRule::Winding, tf, None);
+        app.canvas.fill_path(
+            &p,
+            &solid(c, BlendMode::SourceOver),
+            FillRule::Winding,
+            tf,
+            None,
+        );
         app.page_has_ink = true;
     }
     app.stroke_pts.clear();
@@ -187,7 +211,12 @@ mod tests {
             .map(|i| (20.0 + i as f32 * 4.0, 50.0, 8.0))
             .collect();
         let mut pm = Pixmap::new(200, 100).unwrap();
-        draw_stroke_union(&mut pm, crate::app::color(0, 0, 0, 255), &pts, Transform::identity());
+        draw_stroke_union(
+            &mut pm,
+            crate::app::color(0, 0, 0, 255),
+            &pts,
+            Transform::identity(),
+        );
         let w = pm.width() as usize;
         let mut holes = Vec::new();
         for i in 0..40 {
@@ -215,7 +244,12 @@ mod tests2 {
             pts.push((x, y, 10.0));
         }
         let mut pm = Pixmap::new(760, 120).unwrap();
-        draw_stroke_union(&mut pm, crate::app::color(0, 0, 0, 255), &pts, Transform::identity());
+        draw_stroke_union(
+            &mut pm,
+            crate::app::color(0, 0, 0, 255),
+            &pts,
+            Transform::identity(),
+        );
         let w = pm.width() as usize;
         let mut holes = Vec::new();
         for (i, (x, y, _)) in pts.iter().enumerate() {
@@ -224,7 +258,12 @@ mod tests2 {
                 holes.push((i, *x as i32, *y as i32, a));
             }
         }
-        eprintln!("holes={}/{} first={:?}", holes.len(), pts.len(), holes.first());
+        eprintln!(
+            "holes={}/{} first={:?}",
+            holes.len(),
+            pts.len(),
+            holes.first()
+        );
         assert!(holes.is_empty(), "曲线笔迹有空洞");
     }
 }

@@ -134,7 +134,7 @@ make -j$(nproc)
 ./annotate_amd64
 
 # 或用仓库内容器交叉编译（低 glibc 依赖）
-./build_with_container.sh amd64     # 产出 cpp/annotate_amd64
+./build_with_container.sh amd64     # 产出 cpp/annotate_amd64（C++ fallback）
 ```
 
 > 打包 DEB：`cd cpp && ./build_deb_amd64.sh`（产物 `cpp/sidera_Electro-testing_amd64.deb`）。
@@ -188,7 +188,7 @@ rust/src/keymap.xkb  # 内嵌 xkb keymap（虚拟键盘用）
 
 Wayland 协议 XML 位于仓库根 `protocols/`（wlr-layer-shell、xdg-shell、viewporter、virtual-keyboard 等）。
 
-### C++ / Qt5 版（`cpp/src/`）
+### C++ / Qt5 fallback（`cpp/src/`）
 
 ```
 cpp/src/

@@ -336,7 +336,11 @@ impl App {
         self.screen_w = w;
         self.screen_h = h;
         self.rebuild_canvas();
-        let sbh = if self.collapsed { self.collapsed_h() } else { self.sb_height() };
+        let sbh = if self.collapsed {
+            self.collapsed_h()
+        } else {
+            self.sb_height()
+        };
         self.sb_y = ((h - sbh) / 2).clamp(0, (h - sbh).max(0));
     }
 
@@ -359,7 +363,10 @@ impl App {
 
     pub fn save_current_page(&mut self) {
         if !self.page_has_ink {
-            crate::wps::wps_log(&format!("[PAGE] save 跳过 page={} (无笔迹)", self.current_slide));
+            crate::wps::wps_log(&format!(
+                "[PAGE] save 跳过 page={} (无笔迹)",
+                self.current_slide
+            ));
             return;
         }
         crate::wps::wps_log(&format!("[PAGE] save page={}", self.current_slide));
@@ -376,9 +383,7 @@ impl App {
             let snap = clone_pixmap(&self.canvas);
             self.whiteboard_cache.insert(slide, snap);
         } else {
-            if !self.slide_cache.contains_key(&slide)
-                && self.slide_cache.len() as i32 >= cap
-            {
+            if !self.slide_cache.contains_key(&slide) && self.slide_cache.len() as i32 >= cap {
                 if self.wps_mode_active() {
                     return;
                 }
@@ -393,9 +398,9 @@ impl App {
 
     pub fn load_page(&mut self, page: i32) {
         let cached = if self.whiteboard {
-            self.whiteboard_cache.get(&page).is_some()
+            self.whiteboard_cache.contains_key(&page)
         } else {
-            self.slide_cache.get(&page).is_some()
+            self.slide_cache.contains_key(&page)
         };
         crate::wps::wps_log(&format!("[PAGE] load page={} has_cache={}", page, cached));
         self.stroke_pts.clear();

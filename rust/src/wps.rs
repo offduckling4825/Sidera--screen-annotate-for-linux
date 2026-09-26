@@ -11,6 +11,17 @@ use std::time::Duration;
 
 use crate::app::now_ms;
 
+const MAX_REQUEST_LINE: usize = 8 * 1024;
+const MAX_HEADER_LINE: usize = 8 * 1024;
+const MAX_HEADERS: usize = 64;
+const MAX_QUERY_VALUE: usize = 16 * 1024;
+
+fn lock_shared(shared: &Arc<Mutex<WpsShared>>) -> std::sync::MutexGuard<'_, WpsShared> {
+    shared
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[derive(Clone, Debug)]
 pub enum WpsEvent {
     SlideshowBegin(i32),
@@ -59,7 +70,10 @@ impl Drop for WpsBridge {
 
 pub fn log_file() -> std::path::PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
-    if std::fs::metadata(&home).map(|m| !m.permissions().readonly()).unwrap_or(false) {
+    if std::fs::metadata(&home)
+        .map(|m| !m.permissions().readonly())
+        .unwrap_or(false)
+    {
         home.join("wps-api-debug.log")
     } else {
         std::path::PathBuf::from("/tmp/wps-api-debug.log")
@@ -69,10 +83,17 @@ pub fn log_file() -> std::path::PathBuf {
 pub fn wps_log(msg: &str) {
     log::info!("[WPSAPI] {}", msg);
     let path = log_file();
-    if std::fs::metadata(&path).map(|m| m.len() > 1024 * 1024).unwrap_or(false) {
+    if std::fs::metadata(&path)
+        .map(|m| m.len() > 1024 * 1024)
+        .unwrap_or(false)
+    {
         let _ = std::fs::remove_file(&path);
     }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = writeln!(f, "{} {}", now_ms(), msg);
     }
 }
@@ -98,9 +119,7 @@ fn addin_dir() -> Option<std::path::PathBuf> {
         }
     }
     cands.push(std::path::PathBuf::from("/usr/share/sidera/wps-addin"));
-    cands
-        .into_iter()
-        .find(|p| p.join("manifest.xml").exists())
+    cands.into_iter().find(|p| p.join("manifest.xml").exists())
 }
 
 pub fn ensure_addin_registered() {
@@ -172,6 +191,9 @@ fn percent_decode(s: &str) -> String {
 fn query_m(query: &str) -> Option<String> {
     for kv in query.split('&') {
         if let Some(v) = kv.strip_prefix("m=") {
+            if v.len() > MAX_QUERY_VALUE {
+                return None;
+            }
             return Some(percent_decode(v));
         }
     }
@@ -231,7 +253,7 @@ fn reply_file(stream: &mut TcpStream, path: &str) {
 
 fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
     // 白板模式：与外界完全隔离，忽略 WPS 事件（与 C++ 版一致）
-    if shared.lock().unwrap().whiteboard {
+    if lock_shared(shared).whiteboard {
         return;
     }
     let line = raw.trim();
@@ -246,7 +268,7 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
     let click = extract_num(line, "click=");
     let name = line.split_whitespace().nth(1).unwrap_or("");
     wps_log(&format!("事件 {} pos={} click={}", name, pos, click));
-    let mut s = shared.lock().unwrap();
+    let mut s = lock_shared(shared);
     if name == "SlideShowBegin" {
         let p = if pos > 0 { pos } else { 1 };
         s.real_pos = p;
@@ -279,15 +301,40 @@ fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>) {
         Err(_) => return,
     });
     let mut line = String::new();
-    if reader.read_line(&mut line).is_err() {
+    if reader.read_line(&mut line).is_err()
+        || line.len() > MAX_REQUEST_LINE
+        || !line.ends_with("\r\n")
+    {
         return;
     }
-    // 丢弃请求头（读一小段，防止连接被半包阻塞）
-    let _ = reader.fill_buf();
+    let mut header_count = 0;
+    loop {
+        let mut header = String::new();
+        match reader.read_line(&mut header) {
+            Ok(0) => return,
+            Ok(n) if n > MAX_HEADER_LINE => return,
+            Ok(_) if header == "\r\n" => break,
+            Ok(_) => {
+                if !header.ends_with("\r\n") || !header.contains(':') {
+                    return;
+                }
+                header_count += 1;
+                if header_count > MAX_HEADERS {
+                    return;
+                }
+            }
+            Err(_) => return,
+        }
+    }
 
     let mut parts = line.split_whitespace();
     let method = parts.next().unwrap_or("");
     let target = parts.next().unwrap_or("");
+    let version = parts.next().unwrap_or("");
+    if parts.next().is_some() || version != "HTTP/1.1" || target.is_empty() {
+        reply(stream, b"Bad Request");
+        return;
+    }
     let (path, query) = match target.split_once('?') {
         Some((p, q)) => (p, q),
         None => (target, ""),
@@ -295,7 +342,7 @@ fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>) {
     let m = query_m(query);
 
     {
-        let mut s = shared.lock().unwrap();
+        let mut s = lock_shared(shared);
         s.last_seen = now_ms();
         let newly = !s.connected;
         if newly {
@@ -324,7 +371,7 @@ fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>) {
         }
         "/poll" => {
             let cmd = {
-                let mut s = shared.lock().unwrap();
+                let mut s = lock_shared(shared);
                 s.queue.pop_front()
             };
             if let Some(c) = &cmd {
@@ -364,7 +411,9 @@ impl WpsBridge {
         wps_log("WPS 桥已启动，监听 127.0.0.1:16666");
         match addin_dir() {
             Some(d) => wps_log(&format!("加载项目录: {}", d.display())),
-            None => wps_log("警告: 未找到 wps-addin 目录，静态分发将返回空（请设置 WPS_ADDIN_DIR）"),
+            None => {
+                wps_log("警告: 未找到 wps-addin 目录，静态分发将返回空（请设置 WPS_ADDIN_DIR）")
+            }
         }
         ensure_addin_registered();
         Some(WpsBridge {
@@ -375,26 +424,26 @@ impl WpsBridge {
     }
 
     pub fn connected(&self) -> bool {
-        self.shared.lock().unwrap().connected
+        lock_shared(&self.shared).connected
     }
 
     pub fn enqueue(&self, cmd: &str) {
-        self.shared.lock().unwrap().queue.push_back(cmd.to_string());
+        lock_shared(&self.shared).queue.push_back(cmd.to_string());
         wps_log(&format!("入队指令 {}", cmd));
     }
 
     pub fn set_whiteboard(&self, on: bool) {
-        self.shared.lock().unwrap().whiteboard = on;
+        lock_shared(&self.shared).whiteboard = on;
     }
 
     pub fn take_events(&self) -> Vec<WpsEvent> {
-        let mut s = self.shared.lock().unwrap();
+        let mut s = lock_shared(&self.shared);
         std::mem::take(&mut s.events)
     }
 
     /// 心跳检查：3 秒无请求判离线
     pub fn tick(&self) -> bool {
-        let mut s = self.shared.lock().unwrap();
+        let mut s = lock_shared(&self.shared);
         if s.connected && now_ms() - s.last_seen > 3000 {
             s.connected = false;
             // 不再清 real_pos（避免重连把同页误判为换页）
@@ -440,7 +489,10 @@ mod tests {
         }
         assert!(ready, "服务未就绪");
 
-        let hello = request(16666, "GET /hello?m=sidera-bridge HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        let hello = request(
+            16666,
+            "GET /hello?m=sidera-bridge HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        );
         assert!(hello.contains("OK sidera"), "hello 响应异常: {hello:?}");
 
         let push = request(
@@ -451,13 +503,18 @@ mod tests {
 
         // 入队 NEXT 后 /poll 应返回 NEXT
         bridge.enqueue("NEXT");
-        let poll = request(16666, "GET /poll HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        let poll = request(
+            16666,
+            "GET /poll HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        );
         assert!(poll.contains("NEXT"), "poll 响应异常: {poll:?}");
 
         // 事件应被记录
         let events = bridge.take_events();
         assert!(
-            events.iter().any(|e| matches!(e, WpsEvent::SlideshowBegin(3))),
+            events
+                .iter()
+                .any(|e| matches!(e, WpsEvent::SlideshowBegin(3))),
             "未收到 SlideshowBegin 事件: {events:?}"
         );
 

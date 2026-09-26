@@ -15,8 +15,8 @@
 set -e
 
 ARG="${1:-amd64}"
-HERE="$(cd "$(dirname "$0")" && pwd)"      # .../cpp/rust
-REPO="$(cd "$HERE/.." && pwd)"             # .../cpp
+HERE="$(cd "$(dirname "$0")" && pwd)"      # .../repo/rust
+REPO="$(cd "$HERE/.." && pwd)"             # .../repo
 
 case "$ARG" in
   amd64)        SRC_ARCH=amd64;  DEB_ARCH=amd64;;
@@ -31,9 +31,10 @@ VERSION="3.0-Electro-testing"
 
 # 优先容器构建产物，其次普通 release
 BIN="$HERE/target/container-$SRC_ARCH/release/sidera"
+[ -f "$BIN" ] || BIN="$REPO/target/release/sidera"
 [ -f "$BIN" ] || BIN="$HERE/target/release/sidera"
 if [ ! -f "$BIN" ]; then
-  echo "错误: 找不到 $SRC_ARCH 二进制，请先运行: ./build_container.sh $ARG"
+  echo "错误: 找不到 $SRC_ARCH 二进制，请先运行: ./rust/build_container.sh $ARG"
   exit 1
 fi
 

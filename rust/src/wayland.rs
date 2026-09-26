@@ -28,13 +28,17 @@ use smithay_client_toolkit::{
 };
 use tiny_skia::Pixmap;
 use wayland_client::globals::registry_queue_init;
-use wayland_client::protocol::{wl_buffer, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface, wl_touch};
+use wayland_client::protocol::wl_keyboard::{KeyState, KeymapFormat};
+use wayland_client::protocol::{
+    wl_buffer, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface, wl_touch,
+};
+use wayland_client::{Connection, QueueHandle};
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1;
-use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::{self, WpFractionalScaleV1};
+use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::{
+    self, WpFractionalScaleV1,
+};
 use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
 use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
-use wayland_client::protocol::wl_keyboard::{KeyState, KeymapFormat};
-use wayland_client::{Connection, QueueHandle};
 
 use crate::app::App;
 use crate::backend::{Backend, IRect, Key};
@@ -44,6 +48,7 @@ use crate::{Ip, Rt, Timers};
 
 // ---- 虚拟键盘协议绑定（从仓库 XML 生成）----
 mod vk {
+    #[allow(clippy::single_component_path_imports)]
     use wayland_client;
     use wayland_client::protocol::*;
     pub mod __interfaces {
@@ -258,25 +263,34 @@ impl Backend for WlPlat {
             let bw = back.width() as i32;
             let data = back.data_mut();
             let src = pm.data();
-            let pw = pm.width() as i32;
-            let ph = pm.height() as i32;
+            let src_w = pm.width() as i32;
+            let src_h = pm.height() as i32;
+            if src_w <= 0 || src_h <= 0 {
+                return;
+            }
+            let pw = ((src_w as f64) * sc).round().max(1.0) as i32;
+            let ph = ((src_h as f64) * sc).round().max(1.0) as i32;
             for row in 0..ph {
                 let dy = y + row;
                 if dy < 0 || dy >= h {
                     continue;
                 }
+                let src_row = ((row as f64) / sc).floor().min((src_h - 1) as f64) as i32;
                 for col in 0..pw {
                     let dx = x + col;
                     if dx < 0 || dx >= w {
                         continue;
                     }
-                    let si = ((row * pw + col) * 4) as usize;
+                    let src_col = ((col as f64) / sc).floor().min((src_w - 1) as f64) as i32;
+                    let si = ((src_row * src_w + src_col) * 4) as usize;
                     let di = ((dy * bw + dx) * 4) as usize;
                     data[di..di + 4].copy_from_slice(&src[si..si + 4]);
                 }
             }
         }
-        self.union_dirty(x, y, pm.width() as i32, pm.height() as i32);
+        let dirty_w = ((pm.width() as f64) * sc).round().max(1.0) as i32;
+        let dirty_h = ((pm.height() as f64) * sc).round().max(1.0) as i32;
+        self.union_dirty(x, y, dirty_w, dirty_h);
     }
     fn flush(&self) {
         let Some((x0, y0, x1, y1)) = self.dirty.get() else {
@@ -451,6 +465,8 @@ impl wayland_client::Dispatch<wl_buffer::WlBuffer, ()> for WlState {
                     }
                 }
                 p.busy.set(busy);
+                drop(bufs);
+                p.flush();
             }
         }
     }
@@ -613,7 +629,9 @@ impl LayerShellHandler for WlState {
         if !self.splash_shown {
             self.splash_shown = true;
             if std::env::var("SIDERA_NO_SPLASH").is_err() {
-                self.rt.backend.show_splash(&self.rt.fonts, self.rt.icon_big.as_ref(), 1400);
+                self.rt
+                    .backend
+                    .show_splash(&self.rt.fonts, self.rt.icon_big.as_ref(), 1400);
             }
         }
         crate::apply_input_shape(&self.rt, &self.app);
@@ -688,7 +706,7 @@ impl PointerHandler for WlState {
         events: &[PointerEvent],
     ) {
         for ev in events {
-            if &ev.surface != &self.surface {
+            if ev.surface != self.surface {
                 continue;
             }
             let x = ev.position.0 as i32;
@@ -758,6 +776,9 @@ impl TouchHandler for WlState {
             TouchKind::Begin,
             d,
         );
+        self.ip
+            .touch_pos
+            .insert(id, (position.0 as i32, position.1 as i32));
     }
     fn up(
         &mut self,
@@ -768,18 +789,23 @@ impl TouchHandler for WlState {
         _time: u32,
         id: i32,
     ) {
+        let Some((x, y)) = self.ip.touch_pos.get(&id).copied() else {
+            self.ip.touch_shape.remove(&id);
+            return;
+        };
         crate::handle_touch(
             &self.rt,
             &mut self.app,
             &mut self.ip,
             self.wps.as_ref(),
             id,
-            0,
-            0,
+            x,
+            y,
             TouchKind::End,
             0.0,
         );
         self.ip.touch_shape.remove(&id);
+        self.ip.touch_pos.remove(&id);
     }
     fn motion(
         &mut self,
@@ -802,6 +828,9 @@ impl TouchHandler for WlState {
             TouchKind::Update,
             d,
         );
+        self.ip
+            .touch_pos
+            .insert(id, (position.0 as i32, position.1 as i32));
     }
     fn shape(
         &mut self,
@@ -824,13 +853,9 @@ impl TouchHandler for WlState {
         _orientation: f64,
     ) {
     }
-    fn cancel(
-        &mut self,
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-        _touch: &wl_touch::WlTouch,
-    ) {
+    fn cancel(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _touch: &wl_touch::WlTouch) {
         self.app.reset_palm_gesture();
+        self.ip.reset_touch_state();
     }
 }
 
