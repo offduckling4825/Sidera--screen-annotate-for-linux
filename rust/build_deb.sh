@@ -31,7 +31,7 @@ VERSION="3.0-Electro-testing"
 
 # 优先容器构建产物，其次普通 release
 BIN="$HERE/target/container-$SRC_ARCH/release/sidera"
-[ -f "$BIN" ] || BIN="$HERE/target/release/sidera"
+[ -f "$BIN" ] || BIN="$REPO/target/release/sidera"
 if [ ! -f "$BIN" ]; then
   echo "错误: 找不到 $SRC_ARCH 二进制，请先运行: ./build_container.sh $ARG"
   exit 1
