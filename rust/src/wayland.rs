@@ -265,6 +265,9 @@ impl Backend for WlPlat {
             let src = pm.data();
             let src_w = pm.width() as i32;
             let src_h = pm.height() as i32;
+            if src_w <= 0 || src_h <= 0 {
+                return;
+            }
             let pw = ((src_w as f64) * sc).round().max(1.0) as i32;
             let ph = ((src_h as f64) * sc).round().max(1.0) as i32;
             for row in 0..ph {
@@ -786,7 +789,10 @@ impl TouchHandler for WlState {
         _time: u32,
         id: i32,
     ) {
-        let (x, y) = self.ip.touch_pos.get(&id).copied().unwrap_or((0, 0));
+        let Some((x, y)) = self.ip.touch_pos.get(&id).copied() else {
+            self.ip.touch_shape.remove(&id);
+            return;
+        };
         crate::handle_touch(
             &self.rt,
             &mut self.app,
@@ -848,6 +854,7 @@ impl TouchHandler for WlState {
     ) {
     }
     fn cancel(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _touch: &wl_touch::WlTouch) {
+        self.app.reset_palm_gesture();
         self.ip.reset_touch_state();
     }
 }
