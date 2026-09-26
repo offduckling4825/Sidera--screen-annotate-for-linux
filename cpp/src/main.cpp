@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Carl_Jin   GNU GPL v3
 #include "app.h"
 #include "widget.h"
+#ifdef SIDERA_HAVE_WAYLAND
+#include "backend_wayland.h"
+#endif
 
 // 全局唯一实例
 AppState g;
@@ -9,14 +12,14 @@ AppState g;
 // ============================================================
 // 3. 平台检测
 // ============================================================
-static QString detectPlatform() {
-  QByteArray sessionType = qgetenv("XDG_SESSION_TYPE").toLower();
-  if (sessionType == "wayland") {
-    qWarning() << "[WARN] 检测到当前运行于 Wayland 会话环境，Sidera 将通过 XWayland 兼容层运行。";
-    return "wayland";
-  }
-  return "x11";
+// 是否处于原生 Wayland 会话（此时走裸协议后端，Qt 用 offscreen 平台）
+#ifdef SIDERA_HAVE_WAYLAND
+static bool isWaylandSession() {
+  if (qgetenv("XDG_SESSION_TYPE").toLower() == "wayland") return true;
+  if (!qgetenv("WAYLAND_DISPLAY").isEmpty()) return true;
+  return false;
 }
+#endif
 
 // ============================================================
 // 4. 软件渲染
@@ -71,11 +74,20 @@ static void processX11Hotkeys() {
 // ============================================================
 int main(int argc, char* argv[]) {
   setupSoftwareRendering();
+
+  // 先于 QApplication 探测：Wayland 会话用 offscreen 平台（Qt 不连真实显示，显示交给裸 Wayland 后端）
+#ifdef SIDERA_HAVE_WAYLAND
+  bool wayland = isWaylandSession();
+  if (wayland) qputenv("QT_QPA_PLATFORM", "offscreen");
+#else
+  bool wayland = false;
+#endif
+
   QCoreApplication::setAttribute(Qt::AA_CompressHighFrequencyEvents, false); // 触摸/鼠标移动不压缩，绘制更顺
   QApplication app(argc, argv);
   app.setQuitOnLastWindowClosed(false);   // 关闭设置窗口不会退出整个进程
 
-  g.platform = detectPlatform();
+  g.platform = wayland ? "wayland" : "x11";
   qDebug() << "[INFO] 平台:" << g.platform;
 
   // 单实例：先探测是否已有实例；有则唤醒其窗口并退出，无则清理残留后监听
@@ -104,6 +116,20 @@ int main(int argc, char* argv[]) {
       if (g.settingsWin) { g.settingsWin->show(); g.settingsWin->raise(); g.settingsWin->activateWindow(); }
     });
   }
+
+  // ============================================================
+  // Wayland 路径：裸协议后端（覆盖层 + 软件绘图），不创建任何 Qt Widgets
+  // ============================================================
+#ifdef SIDERA_HAVE_WAYLAND
+  if (wayland) {
+    WlBackend* wl = new WlBackend(&app);
+    if (!wl->init()) {
+      qWarning() << "[WARN] Wayland 后端初始化失败";
+      return 1;
+    }
+    return app.exec();
+  }
+#endif
 
   // 启动闪屏：延后 2 秒主界面初始化，期间显示进度动画
   showSplashFor(app);

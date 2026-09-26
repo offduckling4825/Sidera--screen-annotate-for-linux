@@ -1,13 +1,13 @@
 #!/bin/bash
 # arm64 deb 打包脚本
 # 用法: ./build_deb_aarch64.sh
-# 产物: sidera_2.6-Geo-stable_arm64.deb
+# 产物: sidera_Electro-testing_arm64.deb
 
 set -e
 
 BINARY="annotate_aarch64"
 PKG_NAME="sidera"
-VERSION="2.6-Geo-stable"
+VERSION="Electro-testing"
 ARCH="arm64"
 
 if [ ! -f "$BINARY" ]; then
@@ -29,15 +29,15 @@ chmod 755 "${PKG_DIR}/usr/bin/sidera"
 
 # ---------- 拷贝 WPS 加载项部署包（本 deb 已含桥接加载项 + 安装脚本）----------
 mkdir -p "${PKG_DIR}/usr/share/sidera/wps-addin"
-cp -r wps-addin/* "${PKG_DIR}/usr/share/sidera/wps-addin/"
-chmod 755 "${PKG_DIR}/usr/share/sidera/wps-addin/install.sh"
-install -m 755 wps-addin/install.sh "${PKG_DIR}/usr/bin/sidera-wps-addin-install"
+cp -r ../wps-addin/* "${PKG_DIR}/usr/share/sidera/wps-addin/"
+chmod 755 ../wps-addin/install.sh
+install -m 755 ../wps-addin/install.sh "${PKG_DIR}/usr/bin/sidera-wps-addin-install"
 
 # ---------- 教室部署说明文档 ----------
 mkdir -p "${PKG_DIR}/usr/share/doc/sidera"
-cp README.classroom.md "${PKG_DIR}/usr/share/doc/sidera/README.classroom.md"
-cp LICENSE "${PKG_DIR}/usr/share/doc/sidera/copyright"
-cp LICENSE "${PKG_DIR}/usr/share/doc/sidera/LICENSE"
+cp ../README.classroom.md "${PKG_DIR}/usr/share/doc/sidera/README.classroom.md"
+cp ../LICENSE "${PKG_DIR}/usr/share/doc/sidera/copyright"
+cp ../LICENSE "${PKG_DIR}/usr/share/doc/sidera/LICENSE"
 
 # ---------- DEBIAN/control ----------
 cat > "${PKG_DIR}/DEBIAN/control" << EOF
@@ -72,9 +72,9 @@ EOF
 mkdir -p "${PKG_DIR}/usr/share/icons/hicolor/scalable/apps"
 mkdir -p "${PKG_DIR}/usr/share/icons/hicolor/256x256/apps"
 mkdir -p "${PKG_DIR}/usr/share/pixmaps"
-cp sidera.svg "${PKG_DIR}/usr/share/icons/hicolor/scalable/apps/sidera.svg"
-cp sidera.svg "${PKG_DIR}/usr/share/pixmaps/sidera.svg"
-cp sidera.png "${PKG_DIR}/usr/share/icons/hicolor/256x256/apps/sidera.png"
+cp ../sidera.svg "${PKG_DIR}/usr/share/icons/hicolor/scalable/apps/sidera.svg"
+cp ../sidera.svg "${PKG_DIR}/usr/share/pixmaps/sidera.svg"
+cp ../sidera.png "${PKG_DIR}/usr/share/icons/hicolor/256x256/apps/sidera.png"
 
 # ---------- 打包（--root-owner-group 消除 owner 警告）----------
 dpkg-deb --build --root-owner-group "${PKG_DIR}"

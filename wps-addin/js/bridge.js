@@ -21,9 +21,17 @@ function OnSaPing() {
 }
 
 function bridgeView() {
-    var a = window.Application ? window.Application.ActivePresentation : null
-    var sw = a ? a.SlideShowWindow : null
-    return sw ? sw.View : null
+    try {
+        var app = window.Application
+        if (!app) return null
+        var a = app.ActivePresentation
+        if (!a && app.Presentations && app.Presentations.Count > 0)
+            a = app.Presentations.Item(1)
+        var sw = a ? a.SlideShowWindow : null
+        if (!sw && app.SlideShowWindows && app.SlideShowWindows.Count > 0)
+            sw = app.SlideShowWindows.Item(1)
+        return sw ? sw.View : null
+    } catch (e) { return null }
 }
 function bridgeState() {
     try {
@@ -69,24 +77,39 @@ function bridgePushIfChanged() {
     } catch (e) {}
 }
 function startBridge() {
+    // 启动探针：只要本 JS 被执行，就先报到一次，便于诊断
+    try {
+        if (!window._sideraBootPinged) {
+            window._sideraBootPinged = true
+            bridgeFetch('/hello?m=sidera-boot')
+        }
+    } catch (e) {}
     if (typeof window.Application == 'undefined' || !window.Application) {
         setTimeout(startBridge, 500)          // 等 Application 就绪
         return
     }
+    // 事件监听为“可选增强”：即使没有 ApiEvent，也要启动轮询上报真实页号
     try {
-        if (!window.Application.ApiEvent) { setTimeout(startBridge, 500); return }
-        for (var i = 0; i < BridgeSlideEvents.length; i++) {
-            (function (ev) {
-                window.Application.ApiEvent.AddApiEventListener(ev, function () {
-                    var st = bridgeState()
-                    bridgeFetch('/push?m=' + encodeURIComponent('EVENT ' + ev + ' pos=' + st.pos + ' click=' + st.click))
-                })
-            })(BridgeSlideEvents[i])
+        if (window.Application.ApiEvent) {
+            for (var i = 0; i < BridgeSlideEvents.length; i++) {
+                (function (ev) {
+                    window.Application.ApiEvent.AddApiEventListener(ev, function () {
+                        var st = bridgeState()
+                        bridgeFetch('/push?m=' + encodeURIComponent('EVENT ' + ev + ' pos=' + st.pos + ' click=' + st.click))
+                    })
+                })(BridgeSlideEvents[i])
+            }
+        } else {
+            setTimeout(startBridge, 500)      // 稍后再尝试注册事件，但不阻塞下面的轮询
         }
-        bridgeFetch('/hello?m=sidera-bridge')
+    } catch (e) {}
+    bridgeFetch('/hello?m=sidera-bridge')
+    // 轮询 /poll 取 NEXT/PREV；并每 300ms 上报状态变化（点屏幕翻页靠这个覆盖）
+    if (!window._sideraTimerStarted) {
+        window._sideraTimerStarted = true
         setInterval(function () {
             bridgeFetch('/poll')
             bridgePushIfChanged()              // 状态变化即上报（前后翻都覆盖）
         }, 300)
-    } catch (e) {}
+    }
 }
