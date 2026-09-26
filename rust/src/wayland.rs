@@ -28,13 +28,17 @@ use smithay_client_toolkit::{
 };
 use tiny_skia::Pixmap;
 use wayland_client::globals::registry_queue_init;
-use wayland_client::protocol::{wl_buffer, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface, wl_touch};
+use wayland_client::protocol::wl_keyboard::{KeyState, KeymapFormat};
+use wayland_client::protocol::{
+    wl_buffer, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface, wl_touch,
+};
+use wayland_client::{Connection, QueueHandle};
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1;
-use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::{self, WpFractionalScaleV1};
+use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::{
+    self, WpFractionalScaleV1,
+};
 use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
 use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
-use wayland_client::protocol::wl_keyboard::{KeyState, KeymapFormat};
-use wayland_client::{Connection, QueueHandle};
 
 use crate::app::App;
 use crate::backend::{Backend, IRect, Key};
@@ -44,6 +48,7 @@ use crate::{Ip, Rt, Timers};
 
 // ---- 虚拟键盘协议绑定（从仓库 XML 生成）----
 mod vk {
+    #[allow(clippy::single_component_path_imports)]
     use wayland_client;
     use wayland_client::protocol::*;
     pub mod __interfaces {
@@ -621,7 +626,9 @@ impl LayerShellHandler for WlState {
         if !self.splash_shown {
             self.splash_shown = true;
             if std::env::var("SIDERA_NO_SPLASH").is_err() {
-                self.rt.backend.show_splash(&self.rt.fonts, self.rt.icon_big.as_ref(), 1400);
+                self.rt
+                    .backend
+                    .show_splash(&self.rt.fonts, self.rt.icon_big.as_ref(), 1400);
             }
         }
         crate::apply_input_shape(&self.rt, &self.app);
@@ -696,7 +703,7 @@ impl PointerHandler for WlState {
         events: &[PointerEvent],
     ) {
         for ev in events {
-            if &ev.surface != &self.surface {
+            if ev.surface != self.surface {
                 continue;
             }
             let x = ev.position.0 as i32;
@@ -766,9 +773,13 @@ impl TouchHandler for WlState {
             TouchKind::Begin,
             d,
         );
-        self.ip.touch_pos.insert(id, (position.0 as i32, position.1 as i32));
+        self.ip
+            .touch_pos
+            .insert(id, (position.0 as i32, position.1 as i32));
     }
-    fn up(        _conn: &Connection,
+    fn up(
+        &mut self,
+        _conn: &Connection,
         _qh: &QueueHandle<Self>,
         _touch: &wl_touch::WlTouch,
         _serial: u32,
@@ -836,12 +847,7 @@ impl TouchHandler for WlState {
         _orientation: f64,
     ) {
     }
-    fn cancel(
-        &mut self,
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-        _touch: &wl_touch::WlTouch,
-    ) {
+    fn cancel(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _touch: &wl_touch::WlTouch) {
         self.ip.reset_touch_state();
     }
 }

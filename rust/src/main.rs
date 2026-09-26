@@ -2,6 +2,11 @@
 // Sidera - 程序入口（纯 Rust / X11，无 Qt）
 // Copyright (C) 2026 Carl_Jin   GNU GPL v3
 // ============================================================
+#![allow(
+    clippy::derivable_impls,
+    clippy::too_many_arguments,
+    clippy::manual_checked_ops
+)]
 mod app;
 mod backend;
 mod gesture;
@@ -31,7 +36,7 @@ use app::{now_ms, App};
 use backend::{Backend, IRect, Key};
 use gesture::TouchKind;
 use text::Fonts;
-use ui::{Btn, MoreHit, PopupHit, R, SetHit};
+use ui::{Btn, MoreHit, PopupHit, SetHit, R};
 use wps::{WpsBridge, WpsEvent};
 
 pub(crate) struct Ip {
@@ -97,7 +102,8 @@ impl Rt {
         if x2 <= x || y2 <= y {
             return;
         }
-        if let Some(pm) = ui::render_region(app, &self.fonts, self.icon.as_ref(), x, y, x2 - x, y2 - y)
+        if let Some(pm) =
+            ui::render_region(app, &self.fonts, self.icon.as_ref(), x, y, x2 - x, y2 - y)
         {
             self.backend.present(&pm, x, y);
         }
@@ -352,7 +358,8 @@ pub(crate) fn go_next(rt: &Rt, app: &mut App, wps: Option<&WpsBridge>) {
 
 pub(crate) fn exit_presentation(rt: &Rt, app: &mut App) {
     if app.whiteboard {
-        app.whiteboard_bg_index = (app.whiteboard_bg_index + 1) % app::WHITEBOARD_COLORS.len() as i32;
+        app.whiteboard_bg_index =
+            (app.whiteboard_bg_index + 1) % app::WHITEBOARD_COLORS.len() as i32;
         rt.redraw_full(app);
         return;
     }
@@ -437,7 +444,8 @@ pub(crate) fn collect_system_info(rt: &Rt, app: &App) -> String {
     ));
     s.push_str(&format!(
         "屏幕: {}x{}\n",
-        rt.screen_size().0, rt.screen_size().1
+        rt.screen_size().0,
+        rt.screen_size().1
     ));
     s.push_str(&format!(
         "模式: {}\n",
@@ -453,7 +461,9 @@ pub(crate) fn collect_system_info(rt: &Rt, app: &App) -> String {
 }
 
 pub(crate) fn open_settings(rt: &Rt, app: &mut App) {
-    if std::env::var("SIDERA_TRACE").is_ok() { log::info!("[SETTINGS] 打开"); }
+    if std::env::var("SIDERA_TRACE").is_ok() {
+        log::info!("[SETTINGS] 打开");
+    }
     app.settings_open = true;
     app.open_anim = now_ms();
     close_all_popups(app);
@@ -480,7 +490,9 @@ fn apply_slider(app: &mut App, id: ui::SliderId, v: f32) {
 }
 
 pub(crate) fn handle_settings_hit(rt: &Rt, app: &mut App, hit: SetHit) {
-    if std::env::var("SIDERA_TRACE").is_ok() { log::info!("[SETTINGS] 命中 {:?}", hit); }
+    if std::env::var("SIDERA_TRACE").is_ok() {
+        log::info!("[SETTINGS] 命中 {:?}", hit);
+    }
     match hit {
         SetHit::Autostart => ui::set_autostart(!ui::is_autostart()),
         SetHit::WpsDebug => {
@@ -553,7 +565,12 @@ pub(crate) fn on_press(
     }
     log::debug!(
         "[INPUT] press ({},{}) btn={} mode={} screen={}x{}",
-        x, y, button, app.mode, app.screen_w, app.screen_h
+        x,
+        y,
+        button,
+        app.mode,
+        app.screen_w,
+        app.screen_h
     );
     if app.settings_open {
         // 先判断滑条（拖动），再判断开关/按钮
@@ -608,7 +625,15 @@ pub(crate) fn on_press(
     for right in [false, true] {
         for (k, r) in ui::sidebar_buttons(app, right) {
             if first_hit(r, x, y) {
-                log::debug!("[INPUT] hit {:?} right={} rect=({},{} {}x{})", k, right, r.x, r.y, r.w, r.h);
+                log::debug!(
+                    "[INPUT] hit {:?} right={} rect=({},{} {}x{})",
+                    k,
+                    right,
+                    r.x,
+                    r.y,
+                    r.w,
+                    r.h
+                );
                 app.popup_on_right = right;
                 handle_btn(rt, app, wps, k, right);
                 return;
@@ -1044,26 +1069,44 @@ fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev
         Event::XinputTouchBegin(e) => {
             let x = to_logical(rt, (e.event_x as f64 / 65536.0).round() as i32);
             let y = to_logical(rt, (e.event_y as f64 / 65536.0).round() as i32);
-            let d = ip.touch_shape.get(&(e.detail as i32)).copied().unwrap_or_else(|| {
-                rt.backend
-                    .as_any()
-                    .downcast_ref::<x11::X11Plat>()
-                    .map(|xp| xp.touch_diameter(e.deviceid, &e.valuator_mask, &e.axisvalues))
-                    .unwrap_or(0.0)
-            });
+            let d = ip
+                .touch_shape
+                .get(&(e.detail as i32))
+                .copied()
+                .unwrap_or_else(|| {
+                    rt.backend
+                        .as_any()
+                        .downcast_ref::<x11::X11Plat>()
+                        .map(|xp| xp.touch_diameter(e.deviceid, &e.valuator_mask, &e.axisvalues))
+                        .unwrap_or(0.0)
+                });
             handle_touch(rt, app, ip, wps, e.detail as i32, x, y, TouchKind::Begin, d);
         }
         Event::XinputTouchUpdate(e) => {
             let x = to_logical(rt, (e.event_x as f64 / 65536.0).round() as i32);
             let y = to_logical(rt, (e.event_y as f64 / 65536.0).round() as i32);
-            let d = ip.touch_shape.get(&(e.detail as i32)).copied().unwrap_or_else(|| {
-                rt.backend
-                    .as_any()
-                    .downcast_ref::<x11::X11Plat>()
-                    .map(|xp| xp.touch_diameter(e.deviceid, &e.valuator_mask, &e.axisvalues))
-                    .unwrap_or(0.0)
-            });
-            handle_touch(rt, app, ip, wps, e.detail as i32, x, y, TouchKind::Update, d);
+            let d = ip
+                .touch_shape
+                .get(&(e.detail as i32))
+                .copied()
+                .unwrap_or_else(|| {
+                    rt.backend
+                        .as_any()
+                        .downcast_ref::<x11::X11Plat>()
+                        .map(|xp| xp.touch_diameter(e.deviceid, &e.valuator_mask, &e.axisvalues))
+                        .unwrap_or(0.0)
+                });
+            handle_touch(
+                rt,
+                app,
+                ip,
+                wps,
+                e.detail as i32,
+                x,
+                y,
+                TouchKind::Update,
+                d,
+            );
         }
         Event::XinputTouchEnd(e) => {
             let x = to_logical(rt, (e.event_x as f64 / 65536.0).round() as i32);
@@ -1214,8 +1257,6 @@ pub(crate) fn tick(rt: &Rt, app: &mut App, wps_bridge: &mut Option<WpsBridge>, t
         }
     }
 
-
-
     // 心跳
     if t.last_ping.elapsed() >= Duration::from_millis(1000) {
         t.last_ping = Instant::now();
@@ -1341,7 +1382,6 @@ fn main() {
         }
     }
 
-
     let mut canvas = Pixmap::new(x11.width as u32, x11.height as u32).unwrap();
     canvas.fill(tiny_skia::Color::TRANSPARENT);
     let mut app = App::new(canvas, logical_w, logical_h);
@@ -1403,13 +1443,25 @@ fn main() {
         }
         let c = app.pen_color();
         paint::draw_stroke_union(&mut app.canvas, c, &pts, tiny_skia::Transform::identity());
-        if let Some(pm) =
-            ui::render_region(&app, &rt.fonts, rt.icon.as_ref(), 0, 0, app.screen_w, app.screen_h)
-        {
+        if let Some(pm) = ui::render_region(
+            &app,
+            &rt.fonts,
+            rt.icon.as_ref(),
+            0,
+            0,
+            app.screen_w,
+            app.screen_h,
+        ) {
             let mut rgba = vec![0u8; pm.data().len()];
             for (i, px) in pm.data().chunks_exact(4).enumerate() {
                 let a = px[3] as u32;
-                let un = |c: u8| if a == 0 { 0 } else { ((c as u32 * 255 + a / 2) / a).min(255) as u8 };
+                let un = |c: u8| {
+                    if a == 0 {
+                        0
+                    } else {
+                        ((c as u32 * 255 + a / 2) / a).min(255) as u8
+                    }
+                };
                 rgba[i * 4] = un(px[0]);
                 rgba[i * 4 + 1] = un(px[1]);
                 rgba[i * 4 + 2] = un(px[2]);
@@ -1427,13 +1479,25 @@ fn main() {
     // 调试：直接打开设置面板并渲染保存
     if let Ok(path) = std::env::var("SIDERA_DEBUG_SETTINGS") {
         app.settings_open = true;
-        if let Some(pm) =
-            ui::render_region(&app, &rt.fonts, rt.icon.as_ref(), 0, 0, app.screen_w, app.screen_h)
-        {
+        if let Some(pm) = ui::render_region(
+            &app,
+            &rt.fonts,
+            rt.icon.as_ref(),
+            0,
+            0,
+            app.screen_w,
+            app.screen_h,
+        ) {
             let mut rgba = vec![0u8; pm.data().len()];
             for (i, px) in pm.data().chunks_exact(4).enumerate() {
                 let a = px[3] as u32;
-                let un = |c: u8| if a == 0 { 0 } else { ((c as u32 * 255 + a / 2) / a).min(255) as u8 };
+                let un = |c: u8| {
+                    if a == 0 {
+                        0
+                    } else {
+                        ((c as u32 * 255 + a / 2) / a).min(255) as u8
+                    }
+                };
                 rgba[i * 4] = un(px[0]);
                 rgba[i * 4 + 1] = un(px[1]);
                 rgba[i * 4 + 2] = un(px[2]);
@@ -1463,7 +1527,11 @@ fn main() {
                     .iter()
                     .map(|x| (x.x, x.y, x.width, x.height))
                     .collect();
-                log::info!("[SHAPE] 输入区域矩形 {} 个: {:?}", r.rectangles.len(), coords);
+                log::info!(
+                    "[SHAPE] 输入区域矩形 {} 个: {:?}",
+                    r.rectangles.len(),
+                    coords
+                );
             }
             None => log::info!("[SHAPE] 查询失败"),
         }
@@ -1480,7 +1548,11 @@ fn main() {
                 .iter()
                 .map(|x| (x.x, x.y, x.width, x.height))
                 .collect();
-            log::info!("[SHAPE] 绘画模式输入区域 {} 个: {:?}", r.rectangles.len(), coords);
+            log::info!(
+                "[SHAPE] 绘画模式输入区域 {} 个: {:?}",
+                r.rectangles.len(),
+                coords
+            );
         }
         x11.destroy_window(win);
         return;
@@ -1512,7 +1584,8 @@ fn main() {
 
     // 启动闪屏
     if std::env::var("SIDERA_NO_SPLASH").is_err() {
-        rt.backend.show_splash(&rt.fonts, rt.icon_big.as_ref(), 2000);
+        rt.backend
+            .show_splash(&rt.fonts, rt.icon_big.as_ref(), 2000);
     }
 
     // 初始光标模式 + 侧边栏输入区域
@@ -1529,7 +1602,6 @@ fn main() {
     }
 
     let mut ip = Ip::default();
-
 
     let mut timers = Timers::new();
 

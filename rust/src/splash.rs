@@ -51,7 +51,13 @@ pub fn draw(fonts: &Fonts, icon: Option<&Pixmap>, w: u32, h: u32, progress: u32)
         Transform::identity(),
     ) {
         if let Some(p) = rounded(1.5, 1.5, fw - 3.0, fh - 3.0, 20.0) {
-            pm.fill_path(&p, &paint_shader(sh), FillRule::Winding, Transform::identity(), None);
+            pm.fill_path(
+                &p,
+                &paint_shader(sh),
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
         }
     }
     // 图标
@@ -116,13 +122,20 @@ pub fn draw(fonts: &Fonts, icon: Option<&Pixmap>, w: u32, h: u32, progress: u32)
             Transform::identity(),
         ) {
             if let Some(p) = rounded(bx, byy, pw, bh, 5.0) {
-                pm.fill_path(&p, &paint_shader(sh), FillRule::Winding, Transform::identity(), None);
+                pm.fill_path(
+                    &p,
+                    &paint_shader(sh),
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
             }
         }
     }
     pm
 }
 
+#[allow(clippy::manual_checked_ops)]
 pub fn show(x11: &X11, fonts: &Fonts, icon: Option<&Pixmap>, dur_ms: u64) {
     let w = 460;
     let h = 210;
@@ -134,7 +147,11 @@ pub fn show(x11: &X11, fonts: &Fonts, icon: Option<&Pixmap>, dur_ms: u64) {
     let start = Instant::now();
     loop {
         let el = start.elapsed().as_millis() as u64;
-        let p = if dur_ms == 0 { 100 } else { (el * 100 / dur_ms).min(100) };
+        let p = if dur_ms == 0 {
+            100
+        } else {
+            (el * 100 / dur_ms).min(100)
+        };
         let pm = draw(fonts, icon, w as u32, h as u32, p as u32);
         let _ = x11.put_pixmap(win, gc, &pm, 0, 0);
         if el >= dur_ms {

@@ -17,7 +17,9 @@ const MAX_HEADERS: usize = 64;
 const MAX_QUERY_VALUE: usize = 16 * 1024;
 
 fn lock_shared(shared: &Arc<Mutex<WpsShared>>) -> std::sync::MutexGuard<'_, WpsShared> {
-    shared.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    shared
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[derive(Clone, Debug)]
@@ -68,7 +70,10 @@ impl Drop for WpsBridge {
 
 pub fn log_file() -> std::path::PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
-    if std::fs::metadata(&home).map(|m| !m.permissions().readonly()).unwrap_or(false) {
+    if std::fs::metadata(&home)
+        .map(|m| !m.permissions().readonly())
+        .unwrap_or(false)
+    {
         home.join("wps-api-debug.log")
     } else {
         std::path::PathBuf::from("/tmp/wps-api-debug.log")
@@ -78,10 +83,17 @@ pub fn log_file() -> std::path::PathBuf {
 pub fn wps_log(msg: &str) {
     log::info!("[WPSAPI] {}", msg);
     let path = log_file();
-    if std::fs::metadata(&path).map(|m| m.len() > 1024 * 1024).unwrap_or(false) {
+    if std::fs::metadata(&path)
+        .map(|m| m.len() > 1024 * 1024)
+        .unwrap_or(false)
+    {
         let _ = std::fs::remove_file(&path);
     }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = writeln!(f, "{} {}", now_ms(), msg);
     }
 }
@@ -107,9 +119,7 @@ fn addin_dir() -> Option<std::path::PathBuf> {
         }
     }
     cands.push(std::path::PathBuf::from("/usr/share/sidera/wps-addin"));
-    cands
-        .into_iter()
-        .find(|p| p.join("manifest.xml").exists())
+    cands.into_iter().find(|p| p.join("manifest.xml").exists())
 }
 
 pub fn ensure_addin_registered() {
@@ -401,7 +411,9 @@ impl WpsBridge {
         wps_log("WPS 桥已启动，监听 127.0.0.1:16666");
         match addin_dir() {
             Some(d) => wps_log(&format!("加载项目录: {}", d.display())),
-            None => wps_log("警告: 未找到 wps-addin 目录，静态分发将返回空（请设置 WPS_ADDIN_DIR）"),
+            None => {
+                wps_log("警告: 未找到 wps-addin 目录，静态分发将返回空（请设置 WPS_ADDIN_DIR）")
+            }
         }
         ensure_addin_registered();
         Some(WpsBridge {
@@ -477,7 +489,10 @@ mod tests {
         }
         assert!(ready, "服务未就绪");
 
-        let hello = request(16666, "GET /hello?m=sidera-bridge HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        let hello = request(
+            16666,
+            "GET /hello?m=sidera-bridge HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        );
         assert!(hello.contains("OK sidera"), "hello 响应异常: {hello:?}");
 
         let push = request(
@@ -488,13 +503,18 @@ mod tests {
 
         // 入队 NEXT 后 /poll 应返回 NEXT
         bridge.enqueue("NEXT");
-        let poll = request(16666, "GET /poll HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        let poll = request(
+            16666,
+            "GET /poll HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        );
         assert!(poll.contains("NEXT"), "poll 响应异常: {poll:?}");
 
         // 事件应被记录
         let events = bridge.take_events();
         assert!(
-            events.iter().any(|e| matches!(e, WpsEvent::SlideshowBegin(3))),
+            events
+                .iter()
+                .any(|e| matches!(e, WpsEvent::SlideshowBegin(3))),
             "未收到 SlideshowBegin 事件: {events:?}"
         );
 

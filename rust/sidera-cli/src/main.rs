@@ -14,9 +14,9 @@ fn print_help() {
          Usage:\n  sidera <COMMAND> [OPTIONS]\n\n\
          Commands:\n  serve       Start the local WPS HTTP bridge\n  diagnose    Print runtime/platform information\n  help        Show this help\n\n\
          serve options:\n  --port N    Listen on 127.0.0.1:N (default: 16666)\n\n\
-         This first Rust milestone contains the platform-independent core and\n\
-         WPS bridge. The X11 overlay GUI is intentionally still provided by\n\
-         the original C++ executable until a later migration milestone."
+         This workspace contains the Rust overlay GUI, platform-independent core,\n\
+         and WPS bridge. The Rust GUI is the primary runtime; the legacy\n\
+         C++/Qt5 implementation remains only as a compatibility fallback."
     );
 }
 
@@ -63,7 +63,7 @@ fn diagnose() {
             .map_or_else(|| "not found".to_owned(), |path| path.display().to_string())
     );
     println!("  bridge: http://{}:{}", DEFAULT_BIND_ADDRESS, DEFAULT_PORT);
-    println!("  gui: original C++/Qt5 X11 implementation");
+    println!("  gui: Rust X11/Wayland overlay (primary runtime)");
 }
 
 fn serve(port: u16) -> io::Result<()> {

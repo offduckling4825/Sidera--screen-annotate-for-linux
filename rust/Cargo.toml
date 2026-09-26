@@ -29,10 +29,3 @@ wayland-backend = "0.3"
 evdev = "0.13.2"
 arboard = "3"
 zbus = "4"
-
-[profile.release]
-opt-level = 2
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true

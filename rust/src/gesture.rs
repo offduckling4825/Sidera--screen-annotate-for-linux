@@ -91,12 +91,20 @@ pub fn touch_event(
         app.palm_erase_w = PALM_ERASE_WIDTH;
     }
     if app.t_begin_role == 0 && !now.is_empty() {
-        app.t_begin_role = if mode_erase_only || app.t_palm_latched { 2 } else { 1 };
+        app.t_begin_role = if mode_erase_only || app.t_palm_latched {
+            2
+        } else {
+            1
+        };
         let bp = app.t_begin_pos;
         if app.t_begin_role == 1 {
             stroke_tapered(app, bp, bp, app.last_pen_w, app.last_pen_w);
         } else {
-            let w = if mode == 2 { app.eraser_width() } else { app.palm_erase_w };
+            let w = if mode == 2 {
+                app.eraser_width()
+            } else {
+                app.palm_erase_w
+            };
             stroke_segment(app, bp, bp, true, w);
         }
     }
@@ -160,7 +168,11 @@ pub fn touch_event(
     }
     if !prev_preview.is_empty() || !app.palm_erase_preview.is_empty() {
         for p in prev_preview.iter().chain(app.palm_erase_preview.iter()) {
-            let pad = if mode == 2 { app.eraser_width() } else { app.palm_erase_w } + 8;
+            let pad = if mode == 2 {
+                app.eraser_width()
+            } else {
+                app.palm_erase_w
+            } + 8;
             dirty = Some(union(
                 dirty,
                 R {
@@ -185,7 +197,11 @@ pub fn touch_event(
                 let w = app.timed_pen_width();
                 stroke_segment(app, bp, bp, false, w);
             } else {
-                let w = if mode == 2 { app.eraser_width() } else { app.palm_erase_w };
+                let w = if mode == 2 {
+                    app.eraser_width()
+                } else {
+                    app.palm_erase_w
+                };
                 stroke_segment(app, bp, bp, true, w);
             }
         }

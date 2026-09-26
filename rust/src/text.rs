@@ -126,6 +126,7 @@ impl Fonts {
     }
 
     /// 以 (x, baseline_y) 为起点绘制文本，颜色 color，字号 px。
+    #[allow(clippy::manual_checked_ops, clippy::too_many_arguments)]
     pub fn draw(
         &self,
         pm: &mut Pixmap,
