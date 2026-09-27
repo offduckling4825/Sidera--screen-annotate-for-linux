@@ -557,8 +557,9 @@ pub struct X11Plat {
 
 #[derive(Clone, Copy, Default)]
 struct TouchAxis {
-    major: Option<u16>,
-    posx: Option<u16>,
+    /// (valuator 编号, min, max)
+    major: Option<(u16, f64, f64)>,
+    minor: Option<(u16, f64, f64)>,
     posx_min: f64,
     posx_max: f64,
 }
@@ -574,27 +575,42 @@ impl X11Plat {
         }
     }
 
-    /// 由 XI2 触摸事件的 valuator 计算触点直径（像素）
+    /// 由 XI2 触摸事件的 valuator 计算触点直径（逻辑像素）
     pub fn touch_diameter(&self, devid: u8, mask: &[u32], values: &[Fp3232]) -> f64 {
         if !self.touch_axis.borrow().contains_key(&devid) {
             let info = self.load_touch_axis(devid);
             self.touch_axis.borrow_mut().insert(devid, info);
         }
         let axis = *self.touch_axis.borrow().get(&devid).unwrap();
-        let Some(mi) = axis.major else {
+        // 优先 Touch Major，其次 Touch Minor（之前会把先遇到的 Minor 当 Major）
+        let Some((idx, amin, amax)) = axis.major.or(axis.minor) else {
             return 0.0;
         };
-        let Some(mv) = fp_value(mask, values, mi) else {
+        let Some(mv) = fp_value(mask, values, idx) else {
             return 0.0;
         };
-        let axis_scale = if axis.posx_max > axis.posx_min {
-            (self.x11.width as f64) / (axis.posx_max - axis.posx_min)
+        let screen = self.x11.width as f64;
+        // 优先用尺寸轴自身量程归一化到屏幕像素；量程无效(0)时退回位置轴量程
+        let physical = if amax > amin {
+            (mv - amin) / (amax - amin) * screen
+        } else if axis.posx_max > axis.posx_min {
+            mv * screen / (axis.posx_max - axis.posx_min)
         } else {
-            1.0
+            mv
         };
-        // axis_scale 把 valuator 值换算成物理像素；再除以设备缩放得到逻辑像素直径
-        let physical = (mv * axis_scale).clamp(0.0, 4096.0);
-        physical / self.scale.get().max(0.001)
+        let logical = (physical / self.scale.get().max(0.001)).clamp(0.0, 4096.0);
+        if std::env::var("SIDERA_TRACE").is_ok() {
+            log::info!(
+                "[TOUCH] dev {} idx={} raw={:.1} range=({:.0},{:.0}) -> {:.1}px",
+                devid,
+                idx,
+                mv,
+                amin,
+                amax,
+                logical
+            );
+        }
+        logical
     }
 
     fn load_touch_axis(&self, devid: u8) -> TouchAxis {
@@ -609,26 +625,41 @@ impl X11Plat {
                 }
                 for class in &info.classes {
                     if let DeviceClassData::Valuator(v) = &class.data {
-                        if v.label == self.x11.atom_touch_major
-                            || v.label == self.x11.atom_touch_minor
-                        {
-                            if a.major.is_none() {
-                                a.major = Some(v.number);
-                            }
+                        let vmin = fp3232_to_f64(v.min);
+                        let vmax = fp3232_to_f64(v.max);
+                        if v.label == self.x11.atom_touch_major {
+                            a.major = Some((v.number, vmin, vmax));
+                        } else if v.label == self.x11.atom_touch_minor {
+                            a.minor = Some((v.number, vmin, vmax));
                         } else if v.label == self.x11.atom_pos_x {
-                            a.posx = Some(v.number);
-                            a.posx_min = fp3232_to_f64(v.min);
-                            a.posx_max = fp3232_to_f64(v.max);
+                            a.posx_min = vmin;
+                            a.posx_max = vmax;
+                        }
+                        // 一次性把所有 valuator 打出来，便于定位驱动有没有上报尺寸轴
+                        if std::env::var("SIDERA_TRACE").is_ok() {
+                            let name = xproto::get_atom_name(&self.x11.conn, v.label)
+                                .ok()
+                                .and_then(|c| c.reply().ok())
+                                .map(|r| String::from_utf8_lossy(&r.name).into_owned())
+                                .unwrap_or_default();
+                            log::info!(
+                                "[TOUCH-AXIS] dev {} #{} label='{}' range=({:.0},{:.0})",
+                                devid,
+                                v.number,
+                                name,
+                                vmin,
+                                vmax
+                            );
                         }
                     }
                 }
             }
         }
         log::info!(
-            "[TOUCH] dev {} major_idx={:?} posx={:?} range=({:.0},{:.0})",
+            "[TOUCH] dev {} major={:?} minor={:?} posx=({:.0},{:.0})",
             devid,
             a.major,
-            a.posx,
+            a.minor,
             a.posx_min,
             a.posx_max
         );

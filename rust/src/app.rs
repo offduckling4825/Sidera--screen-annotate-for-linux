@@ -15,6 +15,8 @@ pub const SB_BASE_BTN: f64 = 48.0;
 pub const SB_BASE_ICON: f64 = 32.0;
 pub const SB_BASE_DOT: f64 = 24.0;
 pub const MAX_UNDO: usize = 12;
+/// 撤回瓦片边长（像素）；内存与笔迹覆盖面积成正比，而非整张画布
+pub const UNDO_TILE: i32 = 128;
 pub const CACHE_WPS: i32 = 20;
 pub const CACHE_BOARD: i32 = 10;
 pub const CACHE_OTHER: i32 = 2;
@@ -55,6 +57,12 @@ pub fn clone_pixmap(p: &Pixmap) -> Pixmap {
     let mut n = Pixmap::new(p.width(), p.height()).expect("pixmap");
     n.data_mut().copy_from_slice(p.data());
     n
+}
+
+/// 一次撤回记录：按瓦片保存落笔前像素，只存被笔迹覆盖到的瓦片
+#[derive(Default)]
+pub struct UndoEntry {
+    tiles: HashMap<(i32, i32), Vec<u8>>,
 }
 
 // ---------------- 全局状态 ----------------
@@ -135,8 +143,8 @@ pub struct App {
     // 进行中的画笔笔画（采样点 x,y,宽度），松手时一次性提交，保证边缘平滑
     pub stroke_pts: Vec<(f32, f32, f32)>,
 
-    // 撤回栈（原始 RGBA 快照）
-    pub undo: VecDeque<Vec<u8>>,
+    // 撤回栈：每个条目只保存本次操作覆盖到的瓦片“原始像素”
+    pub undo: VecDeque<UndoEntry>,
 
     // 画布
     pub canvas: Pixmap,
@@ -296,15 +304,67 @@ impl App {
     pub fn clear_undo(&mut self) {
         self.undo.clear();
     }
-    pub fn push_undo(&mut self) {
+    /// 开始一次新的撤回记录（落笔前调用）；不立即拷贝像素，避免整屏快照
+    pub fn begin_undo(&mut self) {
         if self.undo.len() >= MAX_UNDO {
             self.undo.pop_front();
         }
-        self.undo.push_back(self.canvas.data().to_vec());
+        self.undo.push_back(UndoEntry::default());
+    }
+    /// 在绘制前，把 rect 覆盖到、且本条目尚未保存的瓦片原样拷下来
+    pub fn save_undo_rect(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
+        let cw = self.canvas.width() as i32;
+        let ch = self.canvas.height() as i32;
+        let x0 = x0.clamp(0, cw);
+        let y0 = y0.clamp(0, ch);
+        let x1 = x1.clamp(0, cw);
+        let y1 = y1.clamp(0, ch);
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let Some(entry) = self.undo.back_mut() else {
+            return;
+        };
+        let tc0 = x0 / UNDO_TILE;
+        let tr0 = y0 / UNDO_TILE;
+        let tc1 = (x1 - 1) / UNDO_TILE;
+        let tr1 = (y1 - 1) / UNDO_TILE;
+        let data = self.canvas.data();
+        for tr in tr0..=tr1 {
+            for tc in tc0..=tc1 {
+                if entry.tiles.contains_key(&(tc, tr)) {
+                    continue;
+                }
+                let tx = tc * UNDO_TILE;
+                let ty = tr * UNDO_TILE;
+                let tw = UNDO_TILE.min(cw - tx) as usize;
+                let th = UNDO_TILE.min(ch - ty) as usize;
+                let mut buf = Vec::with_capacity(tw * th * 4);
+                for row in 0..th {
+                    let start = ((ty as usize + row) * cw as usize + tx as usize) * 4;
+                    buf.extend_from_slice(&data[start..start + tw * 4]);
+                }
+                entry.tiles.insert((tc, tr), buf);
+            }
+        }
     }
     pub fn undo_last(&mut self) {
-        if let Some(prev) = self.undo.pop_back() {
-            self.canvas.data_mut().copy_from_slice(&prev);
+        let Some(entry) = self.undo.pop_back() else {
+            return;
+        };
+        let cw = self.canvas.width() as i32;
+        let ch = self.canvas.height() as i32;
+        let data = self.canvas.data_mut();
+        for (&(tc, tr), buf) in &entry.tiles {
+            let tx = tc * UNDO_TILE;
+            let ty = tr * UNDO_TILE;
+            let tw = UNDO_TILE.min(cw - tx) as usize;
+            let th = UNDO_TILE.min(ch - ty) as usize;
+            for row in 0..th {
+                let dst = ((ty as usize + row) * cw as usize + tx as usize) * 4;
+                let src = row * tw * 4;
+                data[dst..dst + tw * 4].copy_from_slice(&buf[src..src + tw * 4]);
+            }
         }
     }
 
@@ -526,4 +586,32 @@ pub fn save_settings(app: &App) {
         app.large_erase_scale10,
     );
     let _ = std::fs::write(path, content);
+}
+
+#[cfg(test)]
+mod undo_tests {
+    use super::*;
+    use tiny_skia::Color;
+
+    #[test]
+    fn tiled_undo_restores_only_saved_tiles() {
+        let mut pm = Pixmap::new(300, 300).unwrap();
+        pm.fill(Color::TRANSPARENT);
+        let mut app = App::new(pm, 300, 300);
+        let red = Color::from_rgba8(255, 0, 0, 255);
+        let blue = Color::from_rgba8(0, 0, 255, 255);
+        app.canvas.fill(red);
+        app.begin_undo();
+        app.save_undo_rect(100, 100, 130, 130); // 覆盖瓦片 (0,0)
+        app.canvas.fill(blue); // 之后整屏变蓝
+        app.undo_last();
+        let w = app.canvas.width() as usize;
+        let px = |x: usize, y: usize| {
+            let d = app.canvas.data();
+            let i = (y * w + x) * 4;
+            (d[i], d[i + 1], d[i + 2], d[i + 3])
+        };
+        assert_eq!(px(10, 10), (255, 0, 0, 255), "已保存瓦片应恢复为红");
+        assert_eq!(px(280, 280), (0, 0, 255, 255), "未保存瓦片区域应保持蓝");
+    }
 }

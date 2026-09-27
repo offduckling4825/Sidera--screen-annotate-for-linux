@@ -159,6 +159,14 @@ fn scale_tf(app: &App) -> Transform {
 }
 
 pub fn stroke_segment(app: &mut App, a: (i32, i32), b: (i32, i32), erase: bool, width: i32) {
+    // 绘制前保存覆盖到的瓦片（撤回用）
+    let pad = width.max(1);
+    app.save_undo_rect(
+        a.0.min(b.0) - pad,
+        a.1.min(b.1) - pad,
+        a.0.max(b.0) + pad,
+        a.1.max(b.1) + pad,
+    );
     let tf = scale_tf(app);
     if erase {
         erase_segment(&mut app.canvas, a, b, width, tf);
@@ -170,6 +178,14 @@ pub fn stroke_segment(app: &mut App, a: (i32, i32), b: (i32, i32), erase: bool, 
 }
 
 pub fn stroke_tapered(app: &mut App, a: (i32, i32), b: (i32, i32), w0: i32, w1: i32) {
+    // 绘制前保存覆盖到的瓦片（撤回用）
+    let pad = w0.max(w1).max(1);
+    app.save_undo_rect(
+        a.0.min(b.0) - pad,
+        a.1.min(b.1) - pad,
+        a.0.max(b.0) + pad,
+        a.1.max(b.1) + pad,
+    );
     app.page_has_ink = true;
     let c = app.pen_color();
     let tf = scale_tf(app);

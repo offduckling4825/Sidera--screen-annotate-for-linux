@@ -1,8 +1,8 @@
 #!/bin/bash
 # ============================================================
 # 用仓库内的 Ubuntu 20.04 rootfs 容器编译（免 root：bwrap + qemu）
-#   ./build_with_container.sh amd64     # 产出 annotate_amd64
-#   ./build_with_container.sh aarch64   # 产出 annotate_aarch64（qemu 模拟，较慢）
+#   ./build_container.sh amd64     # 产出 annotate_amd64
+#   ./build_container.sh aarch64   # 产出 annotate_aarch64（qemu 模拟，较慢）
 #
 # 说明：
 #   - 两个容器是解压的 Ubuntu 20.04 根文件系统，含 gcc-9 + Qt5.12。

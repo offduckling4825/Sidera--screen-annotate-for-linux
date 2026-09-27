@@ -5,7 +5,7 @@
 # Rust 版（主推）
 sudo dpkg -i sidera_3.0-Electro-testing_arm64.deb
 # C++ / Qt5 版（旧版）
-# sudo dpkg -i sidera_Electro-testing_arm64.deb
+# sudo dpkg -i sidera_2.6-Geo-stable_arm64.deb
 # x86 机器用 _amd64.deb
 ```
 

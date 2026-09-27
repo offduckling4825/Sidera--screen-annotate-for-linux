@@ -20,7 +20,7 @@
 | 版本 | 技术栈 | 版本号 | 建议场景 |
 | --- | --- | --- | --- |
 | **Rust 版（主推）** | 纯 Rust，**不依赖 Qt / libX11**，tiny-skia 软件渲染 | `3.0-Electro-testing` | X11 与 Wayland 通吃；老机器、国产化教室机；追求轻量与无重量级依赖 |
-| **C++ / Qt5 版** | C++17 + Qt5 | `Electro-testing` | 经典实现；长期在 X11 教室环境验证，功能最全 |
+| **C++ / Qt5 版** | C++17 + Qt5 | `2.6-Geo-stable` | 经典实现；长期在 X11 教室环境验证，功能最全 |
 
 > 两版共用同一份 WPS 加载项（`wps-addin/`）与本地 HTTP 桥协议（`127.0.0.1:16666`），可平滑切换。
 
@@ -62,13 +62,24 @@ sudo dpkg -i sidera_3.0-Electro-testing_arm64.deb
 
 ```bash
 # amd64 (x86_64)
-sudo dpkg -i sidera_Electro-testing_amd64.deb
+sudo dpkg -i sidera_2.6-Geo-stable_amd64.deb
 
 # aarch64 (arm64)
-sudo dpkg -i sidera_Electro-testing_arm64.deb
+sudo dpkg -i sidera_2.6-Geo-stable_arm64.deb
 ```
 
 ### 方式二：从源码编译
+
+> **一键脚本**：每个架构一个，编译 + 打包一步到位（脚本在各自目录内执行）
+
+| 脚本 | 作用 |
+| --- | --- |
+| `rust/build_amd64.sh [--no-deb]` | Rust：amd64 编译 + 打包 |
+| `rust/build_aarch64.sh [--no-deb]` | Rust：aarch64 编译 + 打包 |
+| `cpp/build_amd64.sh` | C++：amd64 编译 + 打包 |
+| `cpp/build_aarch64.sh` | C++：aarch64 编译 + 打包 |
+
+> 底层脚本（上面的一键脚本会调用，也可单独使用）：`rust/build_container.sh <arch>`、`rust/build_deb.sh <arch>`、`cpp/build_container.sh <arch>`、`cpp/build_deb_amd64.sh` / `cpp/build_deb_aarch64.sh`。
 
 #### Rust 版
 
@@ -85,23 +96,16 @@ cargo build --release
 cargo test
 ```
 
-面向老机器（更低 glibc 依赖）的容器交叉编译与打包（需要 `bwrap` + rustup 工具链）：
+面向老机器（更低 glibc 依赖）的容器编译 + 打包，一键搞定：
 
 ```bash
 cd rust
-./build_container.sh amd64     # 产物: target/container-amd64/release/sidera
-./build_deb.sh amd64           # 产物: ../sidera_3.0-Electro-testing_amd64.deb
+./build_amd64.sh               # amd64：编译 + 打包 DEB
+./build_aarch64.sh             # aarch64：编译 + 打包 DEB（需 qemu-aarch64-static）
+./build_amd64.sh --no-deb      # 只编译，不打包（--no-deb 同样适用于 aarch64）
 ```
 
-aarch64 / arm64 一键编译 + 打包（需宿主机 `bwrap`、`qemu-aarch64-static` 与对应 Rust 工具链）：
-
-```bash
-cd rust
-./build_aarch64.sh             # 编译 + 打包 arm64 DEB
-./build_aarch64.sh --no-deb    # 只编译，不打包
-```
-
-> 也可手动指定架构：`./build_container.sh aarch64 && ./build_deb.sh aarch64`。
+产物：`rust/target/container-<arch>/release/sidera`、`sidera_3.0-Electro-testing_<arch>.deb`。
 
 #### C++ / Qt5 版
 
@@ -122,22 +126,19 @@ Arch Linux：
 sudo pacman -S --needed base-devel qt5-base libx11 libxcb libxext libxtst
 ```
 
-**2. 编译**
+**2. 编译 + 打包**
 
 ```bash
 cd cpp
 
-# 本机编译 amd64 二进制
+# 一键：容器里编译并打包（低 glibc 依赖，推荐）
+./build_amd64.sh               # amd64 → cpp/annotate_amd64 + cpp/sidera_2.6-Geo-stable_amd64.deb
+./build_aarch64.sh             # aarch64 → cpp/annotate_aarch64 + cpp/sidera_2.6-Geo-stable_arm64.deb
+
+# 或本机直接编译（开发用，需先装好上面的 Qt 依赖）
 make -j$(nproc)
-
-# 运行
 ./annotate_amd64
-
-# 或用仓库内容器交叉编译（低 glibc 依赖）
-./build_with_container.sh amd64     # 产出 cpp/annotate_amd64
 ```
-
-> 打包 DEB：`cd cpp && ./build_deb_amd64.sh`（产物 `cpp/sidera_Electro-testing_amd64.deb`）。
 
 ---
 
@@ -157,8 +158,8 @@ make -j$(nproc)
 
 ```
 .
-├── cpp/          # C++ / Qt5 版：Makefile、src/、tests/、打包/容器脚本
-├── rust/         # Rust 版：Cargo 工程、build_container.sh / build_aarch64.sh / build_deb.sh
+├── cpp/          # C++ / Qt5 版：Makefile、src/、tests/、build_amd64.sh / build_aarch64.sh
+├── rust/         # Rust 版：Cargo 工程、build_amd64.sh / build_aarch64.sh（一键编译+打包）
 ├── protocols/    # Wayland 协议 XML（两版共用）
 ├── wps-addin/    # WPS JS 加载项（两版共用）
 ├── README.md

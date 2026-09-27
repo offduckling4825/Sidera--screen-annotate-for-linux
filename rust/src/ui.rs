@@ -659,11 +659,6 @@ pub fn render_region(
         None,
     );
 
-    // 进行中的画笔笔画：整条并集路径一次绘制（边缘平滑）
-    if app.is_drawing && app.mode == 1 && !app.stroke_pts.is_empty() {
-        crate::paint::draw_stroke_union(&mut pm, app.pen_color(), &app.stroke_pts, tr);
-    }
-
     {
         let mut ctx = Ctx {
             pm: &mut pm,
@@ -1223,3 +1218,4 @@ mod tests {
         );
     }
 }
+

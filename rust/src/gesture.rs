@@ -69,7 +69,7 @@ pub fn touch_event(
 
     // 新手势
     if app.t_prev_pos.is_empty() && !now.is_empty() {
-        app.push_undo();
+        app.begin_undo();
         app.t_moved = true;
         app.t_begin_pos = now.values().next().cloned().unwrap_or((0, 0));
         app.t_begin_role = 0;

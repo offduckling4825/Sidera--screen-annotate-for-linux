@@ -115,8 +115,8 @@ static void bufferRelease(void* d, wl_buffer* buffer) {
 static void noopOutputGeometry(void*, wl_output*, int32_t,int32_t,int32_t,int32_t,int32_t,const char*,const char*,int32_t) {}
 static void noopOutputMode(void*, wl_output*, uint32_t,int32_t,int32_t,int32_t) {}
 static void noopOutputDone(void*, wl_output*) {}
-static void noopOutputName(void*, wl_output*, const char*) {}
-static void noopOutputDesc(void*, wl_output*, const char*) {}
+[[maybe_unused]] static void noopOutputName(void*, wl_output*, const char*) {}
+[[maybe_unused]] static void noopOutputDesc(void*, wl_output*, const char*) {}
 static void noopPointerEnter(void*, wl_pointer*, uint32_t, wl_surface*, wl_fixed_t, wl_fixed_t) {}
 static void noopPointerLeave(void*, wl_pointer*, uint32_t, wl_surface*) {}
 static void noopPointerAxis(void*, wl_pointer*, uint32_t, uint32_t, wl_fixed_t) {}
@@ -124,9 +124,9 @@ static void noopPointerFrame(void*, wl_pointer*) {}
 static void noopPointerAxisSource(void*, wl_pointer*, uint32_t) {}
 static void noopPointerAxisStop(void*, wl_pointer*, uint32_t, uint32_t) {}
 static void noopPointerAxisDiscrete(void*, wl_pointer*, uint32_t, int32_t) {}
-static void noopPointerAxisValue120(void*, wl_pointer*, uint32_t, int32_t) {}
-static void noopPointerAxisRelDir(void*, wl_pointer*, uint32_t, uint32_t) {}
-static void noopPointerWarp(void*, wl_pointer*, wl_fixed_t, wl_fixed_t) {}
+[[maybe_unused]] static void noopPointerAxisValue120(void*, wl_pointer*, uint32_t, int32_t) {}
+[[maybe_unused]] static void noopPointerAxisRelDir(void*, wl_pointer*, uint32_t, uint32_t) {}
+[[maybe_unused]] static void noopPointerWarp(void*, wl_pointer*, wl_fixed_t, wl_fixed_t) {}
 static void noopTouchFrame(void*, wl_touch*) {}
 static void noopTouchCancel(void*, wl_touch*) {}
 static void noopTouchShape(void*, wl_touch*, int32_t, wl_fixed_t, wl_fixed_t) {}
@@ -150,13 +150,27 @@ static const wl_registry_listener registryListener = { registryGlobal, noopRegis
 static const wl_pointer_listener pointerListener = {
   noopPointerEnter, noopPointerLeave, pointerMotion, pointerButton, noopPointerAxis,
   noopPointerFrame, noopPointerAxisSource, noopPointerAxisStop, noopPointerAxisDiscrete,
-  noopPointerAxisValue120, noopPointerAxisRelDir, noopPointerWarp
+#ifdef WL_POINTER_AXIS_VALUE120_SINCE_VERSION
+  noopPointerAxisValue120,
+#endif
+#ifdef WL_POINTER_AXIS_RELATIVE_DIRECTION_SINCE_VERSION
+  noopPointerAxisRelDir,
+#endif
+#ifdef WL_POINTER_WARP_SINCE_VERSION
+  noopPointerWarp,
+#endif
 };
 static const wl_touch_listener touchListener = {
   touchDown, touchUp, touchMotion, noopTouchFrame, noopTouchCancel, noopTouchShape, noopTouchOrientation
 };
 static const wl_output_listener outputListener = {
-  noopOutputGeometry, noopOutputMode, noopOutputDone, outputScale, noopOutputName, noopOutputDesc
+  noopOutputGeometry, noopOutputMode, noopOutputDone, outputScale,
+#ifdef WL_OUTPUT_NAME_SINCE_VERSION
+  noopOutputName,
+#endif
+#ifdef WL_OUTPUT_DESCRIPTION_SINCE_VERSION
+  noopOutputDesc,
+#endif
 };
 static const zwlr_layer_surface_v1_listener layerSurfaceListener = { layerConfigure, noopLayerClosed };
 static const wl_buffer_listener bufferListener = { bufferRelease };

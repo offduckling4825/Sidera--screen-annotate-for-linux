@@ -49,6 +49,8 @@ pub(crate) struct Ip {
     pub(crate) touch_shape: HashMap<i32, f64>,
     // 画笔中断：当前笔画是否刚经过 UI 区域（用于从侧栏出来时断开续画）
     pub(crate) stroke_skipped: bool,
+    // 最近一次触摸事件时间（用于兜底清理漏掉的 TouchEnd）
+    pub(crate) last_touch_ms: i64,
 }
 
 impl Default for Ip {
@@ -64,6 +66,7 @@ impl Default for Ip {
             slider: None,
             touch_shape: HashMap::new(),
             stroke_skipped: false,
+            last_touch_ms: 0,
         }
     }
 }
@@ -73,10 +76,14 @@ pub(crate) struct Rt {
     pub(crate) fonts: Fonts,
     pub(crate) icon: Option<Pixmap>,
     pub(crate) icon_big: Option<Pixmap>,
+    // 重绘合并：事件处理期间只累积脏区，一帧结束时统一渲染一次，避免事件积压
+    batching: std::cell::Cell<bool>,
+    dirty: std::cell::RefCell<Vec<R>>,
 }
 
 impl Rt {
-    pub(crate) fn redraw(&self, app: &App, r: R) {
+    /// 真正渲染并上屏一个区域
+    fn render(&self, app: &App, r: R) {
         let x = r.x.max(0);
         let y = r.y.max(0);
         let x2 = (r.x + r.w).min(app.screen_w);
@@ -89,6 +96,25 @@ impl Rt {
             self.backend.present(&pm, x, y);
         }
     }
+    /// 请求重绘一个区域：批处理模式下只登记脏区，否则立即渲染
+    pub(crate) fn redraw(&self, app: &App, r: R) {
+        if self.batching.get() {
+            let x = r.x.max(0);
+            let y = r.y.max(0);
+            let x2 = (r.x + r.w).min(app.screen_w);
+            let y2 = (r.y + r.h).min(app.screen_h);
+            if x2 > x && y2 > y {
+                self.dirty.borrow_mut().push(R {
+                    x,
+                    y,
+                    w: x2 - x,
+                    h: y2 - y,
+                });
+            }
+        } else {
+            self.render(app, r);
+        }
+    }
     pub(crate) fn redraw_full(&self, app: &App) {
         self.redraw(
             app,
@@ -99,6 +125,36 @@ impl Rt {
                 h: app.screen_h,
             },
         );
+    }
+    /// 开启批处理（清空上一帧残留）
+    pub(crate) fn begin_batch(&self) {
+        self.dirty.borrow_mut().clear();
+        self.batching.set(true);
+    }
+    /// 把累积的脏区合并成一个包围盒渲染一次
+    pub(crate) fn flush_dirty(&self, app: &App) {
+        let rects: Vec<R> = std::mem::take(&mut *self.dirty.borrow_mut());
+        let mut it = rects.into_iter();
+        if let Some(mut b) = it.next() {
+            for r in it {
+                let x1 = b.x.min(r.x);
+                let y1 = b.y.min(r.y);
+                let x2 = (b.x + b.w).max(r.x + r.w);
+                let y2 = (b.y + b.h).max(r.y + r.h);
+                b = R {
+                    x: x1,
+                    y: y1,
+                    w: x2 - x1,
+                    h: y2 - y1,
+                };
+            }
+            self.render(app, b);
+        }
+    }
+    /// 结束批处理并渲染
+    pub(crate) fn end_batch(&self, app: &App) {
+        self.batching.set(false);
+        self.flush_dirty(app);
     }
     pub(crate) fn screen_size(&self) -> (i32, i32) {
         self.backend.screen_size()
@@ -628,7 +684,7 @@ pub(crate) fn on_press(
             return;
         }
         close_all_popups(app);
-        app.push_undo();
+        app.begin_undo();
         ip.stroke_skipped = false;
         app.is_drawing = true;
         app.last_pt = (x, y);
@@ -640,8 +696,8 @@ pub(crate) fn on_press(
             paint::stroke_segment(app, (x, y), (x, y), true, w);
         } else {
             w = app.last_pen_w;
-            app.stroke_pts.clear();
-            app.stroke_pts.push((x as f32, y as f32, w as f32));
+            // 增量落笔：直接画圆点到画布，不再攒 stroke_pts 每帧重建整条
+            paint::stroke_tapered(app, (x, y), (x, y), w, w);
         }
         let _ = button;
         rt.redraw(
@@ -716,17 +772,27 @@ pub(crate) fn handle_btn(rt: &Rt, app: &mut App, wps: Option<&WpsBridge>, k: Btn
 }
 
 pub(crate) fn on_motion(rt: &Rt, app: &mut App, ip: &mut Ip, x: i32, y: i32) {
-    // 悬停高亮
+    // 悬停高亮：只重绘悬停发生变化的侧栏窄条，不整屏
     let h = ui::sidebar_button_at(app, x, y);
     if h != app.hover {
+        let old = app.hover;
         app.hover = h;
-        rt.redraw_full(app);
+        let mut rights: Vec<bool> = Vec::new();
+        if let Some((_, r)) = old {
+            rights.push(r);
+        }
+        if let Some((_, r)) = h {
+            rights.push(r);
+        }
+        for r in rights {
+            rt.redraw(app, ui::sidebar_rect(app, r));
+        }
     }
-    // 设置面板滑条拖动
+    // 设置面板滑条拖动：只重绘设置面板区域（约 5ms，而非整屏 ~58ms）
     if let Some(id) = ip.slider {
         if let Some(def) = ui::settings_sliders(app).into_iter().find(|s| s.id == id) {
             apply_slider(app, id, def.value_at(x));
-            rt.redraw_full(app);
+            rt.redraw(app, ui::settings_rect(app));
         }
         return;
     }
@@ -787,18 +853,14 @@ pub(crate) fn on_motion(rt: &Rt, app: &mut App, ip: &mut Ip, x: i32, y: i32) {
         return;
     }
     if ip.stroke_skipped {
-        // 刚从 UI 出来：结束上一段，从当前点新起一段（避免跨侧栏拉一条线）
-        if !erase {
-            paint::commit_stroke(app);
-        }
+        // 刚从 UI 出来：从当前点新起一段（避免跨侧栏拉一条线）
         ip.stroke_skipped = false;
         app.last_pen_w = w;
         app.last_pt = cur;
         if erase {
             paint::stroke_segment(app, cur, cur, true, w);
         } else {
-            app.stroke_pts.clear();
-            app.stroke_pts.push((cur.0 as f32, cur.1 as f32, w as f32));
+            paint::stroke_tapered(app, cur, cur, w, w);
         }
         rt.redraw(
             app,
@@ -815,7 +877,8 @@ pub(crate) fn on_motion(rt: &Rt, app: &mut App, ip: &mut Ip, x: i32, y: i32) {
     if erase {
         paint::stroke_segment(app, prev, cur, true, w);
     } else {
-        app.stroke_pts.push((cur.0 as f32, cur.1 as f32, w as f32));
+        // 增量绘制本段（前一宽度→当前宽度），O(1)，不再重建整条笔迹
+        paint::stroke_tapered(app, prev, cur, app.last_pen_w, w);
     }
     app.last_pen_w = w;
     app.last_pt = cur;
@@ -881,6 +944,7 @@ pub(crate) fn handle_touch(
     kind: TouchKind,
     diameter: f64,
 ) {
+    ip.last_touch_ms = now_ms();
     match kind {
         TouchKind::Begin => {
             ip.touch_ids.insert(id);
@@ -1038,6 +1102,9 @@ fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev
                     .map(|xp| xp.touch_diameter(e.deviceid as u8, &e.valuator_mask, &e.axisvalues))
                     .unwrap_or(0.0)
             });
+            if std::env::var("SIDERA_TRACE").is_ok() {
+                log::info!("[TOUCH] begin id={} ({},{}) d={:.1}", e.detail, x, y, d);
+            }
             handle_touch(rt, app, ip, wps, e.detail as i32, x, y, TouchKind::Begin, d);
         }
         Event::XinputTouchUpdate(e) => {
@@ -1152,7 +1219,21 @@ impl Timers {
 }
 
 /// 与具体后端无关的周期性任务：WPS 桥/事件/心跳/全屏检测、白板提示、侧栏自动展开
-pub(crate) fn tick(rt: &Rt, app: &mut App, wps_bridge: &mut Option<WpsBridge>, t: &mut Timers) {
+pub(crate) fn tick(
+    rt: &Rt,
+    app: &mut App,
+    ip: &mut Ip,
+    wps_bridge: &mut Option<WpsBridge>,
+    t: &mut Timers,
+) {
+    // 触摸兜底：超过 1.5s 没有触摸事件却仍有未抬起触点 → 清理，避免永久屏蔽鼠标输入
+    if !ip.touch_ids.is_empty() && now_ms() - ip.last_touch_ms > 1500 {
+        ip.touch_ids.clear();
+        ip.touch_over_ui.clear();
+        ip.touch_shape.clear();
+        app.reset_palm_gesture();
+        log::warn!("[WARN] 触摸状态超时清理（疑似漏掉 TouchEnd）");
+    }
     // WPS 桥存在性与设置同步
     if app.wps_debug && wps_bridge.is_none() {
         *wps_bridge = WpsBridge::start();
@@ -1214,8 +1295,8 @@ pub(crate) fn tick(rt: &Rt, app: &mut App, wps_bridge: &mut Option<WpsBridge>, t
         }
     }
 
-    // 全屏检测（500ms）
-    if t.last_wps.elapsed() >= Duration::from_millis(500) {
+    // 全屏检测（1s；始终扫描，避免加载项连着但已退出放映时状态变陈旧）
+    if t.last_wps.elapsed() >= Duration::from_millis(1000) {
         t.last_wps = Instant::now();
         let fs = rt.is_fullscreen();
         if fs != app.wps_fullscreen {
@@ -1238,7 +1319,7 @@ pub(crate) fn tick(rt: &Rt, app: &mut App, wps_bridge: &mut Option<WpsBridge>, t
     if app.log_cleared_until != 0 && now_ms() > app.log_cleared_until {
         app.log_cleared_until = 0;
         if app.settings_open {
-            rt.redraw_full(app);
+            rt.redraw(app, ui::settings_rect(app));
         }
     }
 
@@ -1247,9 +1328,17 @@ pub(crate) fn tick(rt: &Rt, app: &mut App, wps_bridge: &mut Option<WpsBridge>, t
         expand_sidebars(rt, app);
     }
 
-    // 弹窗/菜单淡入动画期间持续重绘
+    // 弹窗/菜单淡入动画期间持续重绘（只重绘对应弹窗区域）
     if app.open_anim != 0 && now_ms() < app.open_anim + 180 {
-        rt.redraw_full(app);
+        if app.pen_popup_visible {
+            rt.redraw(app, ui::pen_popup_rect(app));
+        }
+        if app.eraser_popup_visible {
+            rt.redraw(app, ui::eraser_popup_rect(app));
+        }
+        if app.more_menu_open {
+            rt.redraw(app, ui::more_menu_rect(app));
+        }
     }
 }
 
@@ -1346,6 +1435,8 @@ fn main() {
         fonts,
         icon,
         icon_big,
+        batching: std::cell::Cell::new(false),
+        dirty: std::cell::RefCell::new(Vec::new()),
     };
     rt.backend.set_scale(scale);
 
@@ -1521,6 +1612,8 @@ fn main() {
     let mut timers = Timers::new();
 
     loop {
+        // 本帧开始累积脏区，事件处理期间不立即渲染
+        rt.begin_batch();
         // 1. X 事件
         loop {
             match x11.conn.poll_for_event() {
@@ -1549,7 +1642,10 @@ fn main() {
             }
         }
 
-        tick(&rt, &mut app, &mut wps_bridge, &mut timers);
+        tick(&rt, &mut app, &mut ip, &mut wps_bridge, &mut timers);
+
+        // 一帧结束：把本帧所有脏区合并渲染一次
+        rt.end_batch(&app);
 
         std::thread::sleep(Duration::from_millis(4));
     }

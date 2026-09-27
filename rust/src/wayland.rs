@@ -857,7 +857,15 @@ impl ProvidesRegistryState for WlState {
 }
 
 fn periodic(state: &mut WlState) {
-    crate::tick(&state.rt, &mut state.app, &mut state.wps, &mut state.timers);
+    crate::tick(
+        &state.rt,
+        &mut state.app,
+        &mut state.ip,
+        &mut state.wps,
+        &mut state.timers,
+    );
+    // 把本帧（事件 + tick）累积的脏区统一渲染一次
+    state.rt.flush_dirty(&state.app);
     state.rt.backend.flush();
     if let Some(l) = state.single.as_ref() {
         while let Ok((mut c, _)) = l.accept() {
@@ -865,6 +873,7 @@ fn periodic(state: &mut WlState) {
             let mut buf = [0u8; 16];
             let _ = c.read(&mut buf);
             state.rt.redraw_full(&state.app);
+            state.rt.flush_dirty(&state.app);
         }
     }
 }
@@ -949,7 +958,10 @@ fn run_inner(
         fonts,
         icon,
         icon_big,
+        batching: Cell::new(false),
+        dirty: RefCell::new(Vec::new()),
     };
+    rt.begin_batch();
 
     let mut app = App::new(Pixmap::new(1, 1).unwrap(), 1920, 1080);
     crate::app::load_settings(&mut app);
