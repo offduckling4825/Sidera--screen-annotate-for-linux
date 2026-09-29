@@ -9,11 +9,11 @@ use tiny_skia::{Color, Pixmap};
 
 // ---------------- 常量（与原 C++ app.h 对齐） ----------------
 pub const VERSION: &str = "3.0-Electro-testing";
-// 侧边栏基准尺寸（比 C++ 版放大，便于看清文字 / 触摸点击）
-pub const SB_BASE_W: f64 = 72.0;
-pub const SB_BASE_BTN: f64 = 48.0;
-pub const SB_BASE_ICON: f64 = 32.0;
-pub const SB_BASE_DOT: f64 = 24.0;
+// 侧边栏基准尺寸（与 C++ 版对齐：56/34/24/19；可在设置里用「侧边栏大小」缩放）
+pub const SB_BASE_W: f64 = 56.0;
+pub const SB_BASE_BTN: f64 = 34.0;
+pub const SB_BASE_ICON: f64 = 24.0;
+pub const SB_BASE_DOT: f64 = 19.0;
 pub const MAX_UNDO: usize = 12;
 /// 撤回瓦片边长（像素）；内存与笔迹覆盖面积成正比，而非整张画布
 pub const UNDO_TILE: i32 = 128;
@@ -205,7 +205,7 @@ impl App {
             palm_erase_preview: Vec::new(),
             palm_erase_w: PALM_ERASE_WIDTH,
             right_click_cursor_on: true,
-            erase_by_finger: true,
+            erase_by_finger: false,
             large_touch_threshold: 64.0,
             large_erase_scale10: 12,
             t_prev_pos: HashMap::new(),

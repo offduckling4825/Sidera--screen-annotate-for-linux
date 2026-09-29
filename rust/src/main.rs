@@ -793,6 +793,12 @@ pub(crate) fn on_motion(rt: &Rt, app: &mut App, ip: &mut Ip, x: i32, y: i32) {
         if let Some(def) = ui::settings_sliders(app).into_iter().find(|s| s.id == id) {
             apply_slider(app, id, def.value_at(x));
             rt.redraw(app, ui::settings_rect(app));
+            // 透明度/大小会改变侧栏本身，需一并重绘两侧栏
+            if matches!(id, ui::SliderId::Alpha | ui::SliderId::Scale) {
+                for right in [false, true] {
+                    rt.redraw(app, ui::sidebar_rect(app, right));
+                }
+            }
         }
         return;
     }
@@ -1000,6 +1006,12 @@ pub(crate) fn handle_touch(
     }
 }
 
+/// 触摸事件的物理设备号：XInput2 里 deviceid 可能是 master，触点尺寸轴在 slave(sourceid)
+#[inline]
+fn touch_dev(deviceid: u16, sourceid: u16) -> u8 {
+    (if sourceid != 0 { sourceid } else { deviceid }) as u8
+}
+
 /// X11 事件坐标是物理像素，需换算成逻辑像素；Wayland 事件本就是逻辑坐标（比例为 1）
 #[inline]
 fn to_logical(rt: &Rt, v: i32) -> i32 {
@@ -1083,7 +1095,7 @@ fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev
         }
         Event::XinputRawTouchBegin(e) | Event::XinputRawTouchUpdate(e) => {
             if let Some(xp) = rt.backend.as_any().downcast_ref::<x11::X11Plat>() {
-                let d = xp.touch_diameter(e.deviceid as u8, &e.valuator_mask, &e.axisvalues_raw);
+                let d = xp.touch_diameter(touch_dev(e.deviceid, e.sourceid), &e.valuator_mask, &e.axisvalues_raw);
                 if d > 0.0 {
                     ip.touch_shape.insert(e.detail as i32, d);
                 }
@@ -1099,11 +1111,15 @@ fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev
                 rt.backend
                     .as_any()
                     .downcast_ref::<x11::X11Plat>()
-                    .map(|xp| xp.touch_diameter(e.deviceid as u8, &e.valuator_mask, &e.axisvalues))
+                    .map(|xp| xp.touch_diameter(touch_dev(e.deviceid, e.sourceid), &e.valuator_mask, &e.axisvalues))
                     .unwrap_or(0.0)
             });
             if std::env::var("SIDERA_TRACE").is_ok() {
                 log::info!("[TOUCH] begin id={} ({},{}) d={:.1}", e.detail, x, y, d);
+            }
+            // 接受触摸所有权，否则后续触点可能收不到
+            if let Some(xp) = rt.backend.as_any().downcast_ref::<x11::X11Plat>() {
+                xp.x11.allow_touch(e.deviceid, e.detail, e.event);
             }
             handle_touch(rt, app, ip, wps, e.detail as i32, x, y, TouchKind::Begin, d);
         }
@@ -1114,7 +1130,7 @@ fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev
                 rt.backend
                     .as_any()
                     .downcast_ref::<x11::X11Plat>()
-                    .map(|xp| xp.touch_diameter(e.deviceid as u8, &e.valuator_mask, &e.axisvalues))
+                    .map(|xp| xp.touch_diameter(touch_dev(e.deviceid, e.sourceid), &e.valuator_mask, &e.axisvalues))
                     .unwrap_or(0.0)
             });
             handle_touch(rt, app, ip, wps, e.detail as i32, x, y, TouchKind::Update, d);
@@ -1123,6 +1139,12 @@ fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev
             let x = to_logical(rt, (e.event_x as f64 / 65536.0).round() as i32);
             let y = to_logical(rt, (e.event_y as f64 / 65536.0).round() as i32);
             handle_touch(rt, app, ip, wps, e.detail as i32, x, y, TouchKind::End, 0.0);
+        }
+        Event::XinputTouchOwnership(e) => {
+            // 服务器要求确认触摸所有权：接受，确保多指后续事件继续投递
+            if let Some(xp) = rt.backend.as_any().downcast_ref::<x11::X11Plat>() {
+                xp.x11.allow_touch(e.deviceid, e.touchid, e.event);
+            }
         }
         _ => {}
     }
@@ -1405,6 +1427,7 @@ fn main() {
         let mask = XIEventMask::TOUCH_BEGIN
             | XIEventMask::TOUCH_UPDATE
             | XIEventMask::TOUCH_END
+            | XIEventMask::TOUCH_OWNERSHIP
             | XIEventMask::RAW_TOUCH_BEGIN
             | XIEventMask::RAW_TOUCH_UPDATE
             | XIEventMask::RAW_TOUCH_END;

@@ -255,6 +255,20 @@ impl X11 {
         Ok(())
     }
 
+    /// 接受触摸所有权（XIAllowEvents + ACCEPT_TOUCH）。
+    /// 不接受的话，多数驱动/服务器只会投递第一个触点，后续手指/手背收不到事件。
+    pub fn allow_touch(&self, deviceid: u16, touchid: u32, window: Window) {
+        let _ = xinput::xi_allow_events(
+            &self.conn,
+            0u32,
+            deviceid,
+            xinput::EventMode::ACCEPT_TOUCH,
+            touchid,
+            window,
+        );
+        let _ = self.conn.flush();
+    }
+
     pub fn fake_key(&self, keycode: Keycode) {
         if keycode == 0 {
             return;
@@ -615,42 +629,27 @@ impl X11Plat {
 
     fn load_touch_axis(&self, devid: u8) -> TouchAxis {
         let mut a = TouchAxis::default();
-        if let Some(reply) = xinput::xi_query_device(&self.x11.conn, devid)
-            .ok()
-            .and_then(|c| c.reply().ok())
-        {
+        if let Some(reply) = self.query_devices(devid as u16) {
             for info in &reply.infos {
-                if info.deviceid as u8 != devid {
-                    continue;
+                if info.deviceid as u8 == devid {
+                    self.fill_touch_axis(&mut a, info);
                 }
-                for class in &info.classes {
-                    if let DeviceClassData::Valuator(v) = &class.data {
-                        let vmin = fp3232_to_f64(v.min);
-                        let vmax = fp3232_to_f64(v.max);
-                        if v.label == self.x11.atom_touch_major {
-                            a.major = Some((v.number, vmin, vmax));
-                        } else if v.label == self.x11.atom_touch_minor {
-                            a.minor = Some((v.number, vmin, vmax));
-                        } else if v.label == self.x11.atom_pos_x {
-                            a.posx_min = vmin;
-                            a.posx_max = vmax;
-                        }
-                        // 一次性把所有 valuator 打出来，便于定位驱动有没有上报尺寸轴
-                        if std::env::var("SIDERA_TRACE").is_ok() {
-                            let name = xproto::get_atom_name(&self.x11.conn, v.label)
-                                .ok()
-                                .and_then(|c| c.reply().ok())
-                                .map(|r| String::from_utf8_lossy(&r.name).into_owned())
-                                .unwrap_or_default();
-                            log::info!(
-                                "[TOUCH-AXIS] dev {} #{} label='{}' range=({:.0},{:.0})",
-                                devid,
-                                v.number,
-                                name,
-                                vmin,
-                                vmax
-                            );
-                        }
+            }
+        }
+        // 回退：deviceid/sourceid 混淆或该设备无尺寸轴时，遍历所有设备找带尺寸轴的
+        if a.major.is_none() && a.minor.is_none() {
+            if let Some(reply) = self.query_devices(0) {
+                for info in &reply.infos {
+                    let mut t = TouchAxis::default();
+                    self.fill_touch_axis(&mut t, info);
+                    if t.major.is_some() || t.minor.is_some() {
+                        log::info!(
+                            "[TOUCH] dev {} 无尺寸轴，回退用设备 {} 的轴",
+                            devid,
+                            info.deviceid
+                        );
+                        a = t;
+                        break;
                     }
                 }
             }
@@ -664,6 +663,45 @@ impl X11Plat {
             a.posx_max
         );
         a
+    }
+
+    fn query_devices(&self, devid: u16) -> Option<xinput::XIQueryDeviceReply> {
+        xinput::xi_query_device(&self.x11.conn, devid)
+            .ok()
+            .and_then(|c| c.reply().ok())
+    }
+
+    fn fill_touch_axis(&self, a: &mut TouchAxis, info: &xinput::XIDeviceInfo) {
+        for class in &info.classes {
+            if let DeviceClassData::Valuator(v) = &class.data {
+                let vmin = fp3232_to_f64(v.min);
+                let vmax = fp3232_to_f64(v.max);
+                if v.label == self.x11.atom_touch_major {
+                    a.major = Some((v.number, vmin, vmax));
+                } else if v.label == self.x11.atom_touch_minor {
+                    a.minor = Some((v.number, vmin, vmax));
+                } else if v.label == self.x11.atom_pos_x {
+                    a.posx_min = vmin;
+                    a.posx_max = vmax;
+                }
+                // 打印所有 valuator，便于定位驱动有没有上报尺寸轴
+                if std::env::var("SIDERA_TRACE").is_ok() {
+                    let name = xproto::get_atom_name(&self.x11.conn, v.label)
+                        .ok()
+                        .and_then(|c| c.reply().ok())
+                        .map(|r| String::from_utf8_lossy(&r.name).into_owned())
+                        .unwrap_or_default();
+                    log::info!(
+                        "[TOUCH-AXIS] dev {} #{} label='{}' range=({:.0},{:.0})",
+                        info.deviceid,
+                        v.number,
+                        name,
+                        vmin,
+                        vmax
+                    );
+                }
+            }
+        }
     }
 }
 
