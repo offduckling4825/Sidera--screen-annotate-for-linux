@@ -9,6 +9,7 @@ mod paint;
 mod portal;
 mod splash;
 mod text;
+mod touch_evdev;
 mod ui;
 mod uinput;
 mod wayland;
@@ -34,6 +35,59 @@ use text::Fonts;
 use ui::{Btn, MoreHit, PopupHit, R, SetHit};
 use wps::{WpsBridge, WpsEvent};
 
+/// input 组授权弹窗状态：0=待授权 1=授权中 2=成功 3=失败（后台线程更新）
+static INPUT_GROUP_STATE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+fn current_user() -> String {
+    if let Ok(u) = std::env::var("USER") {
+        if !u.is_empty() {
+            return u;
+        }
+    }
+    let uid = unsafe { libc::getuid() };
+    if let Ok(p) = std::fs::read_to_string("/etc/passwd") {
+        for line in p.lines() {
+            let f: Vec<&str> = line.split(':').collect();
+            if f.len() >= 3 && f[2].parse::<u32>() == Ok(uid) {
+                return f[0].to_string();
+            }
+        }
+    }
+    String::from("$USER")
+}
+
+/// 后台用 pkexec 把当前用户加入 input 组（弹系统授权框输入密码）
+fn start_input_group_auth(app: &mut App) {
+    use std::sync::atomic::Ordering;
+    app.input_group_state = 1;
+    INPUT_GROUP_STATE.store(1, Ordering::Relaxed);
+    let user = current_user();
+    std::thread::spawn(move || {
+        let res = std::process::Command::new("pkexec")
+            .args(["usermod", "-aG", "input", &user])
+            .status();
+        let state = match res {
+            Ok(s) if s.success() => {
+                log::info!("[INFO] 已将 {} 加入 input 组，注销重登后生效", user);
+                2
+            }
+            Ok(s) => {
+                log::warn!("[WARN] pkexec usermod 失败，退出码 {:?}", s.code());
+                3
+            }
+            Err(e) => {
+                log::warn!(
+                    "[WARN] 无法运行 pkexec: {}（可手动执行: sudo usermod -aG input {}）",
+                    e,
+                    user
+                );
+                3
+            }
+        };
+        INPUT_GROUP_STATE.store(state, Ordering::Relaxed);
+    });
+}
+
 pub(crate) struct Ip {
     pub(crate) dragging: bool,
     pub(crate) drag_start_y: i32,
@@ -51,6 +105,11 @@ pub(crate) struct Ip {
     pub(crate) stroke_skipped: bool,
     // 最近一次触摸事件时间（用于兜底清理漏掉的 TouchEnd）
     pub(crate) last_touch_ms: i64,
+    // evdev 触摸是否启用；是否完全忽略 X 合成鼠标；最近触摸位置；被忽略(穿透)的触点
+    pub(crate) evdev_touch: bool,
+    pub(crate) ignore_core_pointer: bool,
+    pub(crate) last_touch_pos: (i32, i32),
+    pub(crate) ignored_touch: HashSet<i32>,
 }
 
 impl Default for Ip {
@@ -67,6 +126,10 @@ impl Default for Ip {
             touch_shape: HashMap::new(),
             stroke_skipped: false,
             last_touch_ms: 0,
+            evdev_touch: false,
+            ignore_core_pointer: false,
+            last_touch_pos: (0, 0),
+            ignored_touch: HashSet::new(),
         }
     }
 }
@@ -189,7 +252,7 @@ fn rect_of(r: R, pad: i32) -> IRect {
 }
 
 pub(crate) fn apply_input_shape(rt: &Rt, app: &App) {
-    if app.confirm_quit || app.show_diag {
+    if app.confirm_quit || app.show_diag || app.show_input_group_prompt {
         rt.set_input_region(&[], true);
         return;
     }
@@ -249,6 +312,21 @@ pub(crate) fn over_ui(app: &App, x: i32, y: i32) -> bool {
         return true;
     }
     false
+}
+
+/// 该逻辑坐标是否属于覆盖层“可交互”区域（与 apply_input_shape 一致）。
+/// evdev 是全局读取，需要用它模拟输入区域，实现光标模式下的点击穿透。
+pub(crate) fn point_input_ok(app: &App, x: i32, y: i32) -> bool {
+    if app.confirm_quit || app.show_diag || app.show_input_group_prompt || app.whiteboard {
+        return true;
+    }
+    if app.settings_open {
+        return ui::settings_rect(app).contains(x, y);
+    }
+    if app.mode != 0 {
+        return true;
+    }
+    over_ui(app, x, y)
 }
 
 pub(crate) fn clamp_sb(app: &mut App) {
@@ -575,6 +653,23 @@ pub(crate) fn on_press(
     y: i32,
     button: u8,
 ) {
+    if app.show_input_group_prompt {
+        if let Some(h) = ui::input_group_prompt_hit(app, x, y) {
+            match h {
+                ui::PromptHit::Authorize => {
+                    if app.input_group_state == 0 {
+                        start_input_group_auth(app);
+                    }
+                }
+                ui::PromptHit::Close => {
+                    app.show_input_group_prompt = false;
+                    apply_input_shape(rt, app);
+                }
+            }
+            rt.redraw_full(app);
+        }
+        return;
+    }
     if app.confirm_quit {
         if let Some(h) = ui::confirm_hit(app, x, y) {
             match h {
@@ -951,6 +1046,9 @@ pub(crate) fn handle_touch(
     diameter: f64,
 ) {
     ip.last_touch_ms = now_ms();
+    if kind != TouchKind::End {
+        ip.last_touch_pos = (x, y);
+    }
     match kind {
         TouchKind::Begin => {
             ip.touch_ids.insert(id);
@@ -1024,9 +1122,13 @@ fn to_logical(rt: &Rt, v: i32) -> i32 {
 }
 
 fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev: Event) {
-    // 有触摸按下时，屏蔽合成出来的鼠标事件，避免一次触摸被处理两遍
-    if !ip.touch_ids.is_empty() {
-        if let Event::ButtonPress(_) | Event::ButtonRelease(_) | Event::MotionNotify(_) = &ev {
+    // 屏蔽 X 合成的鼠标事件，避免一次触摸被处理两遍 / 残留笔画
+    if let Event::ButtonPress(_) | Event::ButtonRelease(_) | Event::MotionNotify(_) = &ev {
+        // 有触摸按下中，或 evdev 触摸启用后（无真实指针则全屏蔽，否则触摸后 400ms 内屏蔽）
+        if !ip.touch_ids.is_empty()
+            || (ip.evdev_touch
+                && (ip.ignore_core_pointer || now_ms() - ip.last_touch_ms < 400))
+        {
             return;
         }
     }
@@ -1114,9 +1216,8 @@ fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev
                     .map(|xp| xp.touch_diameter(touch_dev(e.deviceid, e.sourceid), &e.valuator_mask, &e.axisvalues))
                     .unwrap_or(0.0)
             });
-            if std::env::var("SIDERA_TRACE").is_ok() {
-                log::info!("[TOUCH] begin id={} ({},{}) d={:.1}", e.detail, x, y, d);
-            }
+            // 关键诊断：无条件打印触摸起始（两指应是两条不同 id）
+            log::info!("[TOUCH] begin id={} ({},{}) d={:.1}", e.detail, x, y, d);
             // 接受触摸所有权，否则后续触点可能收不到
             if let Some(xp) = rt.backend.as_any().downcast_ref::<x11::X11Plat>() {
                 xp.x11.allow_touch(e.deviceid, e.detail, e.event);
@@ -1255,6 +1356,14 @@ pub(crate) fn tick(
         ip.touch_shape.clear();
         app.reset_palm_gesture();
         log::warn!("[WARN] 触摸状态超时清理（疑似漏掉 TouchEnd）");
+    }
+    // input 组授权结果同步到界面
+    let igs = INPUT_GROUP_STATE.load(std::sync::atomic::Ordering::Relaxed);
+    if igs != app.input_group_state {
+        app.input_group_state = igs;
+        if app.show_input_group_prompt {
+            rt.redraw(app, ui::input_group_prompt_rect(app));
+        }
     }
     // WPS 桥存在性与设置同步
     if app.wps_debug && wps_bridge.is_none() {
@@ -1422,24 +1531,61 @@ fn main() {
         }
     };
 
-    // XInput2 触摸事件（若可用）
-    {
-        let mask = XIEventMask::TOUCH_BEGIN
+    // 触摸输入：优先直接读内核 evdev（绕开 X 服务器是否暴露 Touch 类）；
+    // 没有可读的 evdev 触摸设备时，退回 XInput2 触摸。
+    let evdev_touch = touch_evdev::spawn(logical_w, logical_h);
+    if evdev_touch.is_some() {
+        log::info!("[TOUCH] 使用 evdev 内核触摸输入");
+    } else {
+        // XInput2 触摸事件：逐触摸设备显式选择（含所有权），raw 触摸选在 root 上
+        let touch_mask = XIEventMask::TOUCH_BEGIN
             | XIEventMask::TOUCH_UPDATE
             | XIEventMask::TOUCH_END
-            | XIEventMask::TOUCH_OWNERSHIP
-            | XIEventMask::RAW_TOUCH_BEGIN
+            | XIEventMask::TOUCH_OWNERSHIP;
+        let raw_mask = XIEventMask::RAW_TOUCH_BEGIN
             | XIEventMask::RAW_TOUCH_UPDATE
             | XIEventMask::RAW_TOUCH_END;
-        let em = xinput::EventMask {
+        let ids = x11.touch_device_ids();
+        let mut masks: Vec<xinput::EventMask> = Vec::new();
+        for id in &ids {
+            masks.push(xinput::EventMask {
+                deviceid: *id,
+                mask: vec![touch_mask],
+            });
+            let _ = xinput::xi_select_events(
+                &x11.conn,
+                x11.root,
+                &[xinput::EventMask {
+                    deviceid: *id,
+                    mask: vec![raw_mask],
+                }],
+            );
+        }
+        // 兜底：所有设备
+        masks.push(xinput::EventMask {
             deviceid: 0,
-            mask: vec![mask],
-        };
-        if let Err(e) = xinput::xi_select_events(&x11.conn, win, &[em]) {
-            log::warn!("[WARN] XInput2 触摸选择失败（触摸可能不可用）: {}", e);
+            mask: vec![touch_mask],
+        });
+        match xinput::xi_select_events(&x11.conn, win, &masks) {
+            Ok(_) => log::info!(
+                "[TOUCH] 已选择触摸事件（{} 个触摸设备 + AllDevices）",
+                ids.len()
+            ),
+            Err(e) => log::warn!("[WARN] XInput2 触摸选择失败（触摸可能不可用）: {}", e),
         }
     }
 
+
+    let has_node = touch_evdev::has_touch_node();
+    let in_group = touch_evdev::in_input_group();
+    let need_input_group = evdev_touch.is_none() && has_node && !in_group;
+    log::info!(
+        "[PERM] evdev_started={} has_touch_node={} in_input_group={} -> prompt={}",
+        evdev_touch.is_some(),
+        has_node,
+        in_group,
+        need_input_group
+    );
 
     let mut canvas = Pixmap::new(x11.width as u32, x11.height as u32).unwrap();
     canvas.fill(tiny_skia::Color::TRANSPARENT);
@@ -1447,6 +1593,7 @@ fn main() {
     app::load_settings(&mut app);
     // X11 DPI 缩放：逻辑尺寸 × scale = 物理分辨率画布
     app.set_scale(scale);
+    app.show_input_group_prompt = need_input_group;
     // 环境变量仅本次运行覆盖（不落盘），与 C++ 版一致
     if let Ok(v) = std::env::var("WPS_API_DEBUG") {
         app.wps_debug = v == "1";
@@ -1630,6 +1777,15 @@ fn main() {
     }
 
     let mut ip = Ip::default();
+    ip.evdev_touch = evdev_touch.is_some();
+    ip.ignore_core_pointer = evdev_touch.is_some() && !touch_evdev::has_relative_pointer();
+    ip.last_touch_ms = now_ms();
+    if ip.evdev_touch {
+        log::info!(
+            "[TOUCH] evdev 触摸已启用，ignore_core_pointer={}",
+            ip.ignore_core_pointer
+        );
+    }
 
 
     let mut timers = Timers::new();
@@ -1637,6 +1793,49 @@ fn main() {
     loop {
         // 本帧开始累积脏区，事件处理期间不立即渲染
         rt.begin_batch();
+        // 0. evdev 触摸（若有）
+        if let Some(rx) = evdev_touch.as_ref() {
+            while let Ok(contacts) = rx.try_recv() {
+                for c in contacts {
+                    // 起点不在“可交互”区域的触点，整段忽略（穿透给桌面）
+                    match c.phase {
+                        touch_evdev::Phase::Begin => {
+                            if !point_input_ok(&app, c.x, c.y) {
+                                ip.ignored_touch.insert(c.id);
+                                continue;
+                            }
+                            ip.ignored_touch.remove(&c.id);
+                        }
+                        touch_evdev::Phase::Update => {
+                            if ip.ignored_touch.contains(&c.id) {
+                                continue;
+                            }
+                        }
+                        touch_evdev::Phase::End => {
+                            if ip.ignored_touch.remove(&c.id) {
+                                continue;
+                            }
+                        }
+                    }
+                    let kind = match c.phase {
+                        touch_evdev::Phase::Begin => TouchKind::Begin,
+                        touch_evdev::Phase::Update => TouchKind::Update,
+                        touch_evdev::Phase::End => TouchKind::End,
+                    };
+                    handle_touch(
+                        &rt,
+                        &mut app,
+                        &mut ip,
+                        wps_bridge.as_ref(),
+                        c.id,
+                        c.x,
+                        c.y,
+                        kind,
+                        c.major,
+                    );
+                }
+            }
+        }
         // 1. X 事件
         loop {
             match x11.conn.poll_for_event() {

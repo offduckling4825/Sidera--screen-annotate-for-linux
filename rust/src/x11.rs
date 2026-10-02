@@ -255,6 +255,36 @@ impl X11 {
         Ok(())
     }
 
+    /// 枚举支持触摸的 XInput2 设备（带 Touch 类），返回设备 id
+    pub fn touch_device_ids(&self) -> Vec<u16> {
+        let mut ids = Vec::new();
+        if let Some(reply) = xinput::xi_query_device(&self.conn, 0u16)
+            .ok()
+            .and_then(|c| c.reply().ok())
+        {
+            for info in &reply.infos {
+                let touch = info.classes.iter().find_map(|c| match &c.data {
+                    DeviceClassData::Touch(t) => Some(t),
+                    _ => None,
+                });
+                if let Some(t) = touch {
+                    log::info!(
+                        "[TOUCH] 设备 {} '{}' type={:?} 支持触摸，最多 {} 点",
+                        info.deviceid,
+                        String::from_utf8_lossy(&info.name),
+                        info.type_,
+                        t.num_touches
+                    );
+                    ids.push(info.deviceid);
+                }
+            }
+        }
+        if ids.is_empty() {
+            log::warn!("[TOUCH] 未发现 XInput2 触摸设备（驱动未暴露 Touch 类？）");
+        }
+        ids
+    }
+
     /// 接受触摸所有权（XIAllowEvents + ACCEPT_TOUCH）。
     /// 不接受的话，多数驱动/服务器只会投递第一个触点，后续手指/手背收不到事件。
     pub fn allow_touch(&self, deviceid: u16, touchid: u32, window: Window) {

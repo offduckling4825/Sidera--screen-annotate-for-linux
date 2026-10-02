@@ -592,6 +592,129 @@ pub fn draw_diag(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
 }
 
 
+// ---------------- input 组授权弹窗 ----------------
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PromptHit {
+    Authorize,
+    Close,
+}
+
+pub fn input_group_prompt_rect(app: &App) -> R {
+    let w = 580;
+    let h = 224;
+    R {
+        x: (app.screen_w - w) / 2,
+        y: (app.screen_h - h) / 2,
+        w,
+        h,
+    }
+}
+
+pub fn input_group_prompt_hit(app: &App, x: i32, y: i32) -> Option<PromptHit> {
+    let p = input_group_prompt_rect(app);
+    if !p.contains(x, y) {
+        return None;
+    }
+    let by = p.y + p.h - 58;
+    if app.input_group_state == 0 {
+        let bw = (p.w - 60) / 2;
+        let a = R { x: p.x + 20, y: by, w: bw, h: 40 };
+        let b = R {
+            x: p.x + 20 + bw + 20,
+            y: by,
+            w: bw,
+            h: 40,
+        };
+        if a.contains(x, y) {
+            return Some(PromptHit::Authorize);
+        }
+        if b.contains(x, y) {
+            return Some(PromptHit::Close);
+        }
+        None
+    } else {
+        let c = R {
+            x: p.x + 20,
+            y: by,
+            w: p.w - 40,
+            h: 40,
+        };
+        if c.contains(x, y) {
+            return Some(PromptHit::Close);
+        }
+        None
+    }
+}
+
+pub fn draw_input_group_prompt(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
+    let p = input_group_prompt_rect(app);
+    ctx.fill_round(p, 12.0, color(0x2b, 0x2b, 0x33, 255));
+    ctx.stroke_round(p, 12.0, color(0x66, 0x66, 0x66, 255), 2.0);
+    ctx.text_center(
+        fonts,
+        R {
+            x: p.x,
+            y: p.y + 16,
+            w: p.w,
+            h: 30,
+        },
+        "需要输入设备权限",
+        22.0,
+        color(0xee, 0xee, 0xee, 255),
+    );
+    let user = std::env::var("USER").unwrap_or_default();
+    let body = match app.input_group_state {
+        0 => format!(
+            "当前用户不在 input 组，触屏批注无法读取触摸设备。\n是否加入 input 组？将执行：\npkexec usermod -aG input {}",
+            user
+        ),
+        1 => "正在请求授权，请在弹出的对话框中输入密码…".to_string(),
+        2 => "已加入 input 组。\n请注销或重启后重新登录，权限才会生效。".to_string(),
+        _ => format!("加入失败。可手动执行：\nsudo usermod -aG input {}", user),
+    };
+    ctx.text_multiline_center(
+        fonts,
+        R {
+            x: p.x + 16,
+            y: p.y + 50,
+            w: p.w - 32,
+            h: 106,
+        },
+        &body,
+        15.0,
+        color(0xcc, 0xcc, 0xcc, 255),
+    );
+    let by = p.y + p.h - 58;
+    if app.input_group_state == 0 {
+        let bw = (p.w - 60) / 2;
+        let a = R {
+            x: p.x + 20,
+            y: by,
+            w: bw,
+            h: 40,
+        };
+        let b = R {
+            x: p.x + 20 + bw + 20,
+            y: by,
+            w: bw,
+            h: 40,
+        };
+        ctx.fill_round(a, 8.0, color(0x2a, 0x6e, 0x3f, 255));
+        ctx.text_center(fonts, a, "授权加入", 18.0, Color::WHITE);
+        ctx.fill_round(b, 8.0, color(0x44, 0x44, 0x44, 255));
+        ctx.text_center(fonts, b, "稍后", 18.0, Color::WHITE);
+    } else {
+        let c = R {
+            x: p.x + 20,
+            y: by,
+            w: p.w - 40,
+            h: 40,
+        };
+        ctx.fill_round(c, 8.0, color(0x33, 0x77, 0xcc, 255));
+        ctx.text_center(fonts, c, "关闭", 18.0, Color::WHITE);
+    }
+}
+
 // ---------------- 设置面板用到的外部状态 ----------------
 pub fn autostart_path() -> std::path::PathBuf {
     dirs::config_dir()
@@ -737,6 +860,9 @@ pub fn render_region(
         }
         if app.show_diag {
             draw_diag(app, fonts, &mut ctx);
+        }
+        if app.show_input_group_prompt {
+            draw_input_group_prompt(app, fonts, &mut ctx);
         }
     }
 

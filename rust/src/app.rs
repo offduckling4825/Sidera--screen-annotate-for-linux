@@ -81,6 +81,9 @@ pub struct App {
     pub confirm_quit: bool,
     pub show_diag: bool,
     pub diag_text: String,
+    // input 组授权弹窗：0=待授权 1=授权中 2=成功 3=失败
+    pub show_input_group_prompt: bool,
+    pub input_group_state: i32,
 
     // 白板
     pub whiteboard: bool,
@@ -177,6 +180,8 @@ impl App {
             confirm_quit: false,
             show_diag: false,
             diag_text: String::new(),
+            show_input_group_prompt: false,
+            input_group_state: 0,
             whiteboard: false,
             whiteboard_bg_index: 1,
             collapsed: false,
