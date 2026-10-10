@@ -42,16 +42,22 @@ function bridgeState() {
         return { pos: pos, click: click }
     } catch (e) { return { pos: -1, click: -1 } }
 }
-function bridgeFetch(path) {
+function bridgeFetch(path, onResult, signal) {
     try {
-        fetch(BRIDGE_URL + path)
-            .then(function (r) { return r.text() })
+        var options = { cache: 'no-store' }
+        if (signal) options.signal = signal
+        fetch(BRIDGE_URL + path, options)
+            .then(function (r) {
+                if (!r.ok) throw new Error('Bridge HTTP request failed')
+                return r.text()
+            })
             .then(function (t) {
                 var c = (t || '').trim()
-                if (c) bridgeCmd(c)
+                if (onResult) onResult(c === 'OK')
+                else if (c) bridgeCmd(c)
             })
-            .catch(function () {})
-    } catch (e) {}
+            .catch(function () { if (onResult) onResult(false) })
+    } catch (e) { if (onResult) onResult(false) }
 }
 function bridgeCmd(cmd) {
     try {
@@ -64,15 +70,32 @@ function bridgeCmd(cmd) {
 var BridgeSlideEvents = ['SlideShowBegin', 'SlideShowEnd', 'SlideShowNextSlide', 'SlideShowNextClick', 'SlideShowOnNext', 'SlideShowOnPrevious'];
 // 轮询式状态上报：解决“上一页”没有后续新页号事件的问题
 // （WPS 的 Next 会补发 NextClick/NextSlide，但 Previous 常只有 OnPrevious 且带旧 pos）
-var _lastState = { pos: -1, click: -1 };
+// 仅记录收到成功回复的快照；同页重载脚本时保留确认状态和在途请求。
+var _lastState = window._sideraLastState || (window._sideraLastState = { pos: -1, click: -1 });
 function bridgePushIfChanged() {
     try {
+        if (window._sideraStateInFlight) return
         var st = bridgeState()
         if (st.pos < 1) return                       // 不在放映
         if (st.pos !== _lastState.pos || st.click !== _lastState.click) {
-            _lastState.pos = st.pos
-            _lastState.click = st.click
-            bridgeFetch('/push?m=' + encodeURIComponent('EVENT SlideShowState pos=' + st.pos + ' click=' + st.click))
+            var controller = typeof AbortController == 'function' ? new AbortController() : null
+            var pending = { timer: null }
+            window._sideraStateInFlight = pending
+            var finish = function (ok) {
+                // 超时请求的迟到回复不能确认旧页，也不能清除较新的在途请求。
+                if (window._sideraStateInFlight !== pending) return
+                clearTimeout(pending.timer)
+                window._sideraStateInFlight = null
+                // 失败时服务端可能已处理请求；即使回到上次确认页，也必须重新同步。
+                _lastState.pos = ok ? st.pos : -1
+                _lastState.click = ok ? st.click : -1
+            }
+            pending.timer = setTimeout(function () {
+                finish(false)
+                if (controller) controller.abort()
+            }, 3000)
+            bridgeFetch('/push?m=' + encodeURIComponent('EVENT SlideShowState pos=' + st.pos + ' click=' + st.click),
+                finish, controller ? controller.signal : null)
         }
     } catch (e) {}
 }

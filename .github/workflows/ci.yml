@@ -26,11 +26,11 @@ jobs:
       - name: Test WPS add-in registration
         run: python3 wps-addin/tests/test_install.py
 
-      - name: Verify WPS add-in startup
+      - name: Verify WPS add-in startup and state sync
         run: |
           node --check wps-addin/main.js
           node --check wps-addin/js/bridge.js
-          node --test wps-addin/tests/bridge.test.cjs
+          node --test wps-addin/tests/bridge.test.cjs wps-addin/tests/state-sync.test.cjs
 
   build-amd64:
     runs-on: ubuntu-latest

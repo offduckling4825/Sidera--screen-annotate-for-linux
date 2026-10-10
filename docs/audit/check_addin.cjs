@@ -13,8 +13,9 @@ function fixture(withEvents = true, failNetwork = false) {
   if (withEvents) app.ApiEvent = { AddApiEventListener(ev, fn) { listeners.push({ ev, fn }); } };
   const ctx = vm.createContext({
     window: { Application: app },
-    fetch(url) { requests.push(url); return failNetwork ? Promise.reject(new Error('offline')) : Promise.resolve({ text: () => Promise.resolve('') }); },
-    setTimeout(fn, ms) { timeouts.push({ fn, ms }); },
+    fetch(url) { requests.push(url); return failNetwork ? Promise.reject(new Error('offline')) : Promise.resolve({ ok: true, text: () => Promise.resolve('OK') }); },
+    setTimeout(fn, ms) { return timeouts.push({ fn, ms }) - 1; },
+    clearTimeout(id) { timeouts[id] = null; },
     setInterval(fn, ms) { intervals.push({ fn, ms }); },
     alert(text) { alerts.push(text); },
     encodeURIComponent,
@@ -24,19 +25,21 @@ function fixture(withEvents = true, failNetwork = false) {
 }
 
 (async () => {
+  const settle = () => new Promise(resolve => setImmediate(resolve));
   const duplicate = fixture();
   duplicate.ctx.startBridge();
   duplicate.ctx.startBridge();
   const polling = fixture(false);
   polling.ctx.startBridge();
   polling.ctx.bridgePushIfChanged();
+  await settle();
   polling.state.pos = -1;
   polling.ctx.bridgePushIfChanged();
   polling.state.pos = 1;
   polling.ctx.bridgePushIfChanged();
   const offline = fixture(true, true);
   offline.ctx.bridgePushIfChanged();
-  await Promise.resolve(); await Promise.resolve();
+  await settle();
   offline.ctx.bridgePushIfChanged();
   offline.ctx.OnSaPing();
   const pushes = f => f.requests.filter(url => url.includes('/push?'));

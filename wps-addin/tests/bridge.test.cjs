@@ -30,7 +30,7 @@ function fixture({ ready = true, withEvents = true, failingEvent = null } = {}) 
     window: { Application: ready ? app : undefined },
     fetch(url) {
       requests.push(url);
-      return Promise.resolve({ text: () => Promise.resolve('') });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve('OK') });
     },
     setTimeout(callback) { const id = ++nextId; timeouts.set(id, callback); return id; },
     clearTimeout(id) { timeouts.delete(id); },
@@ -100,12 +100,13 @@ test('onLoad tolerates Application becoming available later', () => {
   assertStartedOnce(f);
 });
 
-test('polling continues while ApiEvent is unavailable', () => {
+test('polling continues while ApiEvent is unavailable', async () => {
   const f = fixture({ withEvents: false });
   for (let i = 0; i < 10; i++) f.context.startBridge();
   assert.equal(f.timeouts.size, 1);
   assert.equal(f.intervals.size, 1);
   f.intervals.values().next().value();
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.requests.filter(url => url.endsWith('/poll')).length, 1);
   f.app.ApiEvent = f.api;
   f.retry();

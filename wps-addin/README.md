@@ -31,10 +31,12 @@ app 侧需开启 `设置 → WPS 接口调试模式`（内容由此服务的 127
 在仓库根目录运行：
 
 ```bash
-node --test wps-addin/tests/bridge.test.cjs
+node --test wps-addin/tests/bridge.test.cjs wps-addin/tests/state-sync.test.cjs
 python3 wps-addin/tests/test_install.py
 ```
 
 测试使用 Node.js 24 内置测试工具模拟 WPS 事件、网络和定时器，不连接真实 WPS 或本地桥服务。覆盖重复加载、接口延迟就绪、部分注册失败与重试；同一加载项页面内每种事件只注册一次，轮询与启动重试各最多保留一个。真实 WPS 的加载/卸载生命周期仍需实机验收。
+
+页号轮询收到 HTTP 成功状态和 `OK` 回复后才记为已同步；失败后在下一轮重试当前状态。等待回复时合并连续变化，3 秒超时后恢复重试，忽略旧请求的迟到回复；支持 AbortController 时同时取消超时请求。当前共 21 项 JS 回归。无 AbortController 时不能取消底层网络请求；服务端乱序、桥重启后同页同步、放映 Begin/End 回退及状态按钮误报仍见 [S10](../docs/ISSUES.md#s10--js-状态上报丢失和轮询生命周期缺失)。
 
 安装测试需要 Linux、Python 3 和 bubblewrap，通过临时家目录和隔离网络运行真实安装脚本，覆盖登记保留、迁移、重复安装、备份、异常 XML、只读目录和替换失败。缺少依赖或隔离失败会直接报错，不会改用真实家目录测试。

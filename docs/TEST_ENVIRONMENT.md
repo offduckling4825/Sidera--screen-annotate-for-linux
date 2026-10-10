@@ -74,6 +74,13 @@
 - 安装脚本及 3 个打包脚本语法通过，Rust 打包原有 5 组/17 个场景通过；C++ amd64/arm64 用占位二进制完成实际 DEB 打包/解包，确认 Python 依赖、安装脚本、模板内容与执行权限。占位二进制仅验证包装过程，不证明应用编译或原生启动。
 - 已接入 WPS 加载项 CI job。只验证独立安装命令；应用内部自动登记、并发写入、真实 WPS 加载及恢复仍按 S11 跟踪。未覆盖安装本次修改到现有 WSL 程序。
 
+### S10 页号上报重试回归（2026-10-10）
+
+- Windows Node.js 24.19.0，在仓库根目录运行 `node --test wps-addin/tests/bridge.test.cjs wps-addin/tests/state-sync.test.cjs`，共 21 项通过（8 项既有启动 + 13 项状态同步）。新增用例在旧代码上 11 项失败、2 项通过；main.js/bridge.js 语法检查通过。
+- Node VM 执行真实 bridge.js，以可控请求完成顺序、失败、响应正文和定时器验证确认/重试；不连接实际桥或 WPS。覆盖连续两次失败后恢复、HTTP 错误与异常正文、正文读取失败、合并快速翻页、失败后回到已确认页、同步 fetch 异常、3 秒超时、正文挂起、迟到回复、有/无 AbortController、同页脚本重载和正常翻页命令。
+- 日志位于宿主临时目录的 `sidera-state-sync-before-20261010.log` 与 `sidera-state-sync-after-20261010.log`。JS CI 命令已包含新套件；工作流仍仅在 main push / 面向 main 的 PR 触发。
+- 本次仅修复轮询页号请求的客户端确认/重试。无 AbortController 的底层请求无法取消，服务端执行乱序、事件直报、桥重启后同页重同步、Begin/End 回退及在线状态提示仍按 S10 跟踪，未在真实 WPS 中验收或覆盖安装。
+
 ## 2. 后续环境分层
 
 | 层 | 建议环境 | 用途 | 不能替代的验收 |

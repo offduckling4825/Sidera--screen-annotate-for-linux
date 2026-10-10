@@ -23,6 +23,8 @@ node docs/audit/check_addin.cjs
 
 2026-10-01 后续验证：S09 修复后，同一探针观察到 6 个监听和 1 个 interval，其余 S10 现象仍存在。启动行为的正式回归测试为 `node --test wps-addin/tests/bridge.test.cjs`，当前 8 项通过；与本探针的诊断退出码区别对待。
 
+2026-10-10 后续修复：S10 的轮询页号确认/失败重试已有正式回归 `node --test wps-addin/tests/state-sync.test.cjs`，13 项通过，连同 S09 共 21 项 JS 回归通过。探针现使用带 HTTP 状态的响应和完整异步等待，观察失败重试恢复；Begin/End 缺失和离线状态误报仍存在。客户端超时/迟到回复保护不代表服务器已具备会话与执行顺序保证。
+
 ## C++ 独立桥探针
 
 ```bash
