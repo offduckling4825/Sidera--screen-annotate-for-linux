@@ -47,7 +47,7 @@ Section: graphics
 Priority: optional
 Architecture: ${ARCH}
 Maintainer: User <user@localhost>
-Depends: libqt5core5a (>= 5.12), libqt5gui5 (>= 5.12), libqt5widgets5 (>= 5.12), libx11-6, libxcb1, libxtst6, libxext6
+Depends: libqt5core5a (>= 5.12), libqt5gui5 (>= 5.12), libqt5widgets5 (>= 5.12), libx11-6, libxcb1, libxtst6, libxext6, python3
 Description: Sidera 软件
  全屏透明画布批注工具，支持画笔/橡皮擦与白板，触控屏友好。
  启动后显示左右两个胶囊形侧边栏，侧边栏 ⛶ 按钮可退出全屏。

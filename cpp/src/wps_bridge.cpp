@@ -97,9 +97,26 @@ bool WpsBridge::start() {
 }
 
 void WpsBridge::stop() {
-  if (server_) { server_->close(); server_->deleteLater(); server_ = nullptr; }
-  ping_ = nullptr;
+  if (ping_) {
+    ping_->stop();
+    ping_->deleteLater();
+    ping_ = nullptr;
+  }
+  if (server_) {
+    server_->close();
+    disconnect(server_, nullptr, this, nullptr);
+    // close() 只停止监听；已接受连接也必须停用，避免旧请求影响重启后的状态。
+    for (auto* socket : server_->findChildren<QTcpSocket*>()) {
+      disconnect(socket, nullptr, this, nullptr);
+      socket->abort();
+      socket->deleteLater();
+    }
+    server_->deleteLater();
+    server_ = nullptr;
+  }
   connected_ = false;
+  lastSeen_ = 0;
+  realPos_ = -1;
   queue_.clear();
 }
 

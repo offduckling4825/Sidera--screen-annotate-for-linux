@@ -311,7 +311,8 @@ impl App {
         }
         self.undo.push_back(UndoEntry::default());
     }
-    /// 在绘制前，把 rect 覆盖到、且本条目尚未保存的瓦片原样拷下来
+    /// 在绘制前保存 rect 覆盖到、且本条目尚未保存的瓦片。
+    /// rect 使用画布物理像素坐标，右、下边界不包含在区域内。
     pub fn save_undo_rect(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
         let cw = self.canvas.width() as i32;
         let ch = self.canvas.height() as i32;
@@ -388,9 +389,17 @@ impl App {
         self.clear_undo();
     }
 
-    /// 屏幕尺寸变化：重建画布并重置相关状态
+    /// 屏幕尺寸变化或实际画布尺寸不匹配时，重建画布并重置相关状态。
     pub fn resize_screen(&mut self, w: i32, h: i32) {
-        if w <= 0 || h <= 0 || (self.screen_w == w && self.screen_h == h) {
+        if w <= 0 || h <= 0 {
+            return;
+        }
+        // Wayland 首次 configure 可能与默认逻辑尺寸相同，但画布仍是 1×1 占位图。
+        if self.screen_w == w
+            && self.screen_h == h
+            && self.canvas.width() == self.canvas_w()
+            && self.canvas.height() == self.canvas_h()
+        {
             return;
         }
         self.screen_w = w;
@@ -586,6 +595,84 @@ pub fn save_settings(app: &App) {
         app.large_erase_scale10,
     );
     let _ = std::fs::write(path, content);
+}
+
+#[cfg(test)]
+mod canvas_tests {
+    use super::*;
+
+    #[test]
+    fn first_configure_repairs_placeholder_canvas_and_allows_edge_drawing() {
+        for (cw, ch) in [(1, 1), (1920, 1), (1, 1080)] {
+            let mut app = App::new(Pixmap::new(cw, ch).unwrap(), 1920, 1080);
+            app.resize_screen(1920, 1080);
+            app.set_scale(1.0);
+            assert_eq!((app.canvas.width(), app.canvas.height()), (1920, 1080));
+
+            app.begin_undo();
+            crate::paint::stroke_tapered(&mut app, (1890, 1060), (1910, 1060), 6, 6);
+            assert!(app.canvas.pixel(1900, 1060).unwrap().alpha() > 0);
+            app.undo_last();
+            assert!(app.canvas.data().iter().all(|&byte| byte == 0));
+        }
+    }
+
+    #[test]
+    fn repeated_configure_preserves_ink_undo_and_sidebar_position() {
+        let mut app = App::new(Pixmap::new(320, 240).unwrap(), 320, 240);
+        app.begin_undo();
+        crate::paint::stroke_tapered(&mut app, (270, 220), (310, 220), 6, 6);
+        app.sb_y = 37;
+        let before = app.canvas.data().to_vec();
+
+        app.resize_screen(320, 240);
+
+        assert_eq!(app.canvas.data(), before.as_slice());
+        assert!(app.page_has_ink);
+        assert_eq!(app.sb_y, 37);
+        assert_eq!(app.undo.len(), 1);
+        app.undo_last();
+        assert!(app.canvas.data().iter().all(|&byte| byte == 0));
+    }
+
+    #[test]
+    fn configure_and_scale_in_either_order_produce_expected_canvas_size() {
+        for (w, h, scale, expected) in [
+            (1920, 1080, 1.0, (1920, 1080)),
+            (1920, 1080, 1.25, (2400, 1350)),
+            (1280, 720, 2.0, (2560, 1440)),
+            (1919, 1079, 1.25, (2399, 1349)),
+        ] {
+            for scale_first in [false, true] {
+                let mut app = App::new(Pixmap::new(1, 1).unwrap(), 1920, 1080);
+                if scale_first {
+                    app.set_scale(scale);
+                    app.resize_screen(w, h);
+                } else {
+                    app.resize_screen(w, h);
+                    app.set_scale(scale);
+                }
+                assert_eq!((app.screen_w, app.screen_h), (w, h));
+                assert_eq!((app.canvas.width(), app.canvas.height()), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_configure_dimensions_leave_existing_canvas_untouched() {
+        let mut app = App::new(Pixmap::new(320, 240).unwrap(), 320, 240);
+        app.begin_undo();
+        crate::paint::stroke_tapered(&mut app, (20, 20), (40, 20), 6, 6);
+        let before = app.canvas.data().to_vec();
+
+        for (w, h) in [(0, 240), (-1, 240), (320, 0), (320, -1)] {
+            app.resize_screen(w, h);
+            assert_eq!((app.screen_w, app.screen_h), (320, 240));
+            assert_eq!(app.canvas.data(), before.as_slice());
+            assert!(app.page_has_ink);
+            assert_eq!(app.undo.len(), 1);
+        }
+    }
 }
 
 #[cfg(test)]

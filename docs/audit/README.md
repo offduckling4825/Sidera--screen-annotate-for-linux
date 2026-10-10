@@ -1,6 +1,6 @@
 # 2026-09-30 评审诊断
 
-基线：`custom @ 0642103ae9d2067efef0be4f15bb515c7aa56e1c`。这些脚本描述当前行为，未改变生产代码，不是发布验收测试。
+基线：`custom @ 0642103ae9d2067efef0be4f15bb515c7aa56e1c`。下述初次评审结果属于该基线；脚本读取运行时的源码并记录行为，不是发布验收测试。
 
 ## JavaScript 探针
 
@@ -8,9 +8,9 @@
 node docs/audit/check_addin.cjs
 ```
 
-加载原始bridge.js，在Node VM中模拟WPS Application、网络和定时器，不访问真实WPS或HTTP服务。本轮Node版本24.19.0。
+加载指定 bridge.js（默认工作区版本），在 Node VM 中模拟 WPS Application、网络和定时器，不访问真实 WPS 或 HTTP 服务。初次评审 Node 版本为 24.19.0。
 
-观察结果：
+初次评审观察结果：
 
 | 场景 | 期望 | 当前观察 |
 | --- | --- | --- |
@@ -20,6 +20,8 @@ node docs/audit/check_addin.cjs
 | 网络失败时点状态 | 显示实际连接状态 | 仍提示“批注联动桥在线” |
 
 可传入源路径：`node docs/audit/check_addin.cjs /path/to/bridge.js`。输出中expected是期望，observed是现状；退出0仅表示探针完成。
+
+2026-10-01 后续验证：S09 修复后，同一探针观察到 6 个监听和 1 个 interval，其余 S10 现象仍存在。启动行为的正式回归测试为 `node --test wps-addin/tests/bridge.test.cjs`，当前 8 项通过；与本探针的诊断退出码区别对待。
 
 ## C++ 独立桥探针
 
@@ -49,6 +51,10 @@ python3 docs/audit/check_cpp_bridge.py
 已有套件取走探针预先入队的NEXT，之后poll为空；它没有对命令顺序做有效断言。回调序列包含套件发送的Begin1和探针发送的Begin3；之后End/State3不触发独立桥结束或新页回调。
 
 该组件是C++ Wayland使用的桥，不代表完整Wayland图形后端或X11旧桥已经通过测试。脚本清除子进程的WPS_ADDIN_DIR，并在系统安装目录存在时把空目录映射到隔离视图，保证缺资源场景可重复；原系统文件保持原样。
+
+2026-10-01 后续验证：S15 的 timer、连接与重启状态清理已修复，正式验收入口为 `python3 cpp/tests/test_bridge_lifecycle.py`，5 项通过（含 100 次启停）。上面的 3 个活动 timer 是初次评审结果；原接口测试误通过与登记覆盖问题仍分别按 S13/S11 跟踪。
+
+2026-10-01 后续验证：S11 的独立安装脚本已修复，正式回归 `python3 wps-addin/tests/test_install.py` 共 13 项通过，覆盖其他加载项保留、迁移、备份和失败时原文件保留。上面的 `installerPreservesOtherAddin: false` 属于初次评审；Rust/C++ 应用内登记仍按 S11 跟踪。
 
 ## 构建与静态检查结果
 

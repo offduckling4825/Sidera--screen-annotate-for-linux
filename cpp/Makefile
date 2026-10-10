@@ -106,4 +106,7 @@ clean:
 test:
 	python3 tests/test_bridge_api.py
 
-.PHONY: all clean test
+test-lifecycle:
+	python3 tests/test_bridge_lifecycle.py
+
+.PHONY: all clean test test-lifecycle

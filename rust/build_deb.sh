@@ -122,9 +122,9 @@ Section: graphics
 Priority: optional
 Architecture: ${DEB_ARCH}
 Maintainer: User <user@localhost>
-Depends: libc6 (>= 2.30), libgcc-s1
+Depends: libc6 (>= 2.30), libgcc-s1, python3
 Description: Sidera (Rust) 屏幕批注工具
- 纯 Rust 实现，不依赖 Qt / libX11，仅依赖 libc 与 libgcc。
+ 纯 Rust 实现，不依赖 Qt / libX11；加载项安装工具使用 Python 3。
  全屏透明画布批注，支持画笔/橡皮/白板，触控屏友好。
  内置 WPS 演示联动（本地 HTTP 127.0.0.1:16666）。
  安装后执行一次 sidera-wps-addin-install 注册加载项。

@@ -85,7 +85,7 @@ flowchart LR
 | `drawing.cpp` | 画笔、橡皮、撤回、图标 | 绘图纯函数已存在，可以保留；撤回为全屏快照 |
 | `sidebar.cpp` / `popups.cpp` / `settings.cpp` / `modes.cpp` | Widget UI、设置、XShape、按键 | 各自直接修改全局状态，难以验证动作顺序 |
 | `wps.cpp` | X11 HTTP、登记、缓存、配置、全屏识别 | 同一文件有多种职责，部分逻辑与独立桥重复 |
-| `wps_bridge.cpp` | 独立桥，供 Wayland 使用 | 与 X11 桥事件语义不同；定时器停止不完整 |
+| `wps_bridge.cpp` | 独立桥，供 Wayland 使用 | 与 X11 桥事件语义不同；初评的启停资源问题已按 S15 修复 |
 | `backend_wayland.cpp` | 裸 Wayland + QPainter 的完整应用路径 | 1,214 行，另有一套分页/设置/触摸状态；运行时配置变化没有完整重建 |
 | `main.cpp` / `splash.cpp` | 平台选择、单实例、启动和退出 | Linux 会话判定与功能可用性耦合，退出状态需统一 |
 
@@ -110,6 +110,8 @@ flowchart LR
 
 已定位到 Rust 1920×1080 Wayland 默认画布初始化、DPI 撤回区域、WPS 容量静默丢页、缩放后旧缓存尺寸、两套放映信号重复清空等问题。仅整理文件不能修复这些状态规则；需要先定义并验证“当前页、会话、画布尺寸、未完成笔画”的不变量。
 
+后续进度（2026-10-01）：默认画布初始化 S01 和高 DPI 撤回区域 S02 已修复，合计新增 8 项回归测试，隔离执行的完整 17 项 Rust 单元测试通过；真实桌面与触屏仍待验收，其余问题按清单独立跟踪。
+
 ### Wayland 是能力组合，不是单一兼容标记
 
 两个 Wayland 后端都要求 `wlr-layer-shell`。Rust 的 uinput 回退只处理部分按键注入；不能让缺少 layer-shell 的桌面拥有可用覆盖层。Rust 的截图方法当前总是返回 `None`，因此实际走 Portal；C++ 走 screencopy，缺少 Portal 回退。Rust Wayland 虚拟右键为空实现，C++ Wayland 也没有与 X11 相同的手掌橡皮流程。
@@ -129,8 +131,10 @@ Rust 的瓦片撤回是可保留的优化，但分页仍是整屏快照；C++ �
 ## 5. 构建、发布与测试现状
 
 - CI 只在 `main` push、面向 `main` 的 PR 时触发；`custom` 的普通 push 没有该工作流保护。
-- C++ CI 仅构建并检查文件存在，没有运行现有 Python 测试，也没有显式覆盖 Wayland 编译。
+- C++ CI 后续增加了 S15 的 5 项隔离生命周期回归；仍未运行原 Python 接口套件，也没有显式覆盖 Wayland 图形构建。
 - Rust CI 有 release build、9 个源内测试及 clippy；后续 S14 修复增加了打包架构回归检查。仍没有 fmt 检查、警告失败策略、隔离家目录或真实桌面测试。
+- 后续 S09 修复增加独立 WPS 加载项 CI job，检查 JS 语法并运行 8 项启动/事件注册回归。Node VM 验证已通过，真实 WPS 生命周期仍待确认。
+- 后续 S11 修复将独立加载项安装命令改为 XML 合并、备份和原子替换，13 项隔离回归通过并加入 WPS CI；三个 DEB 入口补充 Python 3 依赖。Rust/C++ 应用内自动登记仍待修复，S11 尚未整体关闭。
 - 容器脚本依赖被 `.gitignore` 排除的两个 rootfs，仓库没有可复现的生成步骤、下载来源或校验和；干净检出无法直接执行 README 的一键构建。
 - C++ DEB 手写依赖缺少直接链接的 Qt5Network；Wayland 产物的额外库也没有统一生成依赖。
 - 初次评审发现 Rust DEB 的 arm64 路径可回退到本机 `target/release/sidera`，没有校验 ELF 架构；后续 S14 修复已加入架构保护及回归测试。最低 glibc 仍只声明、没有作为发布门禁验证。

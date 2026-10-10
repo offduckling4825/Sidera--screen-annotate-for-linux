@@ -13,7 +13,7 @@
 | Python / 隔离 | Python 3.14.4；bubblewrap 0.11.1 |
 | JavaScript | Windows Node.js 24.19.0 |
 | X11测试辅助 | Xvfb/xvfb-run 已安装，本轮未进行图形交互测试 |
-| 缺失 | Cargo/Rust、Wayland开发文件/wayland-scanner/xkbcommon开发文件、arm64环境、真实WPS/触摸测试场景 |
+| 初次评审缺失 | Cargo/Rust、Wayland开发文件/wayland-scanner/xkbcommon开发文件、arm64环境、真实WPS/触摸测试场景；后续环境变化见下文 |
 | 初次评审副本 | WSL 本地 `/var/tmp/sidera-audit-4193fe8f`；初次评审未改生产源 |
 
 初次评审已完成：
@@ -33,6 +33,46 @@
 - 测试在临时目录运行实际打包脚本与 dpkg-deb，覆盖容器/native release、amd64/arm64/aarch64 别名、EXEC/DYN、错误架构、非 ELF/截断头、32 位、大端、目标文件缺失、旧包与暂存目录保留；正确包解包后核对 control、二进制和执行权限。
 - 依赖 Linux、Python 3、bash、binutils、dpkg-deb 和常规 coreutils；无需 Rust 工具链、root 或安装软件包。测试已加入现有 Rust CI job，CI 触发范围仍保持原状。
 - ELF 夹具仅携带测试架构元数据。通过结论限于打包保护；真实程序启动、arm64 原生执行、最低 ABI 和安装后图标均未验证。
+
+### S01 初始画布回归（2026-10-01）
+
+- 当前 WSL 已具备 rustc/cargo 1.93.1、Wayland 与 xkbcommon 开发文件；本次使用 `/var/tmp/sidera-canvas-test-6b736b94` 构建副本，不替换正在运行的安装版本。
+- `cargo test --locked canvas_tests::`：旧逻辑 2 项失败、2 项通过；修复后 4 项全部通过。测试实际绘制右下角笔画并校验撤回后的像素，也覆盖重复 configure 保留笔迹/撤回/侧栏位置、非法尺寸、100%/125%/200% 以及缩放与 configure 的两种顺序。
+- 同一测试构建生成的测试程序在 bubblewrap 中执行全套单元测试：只读挂载根目录、用临时目录映射测试用户家目录、隔离网络，13 项通过、0 跳过。现有 WPS 桥测试因此未接触用户的登记文件或运行中实例的 16666 端口；这不代表 S13 的测试设计问题已修复。
+- 新增测试随现有 `cargo test` 自动执行。完整输出保存在构建副本的 `test-before.log`、`test-after.log`、`test-all.log`。
+- 当前 WSLg 缺少应用所需的 Wayland 全局协议，尚未验证支持 layer-shell 的真实桌面显示；该次 S01 验证不覆盖 S02/S03，S02 的后续结果见下节。
+
+### S02 高 DPI 撤回回归（2026-10-01）
+
+- 使用相同的 WSL、rustc/cargo 1.93.1，构建副本为 `/var/tmp/sidera-undo-test-45688480`；保留此前 S01 修复，不覆盖已安装的程序。
+- `cargo test --locked paint::undo_tests::`：旧逻辑下新增 4 项全部失败，错误为 125% 缩放时撤回后像素与原图不一致；修复后 4 项全部通过。
+- 4 项测试包含 60 组场景：100/125/150/200% 缩放、变化笔宽画笔、普通及 64/128 宽橡皮、点/直线/重叠曲线、跨瓦片、负坐标与画布边缘，以及两步撤回的顺序。非均匀底图逐字节比较可以检测残留笔迹或错误清空；先断言绘制改变了像素，避免空操作误通过。
+- 继续使用 bubblewrap 隔离家目录和网络执行完整测试程序，17 项通过、0 跳过；包含 S01 回归与既有绘图、撤回、UI 和 WPS 测试。输出保存在本次构建副本的 `test-before.log`、`test-after.log`、`test-all.log`。
+- 这些是绘制核心的像素验证，不能替代高 DPI 实际桌面、触屏输入、手掌识别及混合 DPI 多屏验收。
+
+### S09 加载项启动回归（2026-10-01）
+
+- Windows Node.js 24.19.0 运行 `node --test wps-addin/tests/bridge.test.cjs`：旧代码 8 项失败，修复后 8 项通过。生产 main.js/bridge.js 语法检查也通过。
+- 测试用 Node VM 执行实际 bridge.js，使用可控 Application、事件接口、网络和定时器；验证回调触发次数、监听数量、轮询数量、部分注册失败恢复、接口延迟就绪及重试不累积，不访问真实服务或用户配置。
+- 原诊断脚本再次运行：重复 startBridge 的监听数从 12 降为 6，interval 仍为 1；S10 的状态丢失和在线误报仍能复现，未记为修复。
+- 已添加独立 WPS 加载项 CI job（Node.js 24），运行语法检查与这 8 项回归；工作流触发范围仍为 main push / 面向 main 的 PR。
+- 本次未在真实 WPS 中验证加载/卸载或 Application/ApiEvent 对象替换，属于同页启动行为的自动化验证。
+
+### S15 C++ 桥生命周期回归（2026-10-01）
+
+- WSL Ubuntu 26.04、GCC 15.2.0、Qt5Core/Network 5.15.18、Python 3.14.4、bubblewrap；构建副本 `/var/tmp/sidera-lifecycle-test-f2f52a0a`。现有 Qt socket 弃用警告仍存在。
+- 在仓库根目录运行 `python3 cpp/tests/test_bridge_lifecycle.py`，或在 cpp 目录运行 `make test-lifecycle`。依赖 g++、pkg-config、Qt5Core/Network 开发文件、Python 3 和 bubblewrap；缺少依赖或隔离失败即报错，不会静默跳过。
+- 测试编译真实 `wps_bridge.cpp`，在只读根目录、临时家目录与独立网络中运行；实际用户的 WPS 登记文件和已有 16666 服务不受影响。它独立于原来要求已运行服务的 `make test`。
+- 5 项测试覆盖 100 次启停/重复调用、旧连接与回调清理、重启后的页号/命令状态、占用端口后的恢复、析构清理。旧实现 3 项失败，修复后 5 项全部通过；记录在构建副本的 `test-before.log`、`test-after.log`。
+- 已接入 C++ CI job；本次验收限于 Qt 桥组件，未进行 C++ Wayland 图形或真实 WPS 联动验收。
+
+### S11 安装脚本登记保留回归（2026-10-01）
+
+- WSL Ubuntu 26.04、Python 3.14.4、bubblewrap 0.11.1；测试副本 `/var/tmp/sidera-addin-install-test-75d9e5ab`，日志 `test-before.log`、`test-after.log`、`packaging.log`。
+- 在仓库根目录运行 `python3 wps-addin/tests/test_install.py`。需要 Linux、bash、Python 3、bubblewrap 和常规 coreutils；真实安装脚本在只读系统、临时家目录和独立网络中执行，系统模板目录也映射为测试资源。真实 WPS 文件和运行中程序不受影响。
+- 13 项测试覆盖保留其他加载项/注释/扩展节点/根属性、紧凑与自闭合 XML、旧名称/重复条目迁移、原字节备份、权限与幂等、异常 XML/模板、缺 Python、只读目录、符号链接、模拟原子替换失败、DEB 命令的系统模板路径。旧脚本 9 项用例失败（共 15 个失败结果）、4 项通过；修复后全部通过。
+- 安装脚本及 3 个打包脚本语法通过，Rust 打包原有 5 组/17 个场景通过；C++ amd64/arm64 用占位二进制完成实际 DEB 打包/解包，确认 Python 依赖、安装脚本、模板内容与执行权限。占位二进制仅验证包装过程，不证明应用编译或原生启动。
+- 已接入 WPS 加载项 CI job。只验证独立安装命令；应用内部自动登记、并发写入、真实 WPS 加载及恢复仍按 S11 跟踪。未覆盖安装本次修改到现有 WSL 程序。
 
 ## 2. 后续环境分层
 
