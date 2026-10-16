@@ -74,6 +74,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install startup test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 bubblewrap xvfb
+
       - name: Test DEB packaging architecture checks
         run: python3 rust/tests/test_build_deb.py
 
@@ -98,6 +103,9 @@ jobs:
       - name: Test
         working-directory: rust
         run: cargo test --locked
+
+      - name: Test startup diagnostics and backend selection
+        run: python3 rust/tests/test_startup.py rust/target/release/sidera
 
       - name: Clippy
         working-directory: rust

@@ -15,14 +15,24 @@
 
 ## 🧬 两套并行实现
 
-本仓库包含**两套并行维护、均可用于生产**的实现，按平台与依赖偏好选择：
+本仓库包含两套并行维护的实现，按桌面环境与依赖选择；课堂使用前请在目标设备完成兼容性验收：
 
 | 版本 | 技术栈 | 版本号 | 建议场景 |
 | --- | --- | --- | --- |
-| **Rust 版（主推）** | 纯 Rust，**不依赖 Qt / libX11**，tiny-skia 软件渲染 | `3.0-Electro-testing` | X11 与 Wayland 通吃；老机器、国产化教室机；追求轻量与无重量级依赖 |
+| **Rust 版（主推）** | 纯 Rust，**不依赖 Qt / libX11**，tiny-skia 软件渲染 | `3.0-Electro-testing` | 原生 X11，或支持 layer-shell 的 Wayland 桌面；具体功能仍需实机验收 |
 | **C++ / Qt5 版** | C++17 + Qt5 | `2.6-Geo-stable` | 经典实现；长期在 X11 教室环境验证，功能最全 |
 
 > 两版共用同一份 WPS 加载项（`wps-addin/`）与本地 HTTP 桥协议（`127.0.0.1:16666`），可平滑切换。
+
+### 桌面兼容范围与启动诊断
+
+安装包能安装，不代表当前桌面能显示批注覆盖层。两版的原生 Wayland 后端都依赖 `zwlr_layer_shell_v1`（layer-shell）；不提供该协议的 GNOME Wayland 桌面暂不能使用这个后端。XWayland 与原生 X11 的能力不同，不能当作已验证的通用回退方案。
+
+`custom` 分支 Rust 版会优先遵循 `XDG_SESSION_TYPE`；原生 X11 会话中残留的 `WAYLAND_DISPLAY`，以及空的 `WAYLAND_DISPLAY`，不会再误选 Wayland。可用 `SIDERA_BACKEND=auto|x11|wayland` 显式选择后端；默认 `auto`，Wayland 失败时不自动切换 X11。此选项不适用于旧发布包或 C++ 版，也不会为桌面补上缺失的协议。
+
+启动失败会返回非零退出码，把最近一次错误写入 `${XDG_STATE_HOME:-$HOME/.local/state}/sidera/startup-error.log`；系统提供 `notify-send` 时还会发送桌面通知。终端/自动化环境可用 `SIDERA_NO_STARTUP_NOTIFICATION=1` 关闭通知，日志仍保留。
+
+2026-10-11 在用户的 VMware 虚拟机确认：系统实际为 **Ubuntu 26.04.1 amd64、GNOME Wayland**，上游安装包已成功安装，启动因缺少 layer-shell 失败。该机手动尝试 X11 时还发生了 Xwayland 24.1.10 与 GNOME 崩溃，尚未解决，不能宣称兼容。Ubuntu 24.04 尚未实测；银河麒麟 V10 SP1 arm64 需要 arm64 包，桌面会话仍待诊断。完整证据及后续方案见 [VMware 兼容性记录](docs/audit/VMWARE_COMPATIBILITY_2026-10-11.md)。
 
 ---
 
@@ -85,7 +95,7 @@ Rust 打包需要 `binutils` 提供的 `readelf`。脚本会校验二进制的�
 
 #### Rust 版
 
-Rust 版运行时只依赖 `libc6` 与 `libgcc-s1`，无需 Qt、无需 `libX11`（X11/Wayland 协议均由纯 Rust 库直连）。
+Rust 版 DEB 声明 `libc6`、`libgcc-s1` 和用于 WPS 加载项登记的 `python3`，无需 Qt、无需 `libX11`（X11/Wayland 协议均由纯 Rust 库直连）。系统图形协议与实际二进制的 glibc 要求仍须满足；现代系统本机构建不等于兼容旧系统。
 
 ```bash
 cd rust

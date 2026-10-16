@@ -4,6 +4,12 @@
 
 ## 1. 初次评审环境与后续修复验证
 
+### VMware 兼容性排查与 Rust 启动回归（2026-10-11）
+
+新增实际 VMware Ubuntu 26.04.1 amd64 / GNOME Wayland 环境。已确认上游包安装成功，但原生 Wayland 缺少 layer-shell；强制 X11 时另有 Xwayland/桌面崩溃，尚未解决。Rust 启动检查和错误反馈已修订，24 项单元测试及 12 项隔离启动回归通过。完整环境、复现、测试命令和未验收项见 [VMware 兼容性记录](audit/VMWARE_COMPATIBILITY_2026-10-11.md)。这不是 Ubuntu 24.04、麒麟或完整桌面兼容性通过的证明。
+
+### 初次评审基线
+
 | 项目 | 实际值 |
 | --- | --- |
 | 宿主 | Windows / PowerShell，项目位于 NAS UNC 共享 |

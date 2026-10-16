@@ -27,7 +27,7 @@ P1：优先修复，涉及丢笔迹、内存/协议正确性、用户配置损�
 | S15 | P2 | C++ 独立桥启停留下活动定时器 | 已修复；5 项生命周期回归通过 |
 | S16 | P2 | Rust 截图剪贴板对象立即销毁；Wayland 支持不完整 | 代码确认 + 依赖文档，粘贴待验证 |
 | S17 | P2 | Portal 截图订阅竞态、无超时/并发约束、URI 处理不足 | 代码确认 + 协议依据 |
-| S18 | P2 | 各后端能力差异没有体现在产品反馈中 | 代码确认 |
+| S18 | P2 | 各后端能力差异没有体现在产品反馈中 | Rust 启动检测/失败诊断已修复；功能能力提示待补 |
 | S19 | P2 | Wayland 输出/seat/协议版本与热插拔处理不完整 | 代码确认，兼容后果待验证 |
 | S20 | P2 | 触摸取消、停留和首次落笔重绘规则不足 | 代码确认，触控体验待验证 |
 | S21 | P2 | 分辨率/缩放变化后旧页缓存不能保证正确恢复 | 代码确认 |
@@ -184,6 +184,8 @@ P1：优先修复，涉及丢笔迹、内存/协议正确性、用户配置损�
 `rust/src/portal.rs` 先调用 Screenshot，再订阅 Response，存在快速响应早于订阅的竞态；没有超时、取消或并发上限。file URI 仅去掉前缀，含转义字符的路径不能保证读取成功。按 handle_token 提前订阅并处理超时/取消，用 URI 解析；见 [Portal Request 规范](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Request.html)。验收响应在调用完成前后到达、用户取消、服务缺失、带空格路径和连点截图；所有任务能结束并给出准确反馈。
 
 ### S18 — 能力差异没有产品化表达
+
+**进度（2026-10-11）**：Rust 自动选择后端时尊重明确的 X11/Wayland 会话，忽略空的 Wayland 显示变量；增加 `SIDERA_BACKEND` 显式选择。Wayland 错误带具体协议名称并传回入口，X11 连接/运行错误和单实例绑定失败也返回非零状态；保存启动诊断，并可选发送有两秒等待上限的桌面通知。不自动切换到未验证的 XWayland。24 项单元测试、启动集成回归及 VMware 实测见 [兼容性记录](audit/VMWARE_COMPATIBILITY_2026-10-11.md)。GNOME 原生覆盖层、其他动作能力反馈和 C++ 入口尚未修复，不能把本项整体记为完成。
 
 Rust `WlPlat::screenshot` 总返回 None（实际全走 Portal），`virtual_right_click` 为空，`is_presentation_fullscreen` 总 false；C++ Wayland 缺少 uinput/Portal 回退、全局热键和 X11 同等手掌橡皮。两者都要求 layer-shell，uinput 不解决缺失该协议的覆盖层。引入能力探测和 Result 返回，禁用不可用动作并解释原因；验收每个平台上诊断、按钮状态、实际行为一致，启动失败不能当正常成功退出。
 

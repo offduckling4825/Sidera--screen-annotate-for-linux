@@ -8,6 +8,7 @@ mod gesture;
 mod paint;
 mod portal;
 mod splash;
+mod startup;
 mod text;
 mod ui;
 mod uinput;
@@ -1203,7 +1204,7 @@ fn load_icon(size: u32) -> Option<Pixmap> {
     None
 }
 
-fn single_instance() -> Option<UnixListener> {
+fn single_instance() -> Result<Option<UnixListener>, Box<dyn std::error::Error>> {
     let path = dirs::runtime_dir()
         .map(|d| d.join("sidera.sock"))
         .unwrap_or_else(|| {
@@ -1214,15 +1215,15 @@ fn single_instance() -> Option<UnixListener> {
         let _ = s.write_all(b"show");
         let _ = s.flush();
         log::warn!("[WARN] Sidera 已在运行，退出新实例");
-        return None;
+        return Ok(None);
     }
     let _ = std::fs::remove_file(&path);
     match UnixListener::bind(&path) {
         Ok(l) => {
             let _ = l.set_nonblocking(true);
-            Some(l)
+            Ok(Some(l))
         }
-        Err(_) => None,
+        Err(e) => Err(format!("无法创建单实例通信文件 {}：{e}", path.display()).into()),
     }
 }
 
@@ -1364,20 +1365,27 @@ pub(crate) fn tick(
     }
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    match run_application() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            startup::report_error(&error);
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_application() -> Result<(), Box<dyn std::error::Error>> {
     // 软件渲染（无 GPU 老机器）
     std::env::set_var("LIBGL_ALWAYS_SOFTWARE", "1");
 
-    let wayland = std::env::var("XDG_SESSION_TYPE")
-        .map(|v| v.to_lowercase() == "wayland")
-        .unwrap_or(false)
-        || std::env::var("WAYLAND_DISPLAY").is_ok();
+    let backend = startup::detect_backend()?;
 
-    let single = single_instance();
+    let single = single_instance()?;
     if single.is_none() {
-        return;
+        return Ok(());
     }
 
     let fonts = Fonts::load();
@@ -1389,19 +1397,12 @@ fn main() {
         log::warn!("[WARN] 未找到 sidera.png，设置/闪屏将无图标（可设 SIDERA_ICON 指定）");
     }
 
-    if wayland {
+    if backend == startup::DisplayBackend::Wayland {
         log::info!("[INFO] 平台: wayland");
-        wayland::run(fonts, icon, icon_big, single);
-        return;
+        return wayland::run(fonts, icon, icon_big, single);
     }
 
-    let x11 = match x11::X11::connect() {
-        Ok(x) => x,
-        Err(e) => {
-            log::error!("[ERROR] 无法连接 X11: {}", e);
-            return;
-        }
-    };
+    let x11 = x11::X11::connect().map_err(|e| format!("无法连接 X11 桌面：{e}"))?;
     let scale = x11.detect_scale();
     let logical_w = ((x11.width as f64) / scale).round().max(1.0) as i32;
     let logical_h = ((x11.height as f64) / scale).round().max(1.0) as i32;
@@ -1414,13 +1415,7 @@ fn main() {
         scale
     );
 
-    let (win, gc) = match x11.create_overlay() {
-        Ok(v) => v,
-        Err(e) => {
-            log::error!("[ERROR] 创建覆盖层失败: {}", e);
-            return;
-        }
-    };
+    let (win, gc) = x11.create_overlay().map_err(|e| format!("创建 X11 覆盖层失败：{e}"))?;
 
     // XInput2 触摸事件（若可用）
     {
@@ -1485,7 +1480,7 @@ fn main() {
         rt.redraw_full(&app);
         std::thread::sleep(Duration::from_millis(200));
         x11.destroy_window(win);
-        return;
+        return Ok(());
     }
 
     // 调试：画一条穿过侧边栏的笔迹并保存整屏 PNG，用于检查渲染顺序
@@ -1522,7 +1517,7 @@ fn main() {
             }
         }
         x11.destroy_window(win);
-        return;
+        return Ok(());
     }
 
     // 调试：直接打开设置面板并渲染保存
@@ -1546,7 +1541,7 @@ fn main() {
             }
         }
         x11.destroy_window(win);
-        return;
+        return Ok(());
     }
 
     // 调试：查询窗口的 XShape 输入区域
@@ -1584,7 +1579,7 @@ fn main() {
             log::info!("[SHAPE] 绘画模式输入区域 {} 个: {:?}", r.rectangles.len(), coords);
         }
         x11.destroy_window(win);
-        return;
+        return Ok(());
     }
 
     // 调试：验证 XTest 指针移动是否生效（判断 XWayland 下能否注入事件）
@@ -1608,7 +1603,7 @@ fn main() {
             );
         }
         x11.destroy_window(win);
-        return;
+        return Ok(());
     }
 
     // 启动闪屏
@@ -1643,8 +1638,7 @@ fn main() {
                 Ok(Some(ev)) => handle_event(&rt, &mut app, &mut ip, wps_bridge.as_ref(), ev),
                 Ok(None) => break,
                 Err(e) => {
-                    log::error!("[ERROR] X11 连接错误: {}", e);
-                    return;
+                    return Err(format!("X11 桌面连接已断开：{e}").into());
                 }
             }
         }

@@ -883,25 +883,20 @@ pub fn run(
     icon: Option<Pixmap>,
     icon_big: Option<Pixmap>,
     single: Option<UnixListener>,
-) {
-    if let Err(e) = run_inner(fonts, icon, icon_big, single) {
-        log::error!("[ERROR] Wayland 后端启动失败: {}", e);
-    }
-}
-
-fn run_inner(
-    fonts: Fonts,
-    icon: Option<Pixmap>,
-    icon_big: Option<Pixmap>,
-    single: Option<UnixListener>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let conn = Connection::connect_to_env()?;
-    let (globals, event_queue) = registry_queue_init::<WlState>(&conn)?;
+    let conn = Connection::connect_to_env()
+        .map_err(|e| format!("无法连接 Wayland 桌面，请在图形会话中启动 Sidera：{e}"))?;
+    let (globals, event_queue) = registry_queue_init::<WlState>(&conn)
+        .map_err(|e| format!("无法读取 Wayland 桌面提供的协议：{e}"))?;
     let qh = event_queue.handle();
 
-    let compositor = CompositorState::bind(&globals, &qh)?;
-    let layer_shell = LayerShell::bind(&globals, &qh)?;
-    let shm = Shm::bind(&globals, &qh)?;
+    let compositor = CompositorState::bind(&globals, &qh)
+        .map_err(|e| format!("Wayland 桌面缺少所需的 wl_compositor 支持：{e}"))?;
+    let layer_shell = LayerShell::bind(&globals, &qh).map_err(|e| {
+        format!("当前 Wayland 桌面不支持 Sidera 所需的覆盖层协议 zwlr_layer_shell_v1（layer-shell）：{e}。请使用支持该协议的桌面，或原生 X11 会话。XWayland 的能力不同，程序不会自动回退。")
+    })?;
+    let shm = Shm::bind(&globals, &qh)
+        .map_err(|e| format!("Wayland 桌面缺少所需的 wl_shm 支持：{e}"))?;
 
     let surface = compositor.create_surface(&qh);
     let layer = layer_shell.create_layer_surface(
