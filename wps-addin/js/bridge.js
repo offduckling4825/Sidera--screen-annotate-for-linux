@@ -17,7 +17,16 @@ function OnAddinLoad(ribbonUI) {
 
 function OnSaPing() {
     var st = bridgeState()
-    alert('批注联动桥在线\npos=' + st.pos + ' click=' + st.click)
+    var finished = false
+    function finish(online) {
+        if (finished) return
+        finished = true
+        clearTimeout(timer)
+        alert((online ? '批注联动桥在线' : '未连接批注联动桥，请先打开 Sidera') + '\npos=' + st.pos + ' click=' + st.click)
+    }
+    var timer = setTimeout(function () { finish(false) }, 3000)
+    bridgeFetch('/hello?m=health-check', function () { finish(false) }, null,
+                function (text) { finish(text === 'OK sidera') })
     return true
 }
 
@@ -136,6 +145,12 @@ function bridgeStateMessage(name, st) {
 }
 function bridgeFetch(path, onResult, signal, onText) {
     try {
+        if (/^\/(push|poll)\?/.test(path)) {
+            var stream = window._sideraRequestStream
+            if (!stream) stream = window._sideraRequestStream = {
+                id: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2), sequence: 0 }
+            path += '&sid=' + encodeURIComponent(stream.id) + '&seq=' + (++stream.sequence)
+        }
         var options = { cache: 'no-store' }
         if (signal) options.signal = signal
         fetch(BRIDGE_URL + path, options)
@@ -268,16 +283,21 @@ function startBridge() {
     }
     // 事件监听为“可选增强”：即使没有 ApiEvent，也要启动轮询上报真实页号
     // 状态保存在 window 上，同一页面重复执行脚本时也不重复注册。
-    var handlers = window._sideraEventHandlers || (window._sideraEventHandlers = {})
     var eventsReady = true
     try {
         var api = app.ApiEvent || (window.wps && window.wps.ApiEvent)
+        if (window._sideraEventOwner !== api) {
+            window._sideraEventOwner = api
+            window._sideraEventHandlers = {}
+        }
+        var handlers = window._sideraEventHandlers || (window._sideraEventHandlers = {})
         if (api) {
             for (var i = 0; i < BridgeSlideEvents.length; i++) {
                 (function (ev) {
                     if (handlers[ev]) return
                     try {
                         var handler = function () {
+                            if (window._sideraEventOwner !== api) return
                             var st = bridgeState()
                             bridgeFetch('/push?m=' + encodeURIComponent(bridgeStateMessage(ev, st)))
                         }
@@ -296,6 +316,11 @@ function startBridge() {
         window._sideraTimerStarted = true
         bridgeFetch('/hello?m=sidera-bridge')
         setInterval(function () {
+            try {
+                var current = bridgeApplication()
+                var currentApi = current && (current.ApiEvent || (window.wps && window.wps.ApiEvent))
+                if (window._sideraEventOwner !== currentApi) startBridge()
+            } catch (e) {}
             bridgePoll()
             bridgePushIfChanged()              // 状态变化即上报（前后翻都覆盖）
         }, 300)

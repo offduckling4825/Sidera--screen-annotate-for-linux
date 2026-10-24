@@ -3,7 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, VecDeque};
 use std::io::Read;
-use std::os::unix::net::UnixListener;
+use crate::instance::Instance as UnixListener;
 use std::time::Duration;
 use tiny_skia::Pixmap;
 use crate::{app, App, Backend, Fonts, Ip, Rt, Timers, WpsBridge};
@@ -34,7 +34,7 @@ mod tests {
     }
 
     #[test]
-    fn cursor_and_pages_consider_ink_on_all_outputs_without_reopening() {
+    fn cursor_and_pages_follow_ink_on_any_output_without_untucking_sidebars() {
         let mut desktop = fixture();
         desktop.toggle();
         let projector = desktop.outputs.get_mut("projector").unwrap();
@@ -51,7 +51,22 @@ mod tests {
         crate::go_prev(&laptop.rt, &mut laptop.app, None);
         desktop.synchronize("laptop");
         assert!(desktop.outputs["projector"].app.canvas.pixels().iter().any(|p| p.alpha() != 0));
-        assert!(desktop.outputs.values().all(|o| !o.app.drawing_tools.expanded()));
+        assert!(desktop.outputs.values().all(|o| o.app.mode == 0 && o.app.drawing_tools.expanded()));
+        assert!(desktop.controls.drawing_tools);
+        desktop.motion("projector", 50, 50);
+        assert!(desktop.outputs.values().all(|o| o.app.drawing_tools.expanded()));
+
+        let laptop = desktop.outputs.get_mut("laptop").unwrap();
+        crate::collapse_sidebars(&laptop.rt, &mut laptop.app);
+        desktop.synchronize("laptop");
+        for next in [true, false] {
+            let laptop = desktop.outputs.get_mut("laptop").unwrap();
+            if next { crate::go_next(&laptop.rt, &mut laptop.app, None); }
+            else { crate::go_prev(&laptop.rt, &mut laptop.app, None); }
+            desktop.synchronize("laptop");
+            assert!(desktop.outputs.values().all(|o| o.app.collapsed && !o.app.drawing_tools.expanded()));
+            assert!(desktop.controls.collapsed && !desktop.controls.drawing_tools);
+        }
     }
 
     #[test]
@@ -207,20 +222,28 @@ impl Desktop {
                 if key != id { self.controls.apply(output); }
             }
         }
-        self.resolve_drawing_tools_collapse();
+        self.resolve_drawing_tools_auto_update();
     }
 
-    fn resolve_drawing_tools_collapse(&mut self) {
+    fn resolve_drawing_tools_auto_update(&mut self) {
         // Consume every request, then decide after all displays have changed
-        // page/mode. Ink on a projector must keep the shared tools available.
-        let requested = self.outputs.values_mut().fold(false, |pending, output| {
-            output.app.drawing_tools.take_auto_collapse_request() || pending
+        // page/mode. Ink on any projector also reopens the shared tool drawer.
+        let requested = self.outputs.values_mut().fold(None, |pending, output| {
+            let request = output.app.drawing_tools.take_auto_update();
+            if request == Some(crate::toolbar::AutoUpdate::FollowPage) { request }
+            else { pending.or(request) }
         });
-        if !requested || !self.outputs.values_mut().all(|o| o.app.drawing_tools_can_auto_collapse()) {
-            return;
+        let Some(update) = requested else { return };
+        let mut has_ink = false;
+        for output in self.outputs.values_mut() {
+            let Some(ink) = output.app.drawing_tools_auto_state() else { return };
+            has_ink |= ink;
         }
-        self.controls.drawing_tools = false;
-        for output in self.outputs.values_mut() { crate::fold_drawing_tools(&output.rt, &mut output.app); }
+        let Some(expanded) = update.expanded_for(has_ink) else { return };
+        self.controls.drawing_tools = expanded;
+        for output in self.outputs.values_mut() {
+            crate::set_drawing_tools_expanded(&output.rt, &mut output.app, expanded);
+        }
     }
 
     pub fn motion(&mut self, id: &str, x: i32, y: i32) {
@@ -264,7 +287,7 @@ impl Desktop {
             self.controls.apply(output);
             output.app.request_drawing_tools_collapse();
         }
-        self.resolve_drawing_tools_collapse();
+        self.resolve_drawing_tools_auto_update();
     }
     pub fn tick(&mut self) {
         if self.outputs.values().any(|o| !o.launch_pending && o.app.canvas.width() > 1) { self.starting = false; }
@@ -273,7 +296,7 @@ impl Desktop {
             crate::tick_shared(&output.rt, &mut output.app, &mut output.ip, self.wps.as_ref(), &update, &mut output.timers);
         }
         if let Some(output) = self.outputs.values().next() { self.controls = Controls::read(&output.app); }
-        self.resolve_drawing_tools_collapse();
+        self.resolve_drawing_tools_auto_update();
         for output in self.outputs.values_mut() {
             output.rt.flush_dirty(&output.app);
             output.rt.backend.flush();

@@ -562,7 +562,9 @@ impl X11 {
             "impress",
             "libreoffice",
         ];
-        KEYS.iter().any(|k| name.contains(k))
+        name.split('\0').any(|field| KEYS.iter().any(|key| {
+            if key.len() <= 3 { field == *key } else { field.contains(key) }
+        }))
     }
 
     /// 抓取整个根窗口，返回 RGBA 像素

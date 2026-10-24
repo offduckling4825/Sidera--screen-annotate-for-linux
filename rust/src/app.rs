@@ -3,7 +3,8 @@
 // 纯 Rust 重写，不依赖 Qt；X11 由 x11.rs 提供
 // Copyright (C) 2026 Carl_Jin   GNU GPL v3
 // ============================================================
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
+use crate::page_cache::PageCache;
 
 use tiny_skia::{Color, Pixmap};
 
@@ -21,9 +22,7 @@ pub const DEFAULT_LARGE_ERASE_SCALE10: i32 = 12;
 pub const MAX_UNDO: usize = 12;
 /// 撤回瓦片边长（像素）；内存与笔迹覆盖面积成正比，而非整张画布
 pub const UNDO_TILE: i32 = 128;
-pub const CACHE_WPS: i32 = 20;
 pub const CACHE_BOARD: i32 = 10;
-pub const CACHE_OTHER: i32 = 2;
 pub const PALM_ERASE_WIDTH: i32 = 64;
 pub const STROKE_RAMP_MS: i64 = 600;
 pub const STROKE_MIN_SCALE: f64 = 0.85;
@@ -46,11 +45,14 @@ pub const PEN_SIZES: [i32; 3] = [3, 5, 10];
 pub const ERASER_SIZES: [i32; 3] = [12, 24, 48];
 
 pub fn now_ms() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(d) => d.as_millis() as i64,
-        Err(_) => 0,
-    }
+    use std::sync::OnceLock;
+    use std::time::{Instant, SystemTime, UNIX_EPOCH};
+    // Keep nonzero, epoch-like values for existing sentinels; subsequent deadlines
+    // use elapsed time, so correcting the system clock cannot freeze input/queues.
+    static CLOCK: OnceLock<(Instant, i64)> = OnceLock::new();
+    let (start, base) = CLOCK.get_or_init(|| (Instant::now(),
+        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(1)));
+    base.saturating_add(start.elapsed().as_millis() as i64)
 }
 
 pub fn color(r: u8, g: u8, b: u8, a: u8) -> Color {
@@ -135,8 +137,8 @@ pub struct App {
     pub touch_frame_contacts: usize,
 
     // 多页缓存
-    pub slide_cache: BTreeMap<i32, Pixmap>,
-    pub whiteboard_cache: BTreeMap<i32, Pixmap>,
+    pub slide_cache: PageCache,
+    pub whiteboard_cache: PageCache,
     pub current_slide: i32,
     // 两种模式各自记住上次页码；切换模式不会销毁另一份缓存。
     pub saved_slide: i32,
@@ -249,8 +251,8 @@ impl App {
             presentation_action: crate::ui::PresentationAction::Escape,
             presentation_transition: crate::toolbar::PresentationTransition::default(),
             touch_frame_contacts: 0,
-            slide_cache: BTreeMap::new(),
-            whiteboard_cache: BTreeMap::new(),
+            slide_cache: PageCache::default(),
+            whiteboard_cache: PageCache::default(),
             current_slide: 1,
             saved_slide: 1,
             whiteboard_slide: 1,
@@ -491,14 +493,17 @@ impl App {
         }
     }
 
-    pub fn drawing_tools_can_auto_collapse(&mut self) -> bool {
-        if self.whiteboard || self.mode != 0 || self.is_drawing || !self.stroke_pts.is_empty() {
-            return false;
+    /// Actual page content for an automatic drawer update; None preserves a
+    /// manual sidebar tuck, active drawing, or the whiteboard's own tool state.
+    pub fn drawing_tools_auto_state(&mut self) -> Option<bool> {
+        if self.whiteboard || self.collapsed || self.mode != 0
+            || self.is_drawing || !self.stroke_pts.is_empty() {
+            return None;
         }
         // Erasing/undo can leave the conservative ink flag set. Inspect actual
         // alpha only at a requested transition, never on idle animation frames.
         self.page_has_ink = self.canvas.pixels().iter().any(|pixel| pixel.alpha() != 0);
-        !self.page_has_ink
+        Some(self.page_has_ink)
     }
 
     pub fn clear_canvas(&mut self) {
@@ -537,22 +542,6 @@ impl App {
     }
 
     // ---- 当前生效缓存 ----
-    pub fn wps_mode_active(&self) -> bool {
-        if self.whiteboard {
-            return false;
-        }
-        self.wps_fullscreen || (self.wps_debug && self.wps_connected && self.wps_real_pos > 0)
-    }
-    pub fn cache_capacity(&self) -> i32 {
-        if self.whiteboard {
-            CACHE_BOARD
-        } else if self.wps_mode_active() {
-            CACHE_WPS
-        } else {
-            CACHE_OTHER
-        }
-    }
-
     pub fn save_current_page(&mut self) {
         if !self.page_has_ink {
             // 清空后的空白页也要覆盖旧快照，否则重开/翻回该页会复活旧笔迹。
@@ -565,29 +554,11 @@ impl App {
             return;
         }
         crate::wps::wps_log(&format!("[PAGE] save page={}", self.current_slide));
-        let cap = self.cache_capacity();
         let slide = self.current_slide;
         if self.whiteboard {
-            if !self.whiteboard_cache.contains_key(&slide)
-                && self.whiteboard_cache.len() as i32 >= cap
-            {
-                if let Some((&k, _)) = self.whiteboard_cache.iter().next() {
-                    self.whiteboard_cache.remove(&k);
-                }
-            }
             let snap = clone_pixmap(&self.canvas);
             self.whiteboard_cache.insert(slide, snap);
         } else {
-            if !self.slide_cache.contains_key(&slide)
-                && self.slide_cache.len() as i32 >= cap
-            {
-                if self.wps_mode_active() {
-                    return;
-                }
-                if let Some((&k, _)) = self.slide_cache.iter().next() {
-                    self.slide_cache.remove(&k);
-                }
-            }
             let snap = clone_pixmap(&self.canvas);
             self.slide_cache.insert(slide, snap);
         }
@@ -595,9 +566,9 @@ impl App {
 
     pub fn load_page(&mut self, page: i32) {
         let cached = if self.whiteboard {
-            self.whiteboard_cache.get(&page).is_some()
+            self.whiteboard_cache.contains_key(&page)
         } else {
-            self.slide_cache.get(&page).is_some()
+            self.slide_cache.contains_key(&page)
         };
         crate::wps::wps_log(&format!("[PAGE] load page={} has_cache={}", page, cached));
         self.stroke_pts.clear();
@@ -609,13 +580,13 @@ impl App {
         };
         if let Some(c) = cached {
             // 缓存保留原始分辨率；恢复时适配当前输出，不能把旧尺寸当作新画布。
-            self.canvas = fit_pixmap(c, self.canvas_w(), self.canvas_h());
+            self.canvas = fit_pixmap(&c, self.canvas_w(), self.canvas_h());
             self.page_has_ink = true;
         } else {
             self.page_has_ink = false;
         }
         self.clear_undo();
-        self.request_drawing_tools_collapse();
+        if !self.whiteboard { self.drawing_tools.request_page_update(); }
     }
 
     /// 放映开始/结束或全屏状态变化只重置透明批注，不影响独立白板。
@@ -680,17 +651,27 @@ fn page_counter_height(scale: f64) -> i32 {
     (28.0 * scale).round().clamp(24.0, 36.0) as i32
 }
 
-// ---------------- 配置持久化 ~/.config/sidera/config ----------------
-fn config_file() -> std::path::PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-        .join(".config/sidera/config")
+// ---------------- 配置持久化（遵循 XDG，兼容原配置） ----------------
+fn config_file() -> Option<std::path::PathBuf> {
+    dirs::config_dir().filter(|p| p.is_absolute()).map(|p| p.join("sidera/config"))
 }
 
 pub fn load_settings(app: &mut App) {
-    let Ok(content) = std::fs::read_to_string(config_file()) else {
-        return;
+    let Some(path) = config_file() else { return };
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Migrate on the next save without deleting the previous user's file.
+            let Some(legacy) = dirs::home_dir().map(|p| p.join(".config/sidera/config")) else { return };
+            let Ok(content) = std::fs::read_to_string(legacy) else { return };
+            content
+        }
+        Err(e) => { log::warn!("读取设置失败：{e}"); return; }
     };
+    parse_settings(app, &content);
+}
+
+fn parse_settings(app: &mut App, content: &str) {
     for line in content.lines() {
         let line = line.trim();
         let Some(eq) = line.find('=') else { continue };
@@ -700,7 +681,7 @@ pub fn load_settings(app: &mut App) {
             "wpsDebug" => app.wps_debug = v == "1",
             "sbScale" => {
                 if let Ok(f) = v.parse::<f64>() {
-                    app.sb_scale = f.clamp(0.6, 1.4);
+                    if f.is_finite() { app.sb_scale = f.clamp(0.6, 1.4); }
                 }
             }
             "sidebarAlpha" => {
@@ -726,10 +707,7 @@ pub fn load_settings(app: &mut App) {
 }
 
 pub fn save_settings(app: &App) {
-    let path = config_file();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
+    let Some(path) = config_file() else { log::warn!("无法确定设置目录"); return };
     let content = format!(
         "wpsDebug={}\nsbScale={:.2}\nsidebarAlpha={}\nrightClickCursor={}\neraseByFinger={}\nlargeTouchThreshold={}\nlargeEraseScale10={}\n",
         if app.wps_debug { 1 } else { 0 },
@@ -740,7 +718,9 @@ pub fn save_settings(app: &App) {
         app.large_touch_threshold as i32,
         app.large_erase_scale10,
     );
-    let _ = std::fs::write(path, content);
+    if let Err(e) = crate::persistence::atomic_write(&path, content.as_bytes()) {
+        log::warn!("保存设置失败：{e}");
+    }
 }
 
 #[cfg(test)]
@@ -864,7 +844,7 @@ mod whiteboard_tests {
             assert_eq!(app.current_slide, 2);
             assert_eq!(app.canvas.data(), second.as_slice());
             assert_eq!(app.whiteboard_bg_index, 0);
-            assert_eq!(app.whiteboard_cache[&1].data(), first.as_slice());
+            assert_eq!(app.whiteboard_cache.get(&1).unwrap().data(), first.as_slice());
         }
         draw(&mut app, 30);
         let edited = app.canvas.data().to_vec();
@@ -994,7 +974,8 @@ mod geometry_tests {
         app.load_page(7);
         assert_eq!((app.canvas.width(), app.canvas.height()), (45, 30));
         assert!(app.canvas.pixels().iter().all(|p| p.red() == 160));
-        assert_eq!((app.slide_cache[&7].width(), app.slide_cache[&7].height()), (20, 10));
+        let cached = app.slide_cache.get(&7).unwrap();
+        assert_eq!((cached.width(), cached.height()), (20, 10));
     }
 
     #[test]
@@ -1007,3 +988,15 @@ mod geometry_tests {
         }
     }
 }
+    #[test]
+    fn invalid_settings_cannot_produce_nonfinite_toolbar_geometry() {
+        let mut app = App::new(Pixmap::new(20, 20).unwrap(), 20, 20);
+        for value in ["NaN", "inf", "-inf", "invalid"] {
+            parse_settings(&mut app, &format!("sbScale={value}\n"));
+            assert_eq!(app.sb_scale, DEFAULT_SB_SCALE);
+        }
+        parse_settings(&mut app, "sbScale=1.13\nlargeTouchThreshold=9999\nlargeEraseScale10=-9\n");
+        assert_eq!(app.sb_scale, 1.13);
+        assert_eq!(app.large_touch_threshold, 260.0);
+        assert_eq!(app.large_erase_scale10, 8);
+    }

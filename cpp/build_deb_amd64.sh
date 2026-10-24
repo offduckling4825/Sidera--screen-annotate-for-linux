@@ -4,10 +4,13 @@
 # 产物: sidera_2.6-Geo-stable_amd64.deb
 
 set -e
+cd "$(dirname "$0")"
 
 BINARY="annotate_amd64"
 PKG_NAME="sidera"
-VERSION="2.6-Geo-stable"
+VERSION="${SIDERA_VERSION:-2.6-Geo-stable}"
+dpkg --validate-version "$VERSION" || exit 1
+[[ "$VERSION" != */* && "$VERSION" != *[[:space:]]* ]] || exit 1
 ARCH="amd64"
 
 if [ ! -f "$BINARY" ]; then
@@ -15,10 +18,12 @@ if [ ! -f "$BINARY" ]; then
   exit 1
 fi
 
-PKG_DIR="${PKG_NAME}_${VERSION}_${ARCH}"
+DEPENDS="$(python3 ../tools/deb_dependencies.py "$BINARY" "$ARCH")"
+OUTPUT="$PWD/${PKG_NAME}_${VERSION}_${ARCH}.deb"
+PKG_DIR="$(mktemp -d "$PWD/.sidera-package.XXXXXXXX")"
+trap 'rm -rf -- "$PKG_DIR"; rm -f -- "$PKG_DIR.deb"' EXIT
 
 # 清理并创建目录结构
-rm -rf "$PKG_DIR"
 mkdir -p "${PKG_DIR}/DEBIAN"
 mkdir -p "${PKG_DIR}/usr/bin"
 mkdir -p "${PKG_DIR}/usr/share/applications"
@@ -30,7 +35,7 @@ chmod 755 "${PKG_DIR}/usr/bin/sidera"
 # ---------- 拷贝 WPS 加载项部署包（本 deb 已含桥接加载项 + 安装脚本）----------
 mkdir -p "${PKG_DIR}/usr/share/sidera/wps-addin"
 cp -r ../wps-addin/* "${PKG_DIR}/usr/share/sidera/wps-addin/"
-chmod 755 ../wps-addin/install.sh
+chmod 755 "${PKG_DIR}/usr/share/sidera/wps-addin/install.sh"
 install -m 755 ../wps-addin/install.sh "${PKG_DIR}/usr/bin/sidera-wps-addin-install"
 
 # ---------- 教室部署说明文档 ----------
@@ -47,7 +52,8 @@ Section: graphics
 Priority: optional
 Architecture: ${ARCH}
 Maintainer: User <user@localhost>
-Depends: libqt5core5a (>= 5.12), libqt5gui5 (>= 5.12), libqt5widgets5 (>= 5.12), libx11-6, libxcb1, libxtst6, libxext6, python3
+Depends: ${DEPENDS}
+Recommends: fonts-noto-cjk
 Description: Sidera 软件
  全屏透明画布批注工具，支持画笔/橡皮擦与白板，触控屏友好。
  启动后显示左右两个胶囊形侧边栏，侧边栏 ⛶ 按钮可退出全屏。
@@ -77,11 +83,12 @@ cp ../sidera.svg "${PKG_DIR}/usr/share/pixmaps/sidera.svg"
 cp ../sidera.png "${PKG_DIR}/usr/share/icons/hicolor/256x256/apps/sidera.png"
 
 # ---------- 打包（--root-owner-group 消除 owner 警告）----------
-dpkg-deb --build --root-owner-group "${PKG_DIR}"
+dpkg-deb --build --root-owner-group "$PKG_DIR" "$PKG_DIR.deb"
+mv -f -- "$PKG_DIR.deb" "$OUTPUT"
 
 echo ""
 echo "========== 打包完成 =========="
-ls -lh "${PKG_DIR}.deb"
+ls -lh "$OUTPUT"
 echo ""
-echo "安装: sudo dpkg -i ${PKG_DIR}.deb"
+echo "安装: sudo apt install $OUTPUT"
 echo "卸载: sudo dpkg -r ${PKG_NAME}"

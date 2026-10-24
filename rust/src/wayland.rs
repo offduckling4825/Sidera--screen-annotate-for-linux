@@ -4,7 +4,7 @@
 // ============================================================
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::os::unix::net::UnixListener;
+use crate::instance::Instance as UnixListener;
 use std::time::Duration;
 
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};

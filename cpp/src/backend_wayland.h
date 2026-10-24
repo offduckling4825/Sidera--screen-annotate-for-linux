@@ -14,6 +14,8 @@
 #include <QColor>
 #include <QVector>
 #include <QMap>
+#include "page_cache.h"
+#include "clock.h"
 
 #include <wayland-client-protocol.h>
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
@@ -80,12 +82,18 @@ public:
   void*        shmData_ = nullptr;
   size_t       shmSize_ = 0;
   Buf          bufs_[2];
+  struct RetiredPool { wl_shm_pool* pool; void* data; size_t size; wl_buffer* buffer; };
+  QVector<RetiredPool> retiredPools_;
   int          curBuf_  = 0;
   int          width_   = 0;
   int          height_  = 0;
   int          logicalW_ = 0;
   int          logicalH_ = 0;
   int          scale_   = 1;
+  int          bufferW_ = 0, bufferH_ = 0;
+  bool         pendingRender_ = false;
+  bool         initialized_ = false;
+  uint32_t     seatName_ = 0, outputName_ = 0;
 
   // ---- 状态 ----
   QPixmap ink_;
@@ -103,8 +111,9 @@ public:
   QVector<QPixmap> undoStack_;
 
   // 多页缓存 + 白板
-  QMap<int, QPixmap> pageCache_;
-  QMap<int, QPixmap> wbCache_;
+  PageCache pageCache_;
+  PageCache wbCache_;
+  int whiteboardPage_ = 1;
   int   currentPage_ = 1;
   int   savedNormalPage_ = 1;
   bool  whiteboard_  = false;
@@ -117,6 +126,7 @@ public:
   void*  shotData_ = nullptr;
   size_t shotSize_ = 0;
   wl_buffer* shotBuffer_ = nullptr;
+  bool shotInverted_ = false;
 
   int   popupType_ = 0;         // 0=无 1=画笔弹窗 2=橡皮弹窗
   bool  popupOnRight_ = false;  // 弹窗由哪一侧触发
@@ -155,6 +165,8 @@ public:
   void createPool(int size);
   void createBuffers();
   void maybeCreateBuffers();
+  void destroyBuffers();
+  void cancelInput();
   void setupVirtualKeyboard();
   void sendKeysym(xkb_keysym_t sym);
 

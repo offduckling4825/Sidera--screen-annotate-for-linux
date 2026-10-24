@@ -18,7 +18,7 @@ fn shm_dimensions_reject_protocol_overflow() {
 
 fn pool() -> (PreparedWayland, ShmFrames) {
     assert_eq!(std::env::var("SIDERA_TEST_ISOLATED").as_deref(), Ok("1"),
-               "Run through tests/test_wayland_native.py in its private compositor");
+               "Run through tools/test_rust.py --wayland in its private compositor");
     let prepared = prepare().unwrap();
     let frames = ShmFrames::new(&prepared.shm);
     (prepared, frames)

@@ -11,8 +11,10 @@ SRC="$(dirname "$(readlink -f "$0")")/publish.xml"
 if [ ! -f "$SRC" ]; then
   SRC="/usr/share/sidera/wps-addin/publish.xml"
 fi
-python3 - "$SRC" "$DST/publish.xml" <<'PY'
+# Replace Bash so an automatic-registration timeout also stops the lock waiter.
+exec python3 - "$SRC" "$DST/publish.xml" <<'PY'
 import os
+import fcntl
 from pathlib import Path
 import stat
 import sys
@@ -99,10 +101,18 @@ def install(source, destination):
 
 
 try:
-    install(Path(sys.argv[1]), Path(sys.argv[2]))
+    destination = Path(sys.argv[2])
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Serialize our manual/automatic registration paths before reading XML.
+    # Keep the lock inode in place; unlinking it would let a third writer bypass it.
+    descriptor = os.open(destination.parent / ".sidera-registration.lock",
+                         os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "r+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        install(Path(sys.argv[1]), destination)
 except (OSError, ValueError, ExpatError) as error:
     print(f"错误：WPS 加载项登记失败，原文件未替换：{error}", file=sys.stderr)
     sys.exit(1)
+print("提示：请先启动“Sidera”并开启 设置→WPS联动，再重新打开 WPS 演示。")
+print("      放映时加载项会把真实页号回传，批注缓存随真实换页切换。")
 PY
-echo "提示：请先启动“Sidera”并开启 设置→WPS联动，再重新打开 WPS 演示。"
-echo "      放映时加载项会把真实页号回传，批注缓存随真实换页切换。"

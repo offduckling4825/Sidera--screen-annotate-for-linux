@@ -2,7 +2,7 @@
 
 此扩展与当前 `custom` 分支的 Rust 版配合，为 GNOME Wayland 提供原生覆盖层。批注在 GNOME Shell 的 Clutter actor 中显示；不创建 X11 窗口，不依赖 XWayland 的输入区域刷新。已接入 WPS 放映时使用加载项 API，未接入时使用 Shell 虚拟键盘，不请求 RemoteDesktop / 共享桌面授权。
 
-本轮只完成编译、语法和安装检查。用户要求亲自测试，因此 **尚未执行新版 GNOME 的桌面交互验收**。元数据列出 GNOME 46–50，接口兼容按这些版本的上游源码处理；不能把版本声明当作实测通过。
+当前已完成编译、语法、历史安装核对及隔离模块测试；**新版 GNOME 的完整桌面交互仍待用户验收**。元数据列出 GNOME 46–50，接口兼容按这些版本的上游源码处理；不能把版本声明或模拟测试当作逐版本实测通过。最新检查范围见 [复查报告](../../docs/audit/REVIEW_2026-10-24.md)。
 
 扩展版本 2 修复 GNOME 50 移除 `Meta.is_wayland_compositor()` 后的加载错误；46–49 保留原生会话检查。升级已加载或已报错的扩展后，需要注销并重新登录才能加载新模块。
 
@@ -12,7 +12,7 @@
 
 ## 安装与切换
 
-扩展版本 6 在鼠标按住输入控件时使用 Clutter stage grab，持续接收工具栏外及屏幕顶部的移动和松开。正常释放、真实按键状态恢复、其他 Shell 抓取打断、锁屏、连接断开和扩展停用均释放抓取；不使用等待超时来判断松手，不改变键盘焦点或桌面的模态计数。扩展本身不限制坐标，屏幕边界由 Rust 的工具栏布局与拖动共同处理。依据：[Stage.grab](https://mutter.gnome.org/clutter/method.Stage.grab.html)、[Mutter 50.1 grab 生命周期](https://github.com/GNOME/mutter/blob/50.1/clutter/clutter/clutter-stage.c)、[Mutter 46 grab 撤销状态](https://github.com/GNOME/mutter/blob/46.0/clutter/clutter/clutter-grab.c)。此版本仍只做编译和语法检查，实际交互由用户验收。
+扩展版本 6 在鼠标按住输入控件时使用 Clutter stage grab，持续接收工具栏外及屏幕顶部的移动和松开。正常释放、真实按键状态恢复、其他 Shell 抓取打断、锁屏、连接断开和扩展停用均释放抓取；不使用等待超时来判断松手，不改变键盘焦点或桌面的模态计数。扩展本身不限制坐标，屏幕边界由 Rust 的工具栏布局与拖动共同处理。依据：[Stage.grab](https://mutter.gnome.org/clutter/method.Stage.grab.html)、[Mutter 50.1 grab 生命周期](https://github.com/GNOME/mutter/blob/50.1/clutter/clutter/clutter-stage.c)、[Mutter 46 grab 撤销状态](https://github.com/GNOME/mutter/blob/46.0/clutter/clutter/clutter-grab.c)。隔离模块检查没有覆盖这项抓取交互，实际桌面操作仍由用户验收。
 
 安装完整 Rust DEB 后，在登录桌面的普通用户终端执行：
 

@@ -62,6 +62,28 @@ function fixture({ abort = true } = {}) {
   };
 }
 
+test('request sequences survive script reload and increase across push and poll', () => {
+  const f = fixture();
+  f.context.bridgeFetch('/push?m=EVENT%20SlideShowState%20pos=1');
+  f.loadScript();
+  f.context.bridgeFetch('/poll?m=EVENT%20SlideShowState%20pos=2');
+  const first = new URL(f.requests[0].url).searchParams;
+  const second = new URL(f.requests[1].url).searchParams;
+  assert.ok(first.get('sid'));
+  assert.equal(second.get('sid'), first.get('sid'));
+  assert.equal(Number(second.get('seq')), Number(first.get('seq')) + 1);
+});
+
+test('health check reports online only after a successful bridge response', async () => {
+  const f = fixture(); const messages = [];
+  f.context.alert = message => messages.push(message);
+  f.context.OnSaPing(); assert.equal(messages.length, 0);
+  await f.fail(0); assert.match(messages[0], /未连接/);
+  f.context.OnSaPing(); await f.answer(1, 'OK sidera');
+  assert.match(messages[1], /联动桥在线/);
+  assert.equal(f.timeouts.size, 0);
+});
+
 test('two failed pushes retry the same page until an OK acknowledgement', async () => {
   const f = fixture();
   for (let i = 0; i < 2; i++) {

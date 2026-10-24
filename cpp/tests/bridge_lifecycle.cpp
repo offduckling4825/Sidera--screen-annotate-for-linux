@@ -10,6 +10,7 @@
 #include <QTcpSocket>
 #include <QThread>
 #include <QTimer>
+#include <QXmlStreamReader>
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
@@ -48,15 +49,16 @@ static void connectClient(WpsBridge& bridge, QTcpSocket& client) {
   }, "bridge did not accept client");
 }
 
-static QByteArray get(WpsBridge& bridge, const QByteArray& path) {
+static QByteArray get(WpsBridge& bridge, const QByteArray& path, int status = 200,
+                      const QByteArray& headers = {}, const QByteArray& method = "GET") {
   QTcpSocket client;
   connectClient(bridge, client);
-  client.write("GET " + path + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+  client.write(method + " " + path + " HTTP/1.1\r\nHost: 127.0.0.1:16666\r\n" + headers + "Connection: close\r\n\r\n");
   client.flush();
   waitFor([&] { return client.state() == QAbstractSocket::UnconnectedState; },
           "HTTP response did not finish");
   const QByteArray response = client.readAll();
-  check(response.startsWith("HTTP/1.1 200 OK\r\n"), "unexpected HTTP response");
+  check(response.startsWith("HTTP/1.1 " + QByteArray::number(status) + " "), "unexpected HTTP response");
   const int body = response.indexOf("\r\n\r\n");
   check(body >= 0, "missing HTTP header terminator");
   drainDeletes();
@@ -113,15 +115,15 @@ static void restartResetsSessionAndQueue() {
     lastPos = pos;
     ++callbacks;
   };
-  const QByteArray page = "/push?m=EVENT%20SlideShowState%20pos=7%20click=0";
+  const QByteArray page = "/poll?m=EVENT%20SlideShowState%20pos=7%20click=0";
   check(bridge.start(), "start failed");
-  check(get(bridge, page) == "OK", "page event rejected");
+  check(get(bridge, page).isEmpty(), "page event rejected");
   check(callbacks == 1 && lastPos == 7 && bridge.connected(), "initial page not delivered");
   bridge.enqueue("NEXT");
   bridge.stop();
   check(!bridge.connected(), "stop retained online state");
   check(bridge.start(), "restart failed");
-  check(get(bridge, page) == "OK", "restarted page event rejected");
+  check(get(bridge, page).isEmpty(), "restarted page event rejected");
   check(callbacks == 2 && lastPos == 7, "restart suppressed the same page from the new session");
   check(get(bridge, "/poll").isEmpty(), "restart retained an old command");
   bridge.stop();
@@ -159,6 +161,77 @@ static void destructionReleasesResources() {
   check(probe.listen(QHostAddress::LocalHost, 16666), "destruction retained port");
 }
 
+static void boundedHttpAndRealManifest() {
+  WpsBridge bridge;
+  check(bridge.start(16666, false), "start failed");
+  const QByteArray manifest = get(bridge, "/manifest.xml");
+  QXmlStreamReader xml(manifest);
+  check(xml.readNextStartElement() && xml.name() == "JsPlugin", "missing manifest must not pass as OK text");
+  check(!bridge.connected(), "static resources falsely marked bridge online");
+  get(bridge, "/missing", 404);
+  get(bridge, "/install.sh", 404);
+  get(bridge, "/push", 405, {}, "POST");
+  get(bridge, "/poll", 403, "Origin: https://example.invalid\r\n");
+  get(bridge, "/poll", 400, "Host: evil.invalid\r\n");
+  check(!bridge.connected(), "invalid requests changed bridge state");
+  const QByteArray directory = qgetenv("WPS_ADDIN_DIR");
+  qputenv("WPS_ADDIN_DIR", "/missing-sidera-addon");
+  get(bridge, "/manifest.xml", 404);
+  qputenv("WPS_ADDIN_DIR", directory);
+  bridge.stop(); drainDeletes();
+}
+
+static void snapshotsLifecycleQueueAndWhiteboard() {
+  WpsBridge bridge;
+  int begins = 0, ends = 0, changes = 0, page = 0;
+  bridge.onSlideshowBegin = [&](int position) { ++begins; page = position; };
+  bridge.onSlideshowEnd = [&]() { ++ends; };
+  bridge.onRealPos = [&](int position) { ++changes; page = position; };
+  check(bridge.start(16666, false), "start failed");
+  const QByteArray poll = "/poll?m=EVENT%20SlideShowState%20pos=3";
+  get(bridge, "/hello"); check(!bridge.connected(), "hello falsely marks online");
+  get(bridge, poll); get(bridge, "/push?m=EVENT%20SlideShowBegin%20pos=3");
+  check(begins == 1 && changes == 0, "duplicate begin cleared a page twice");
+  check(bridge.enqueue("NEXT") && bridge.enqueue("PREV"), "queue failed");
+  check(get(bridge, poll) == "NEXT" && get(bridge, poll) == "PREV", "queue order changed");
+  for (int i = 0; i < 8; ++i) check(bridge.enqueue("NEXT"), "queue filled too early");
+  check(!bridge.enqueue("NEXT"), "unbounded queue");
+  bridge.setWhiteboard(true);
+  check(get(bridge, "/poll?m=EVENT%20SlideShowState%20pos=8").isEmpty(), "whiteboard dispatched a command");
+  check(page == 8 && changes == 1, "whiteboard lost external page state");
+  bridge.setWhiteboard(false);
+  check(bridge.enqueue("NEXT"), "queue after whiteboard failed");
+  QThread::msleep(1600);
+  check(get(bridge, poll).isEmpty(), "expired command replayed");
+  get(bridge, "/poll?sid=stream&seq=2&m=EVENT%20SlideShowState%20pos=5%20deck=101");
+  const int beforeBegins = begins, beforeChanges = changes;
+  get(bridge, "/poll?sid=stream&seq=1&m=EVENT%20SlideShowState%20pos=2%20deck=101");
+  check(page == 5 && begins == beforeBegins && changes == beforeChanges,
+        "delayed state replaced a newer page");
+  check(bridge.enqueue("NEXT"), "queue before changing deck failed");
+  check(get(bridge, "/poll?sid=stream&seq=3&m=EVENT%20SlideShowState%20pos=5%20deck=102").isEmpty(),
+        "new deck received a command for the old deck");
+  check(page == 5 && begins == beforeBegins + 1 && changes == beforeChanges,
+        "different deck at the same position did not start a new page session");
+  get(bridge, "/poll?sid=stream&seq=3&m=EVENT%20SlideShowState%20pos=9%20deck=102");
+  check(page == 5 && begins == beforeBegins + 1 && changes == beforeChanges,
+        "duplicate sequence was applied again");
+  get(bridge, "/poll?m=EVENT%20SlideShowState%20pos=-1");
+  get(bridge, "/push?m=EVENT%20SlideShowEnd%20pos=-1");
+  check(ends == 1 && !bridge.enqueue("NEXT"), "end did not clear slideshow state");
+  bridge.stop(); drainDeletes();
+}
+
+static void slowClientExpires() {
+  WpsBridge bridge;
+  check(bridge.start(16666, false), "start failed");
+  QTcpSocket client; connectClient(bridge, client);
+  client.write("GET /poll HTTP/1.1\r\nHost:"); client.flush();
+  waitFor([&]() { return client.state() == QAbstractSocket::UnconnectedState; }, "partial request remained alive");
+  check(get(bridge, "/hello") == "OK sidera", "service failed after slow client");
+  bridge.stop(); drainDeletes();
+}
+
 int main(int argc, char** argv) {
   QCoreApplication app(argc, argv);
   const struct { const char* name; void (*run)(); } cases[] = {
@@ -167,6 +240,9 @@ int main(int argc, char** argv) {
     {"session and command reset", restartResetsSessionAndQueue},
     {"failed start recovery", failedStartCanRecover},
     {"destruction cleanup", destructionReleasesResources},
+    {"HTTP bounds and real XML", boundedHttpAndRealManifest},
+    {"state snapshots, queue expiry and whiteboard", snapshotsLifecycleQueueAndWhiteboard},
+    {"slow client timeout", slowClientExpires},
   };
   int failures = 0;
   for (const auto& test : cases) {

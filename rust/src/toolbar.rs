@@ -7,12 +7,23 @@ const DURATION: Duration = Duration::from_millis(220);
 #[derive(Clone, Copy)]
 struct Transition { started: Instant, from: f32 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AutoUpdate { CollapseIfEmpty, FollowPage }
+
+impl AutoUpdate {
+    pub fn expanded_for(self, has_ink: bool) -> Option<bool> {
+        if !has_ink { Some(false) }
+        else if self == Self::FollowPage { Some(true) }
+        else { None }
+    }
+}
+
 #[derive(Default)]
 pub struct DrawingTools {
     expanded: bool,
     fraction: f32,
     transition: Option<Transition>,
-    auto_collapse_pending: bool,
+    auto_update: Option<AutoUpdate>,
 }
 
 impl DrawingTools {
@@ -21,11 +32,18 @@ impl DrawingTools {
     pub fn animating(&self) -> bool { self.transition.is_some() }
 
     pub fn request_auto_collapse(&mut self) {
-        self.auto_collapse_pending = self.expanded;
+        if self.expanded && self.auto_update != Some(AutoUpdate::FollowPage) {
+            self.auto_update = Some(AutoUpdate::CollapseIfEmpty);
+        }
     }
 
-    pub fn take_auto_collapse_request(&mut self) -> bool {
-        std::mem::take(&mut self.auto_collapse_pending)
+    pub fn request_page_update(&mut self) {
+        // Restoring ink must also update a drawer that has already folded.
+        self.auto_update = Some(AutoUpdate::FollowPage);
+    }
+
+    pub fn take_auto_update(&mut self) -> Option<AutoUpdate> {
+        self.auto_update.take()
     }
 
     pub fn set_expanded(&mut self, expanded: bool) {
@@ -33,8 +51,8 @@ impl DrawingTools {
     }
 
     pub fn set_expanded_at(&mut self, expanded: bool, now: Instant) {
-        // A subsequent explicit tool choice supersedes a queued empty-page check.
-        self.auto_collapse_pending = false;
+        // A subsequent explicit tool choice supersedes a queued page check.
+        self.auto_update = None;
         if self.expanded == expanded { return; }
         self.advance_at(now);
         self.expanded = expanded;
@@ -113,6 +131,23 @@ impl PresentationTransition {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_updates_reconcile_folded_tools_but_explicit_choices_win() {
+        let mut tools = DrawingTools::default();
+        tools.request_page_update();
+        tools.request_auto_collapse();
+        assert_eq!(tools.take_auto_update(), Some(AutoUpdate::FollowPage));
+        assert_eq!(AutoUpdate::FollowPage.expanded_for(true), Some(true));
+        assert_eq!(AutoUpdate::FollowPage.expanded_for(false), Some(false));
+        assert_eq!(AutoUpdate::CollapseIfEmpty.expanded_for(true), None);
+        tools.request_page_update();
+        tools.set_expanded(false);
+        assert_eq!(tools.take_auto_update(), None, "a manual tuck cancels a queued reopen");
+        tools.request_page_update();
+        tools.set_expanded(true);
+        assert_eq!(tools.take_auto_update(), None, "choosing the pen cancels a queued empty-page fold");
+    }
 
     #[test]
     fn presentation_transition_keeps_the_visible_mix_when_retargeted() {

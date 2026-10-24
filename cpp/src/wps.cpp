@@ -2,75 +2,38 @@
 // Copyright (C) 2026 Carl_Jin   GNU GPL v3
 #include "app.h"
 
-// 当前生效的笔迹缓存：白板模式与普通/放映模式各自独立
-QMap<int, QPixmap*>& activeCache() {
-  return g.whiteboard ? g.whiteboardCache : g.slideCache;
-}
-
-// ============================================================
-// 多页缓存：翻页时保存/加载笔迹
-// ============================================================
-// 是否处于 WPS 放映联动（全屏放映，或调试模式已连加载项）
-static bool wpsModeActive() {
-  if (g.whiteboard) return false;
-  return g.wpsFullscreen || (g.wpsDebug && g.wpsConnected);
-}
-// 当前缓存容量：WPS 放映 20 / 白板 10 / 其它 2
-static int cacheCapacity() {
-  if (g.whiteboard)     return kCacheBoard;
-  if (wpsModeActive())  return kCacheWps;
-  return kCacheOther;
-}
+// 当前生效的笔迹缓存：白板与放映独立，页数不作为丢弃条件。
+PageCache& activeCache() { return g.whiteboard ? g.whiteboardCache : g.slideCache; }
 
 void clearAllPages() {
-  qDebug() << "[INFO] clearAllPages 被调用，清空 普通" << g.slideCache.size()
-           << "+ 白板" << g.whiteboardCache.size() << "页缓存 + 画布";
-  for (auto* pix : g.slideCache) delete pix;
   g.slideCache.clear();
-  for (auto* pix : g.whiteboardCache) delete pix;
-  g.whiteboardCache.clear();
+  g.savedSlide = 1;
+  if (g.whiteboard) return;
   g.currentSlide = 1;
   g.pageHasInk = false;
-
-  // 重置绘图状态，防止残留（幽灵线 / 未完成的笔画）
-  g.isDrawing   = false;
-  g.lastPt  = QPoint();
-
-  // 清空当前画布
+  g.isDrawing = false;
+  g.lastPt = QPoint();
   if (g.canvas) g.canvas->fill(Qt::transparent);
   clearUndo();
-
-  // 异步重绘（不用 repaint：同步重绘可能阻塞事件循环，导致翻页按钮点击丢失）
   if (g.mainWidget) g.mainWidget->update();
 }
 
 void saveCurrentPage() {
   if (!g.canvas) return;
-  if (!g.pageHasInk) return;                 // 没有任何笔迹的页不入缓存
-  QMap<int, QPixmap*>& cache = activeCache();
-  const int cap = cacheCapacity();
-  if (!cache.contains(g.currentSlide) && cache.size() >= cap) {
-    // WPS 放映：满了不再新增页（仍可批注，只是本页不保存）
-    if (wpsModeActive()) return;
-    // 其它/白板：淘汰页码最小（最旧）的一页，保留较新的
-    if (!cache.isEmpty()) delete cache.take(cache.firstKey());
-  }
-  // 深拷贝当前画布
-  delete cache.value(g.currentSlide);
-  cache[g.currentSlide] = new QPixmap(*g.canvas);
+  if (!g.pageHasInk) { activeCache().remove(g.currentSlide); return; }
+  activeCache().insert(g.currentSlide, *g.canvas);
 }
 
 void loadPage(int page) {
   if (!g.canvas) return;
   g.canvas->fill(Qt::transparent);
-  QPixmap* cached = activeCache().value(page, nullptr);
-  if (cached) {
-    QPainter p(g.canvas);
-    p.drawPixmap(0, 0, *cached);
-    p.end();
+  const QPixmap cached = activeCache().value(page);
+  if (!cached.isNull()) {
+    QPainter painter(g.canvas);
+    painter.drawPixmap(g.canvas->rect(), cached, cached.rect());
   }
-  g.pageHasInk = (cached != nullptr);        // 有缓存说明该页有笔迹
-  clearUndo();                       // 换页后撤回栈失效
+  g.pageHasInk = !cached.isNull();
+  clearUndo();
   if (g.mainWidget) g.mainWidget->update();
 }
 
@@ -85,15 +48,14 @@ void loadPage(int page) {
 //   没客户端连接时自动退回默认行为（点击即缓存），保证按钮始终可用。
 // ============================================================
 QString wpsLogFile() {
-  QString dir = QDir::homePath();
-  if (!QFileInfo(dir).isWritable()) dir = "/tmp";
-  return dir + "/wps-api-debug.log";
+  return QDir::homePath() + "/wps-api-debug.log";
 }
 
 void wpsLog(const QString& msg) {
   QString line = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz ") + msg;
   qDebug().noquote() << "[WPSAPI]" << msg;
   QString path = wpsLogFile();
+  if (QFileInfo(path).isSymLink()) return;
   // 超过 1MB 自动重开，防日志无限增长
   if (QFileInfo(path).size() > 1024 * 1024) QFile::remove(path);
   QFile f(path);
@@ -106,12 +68,13 @@ void wpsLog(const QString& msg) {
 
 // ---------------- 设置持久化（wpsDebug / 侧边栏透明度 / 大小） ----------------
 static QString wpsConfigFile() {
-  return QDir::homePath() + "/.config/sidera/config";
+  return QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/sidera/config";
 }
 static bool wpsConfigExists() { return QFile::exists(wpsConfigFile()); }
 void wpsSaveSettings() {
   QDir().mkpath(QFileInfo(wpsConfigFile()).absolutePath());
-  QFile f(wpsConfigFile());
+  if (QFileInfo(wpsConfigFile()).isSymLink()) { qWarning() << "Refusing symlink settings"; return; }
+  QSaveFile f(wpsConfigFile());
   if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return;
   QTextStream ts(&f);
   ts << "wpsDebug=" << (g.wpsDebug ? 1 : 0) << "\n";
@@ -121,7 +84,8 @@ void wpsSaveSettings() {
   ts << "eraseByFinger=" << (g.eraseByFinger ? 1 : 0) << "\n";
   ts << "largeTouchThreshold=" << g.largeTouchThreshold << "\n";
   ts << "largeEraseScale10=" << g.largeEraseScale10 << "\n";
-  f.close();
+  ts.flush();
+  if (!f.commit()) qWarning() << "Cannot save settings:" << f.errorString();
 }
 void wpsLoadSettings() {
   QFile f(wpsConfigFile());
@@ -133,7 +97,7 @@ void wpsLoadSettings() {
     QString k = line.left(eq);
     QString v = line.mid(eq + 1);
     if (k == "wpsDebug") g.wpsDebug = (v == "1");
-    else if (k == "sbScale") g.sbScale = qBound(0.6, v.toDouble(), 1.4);
+    else if (k == "sbScale") { bool ok = false; double scale = v.toDouble(&ok); if (ok && qIsFinite(scale)) g.sbScale = qBound(0.6, scale, 1.4); }
     else if (k == "sidebarAlpha") g.sidebarAlpha = qBound(30, v.toInt(), 255);
     else if (k == "rightClickCursor") g.rightClickCursorOn = (v == "1");
     else if (k == "eraseByFinger") g.eraseByFinger = (v == "1");
@@ -143,248 +107,35 @@ void wpsLoadSettings() {
   f.close();
 }
 
-// ---------------- 加载项自动注册（写当前用户 jsaddons/publish.xml） ----------------
-static void ensureWpsAddinRegistered() {
-  QString path = QDir::homePath() + "/.local/share/Kingsoft/wps/jsaddons/publish.xml";
-  QString entry = "  <jspluginonline name=\"sidera-bridge\" type=\"wpp\" "
-                  "url=\"http://127.0.0.1:16666/\" debug=\"\" enable=\"enable\" install=\"null\"/>\n";
-  QDir().mkpath(QFileInfo(path).absolutePath());
-  QFile f(path);
-  QString content;
-  if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-    content = QString::fromUtf8(f.readAll());
-    f.close();
-  }
-  if (content.contains("sidera-bridge") || content.contains("screen-annotate-bridge")) return;   // 已登记，静默
-  if (!content.isEmpty() && content.contains("<jsplugins>") && content.contains("</jsplugins>"))
-    content.replace("</jsplugins>", entry + "</jsplugins>");
-  else
-    content = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<jsplugins>\n"
-            + entry + "</jsplugins>\n";
-  if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
-    QTextStream ts(&f);
-    ts << content;
-    f.close();
-    wpsLog("已自动登记加载项 → " + path);
-  }
-}
-
-static void wpsHandleHttp(QTcpSocket* s);
-static void wpsHttpReply(QTcpSocket* s, const QString& body);
-static void wpsServeAddinFile(QTcpSocket* s, const QString& path);
-static void wpsTouch();
-
-// 加载项事件上报 → 同步批注页缓存。核心规则：
-//   真实页号变化(pos != 已知) → 保存旧页、载入新页；
-//   页号不变(动画步) → 缓存不动。
-static void wpsOnRealPos(int pos) {
-  if (pos <= 0) return;
-  if (g.wpsRealPos == pos) return;            // 还在同一页（动画步）
-  if (g.wpsRealPos > 0) {                     // 从旧页切走：保存旧页笔迹
-    g.currentSlide = g.wpsRealPos;
-    saveCurrentPage();
-  }
-  g.wpsRealPos = pos;
-  g.currentSlide = pos;
-  loadPage(pos);
-}
-
-static void wpsHandleLine(const QString& raw) {
-  if (g.whiteboard) return;                    // 白板模式：与外界完全隔离，忽略 WPS 事件
-  QString line = raw.trimmed();
-  if (line.isEmpty()) return;
-  wpsLog("收 << " + line);
-  if (!line.startsWith("EVENT ")) return;
-  int pos = -1, click = -1;
-  QRegExp rxPos("pos=(\\d+)"), rxClick("click=(\\d+)");
-  if (rxPos.indexIn(line) >= 0) pos = rxPos.cap(1).toInt();
-  if (rxClick.indexIn(line) >= 0) click = rxClick.cap(1).toInt();
-  QString name = line.section(' ', 1, 1);
-  wpsLog(QString("事件 %1 pos=%2 click=%3").arg(name).arg(pos).arg(click));
-  if (name == "SlideShowBegin") {             // 放映开始：清空并落到第 1 页
-    clearAllPages();
-    g.wpsRealPos = pos > 0 ? pos : 1;
-    g.currentSlide = g.wpsRealPos;
-    if (g.mainWidget) g.mainWidget->update();
-    return;
-  }
-  if (pos > 0) wpsOnRealPos(pos);
-}
-
-static void wpsCloseClient() {
-  if (g.wpsSock) {
-    g.wpsSock->abort();
-    g.wpsSock->deleteLater();
-    g.wpsSock = nullptr;
-  }
-  if (g.wpsConnected) {
-    g.wpsConnected = false;
-    wpsLog("客户端断开");
-  }
-}
-
+// Shared bridge owns registration, HTTP bounds, command lifetime and heartbeat.
 static void startWpsApiServer() {
-  if (g.wpsServer) return;                     // 已在跑
-  QTcpServer* srv = new QTcpServer();
-  g.wpsServer = srv;
-  QObject::connect(srv, &QTcpServer::newConnection, []() {
-    while (g.wpsServer && g.wpsServer->hasPendingConnections()) {
-      QTcpSocket* s = g.wpsServer->nextPendingConnection();
-      QObject::connect(s, &QTcpSocket::readyRead, [s]() { wpsHandleHttp(s); });
-      QObject::connect(s, QOverload<QAbstractSocket::SocketError>::of(&QAbstractSocket::error),
-                       [s](QAbstractSocket::SocketError) { s->deleteLater(); });
-    }
-  });
-  if (!srv->listen(QHostAddress::LocalHost, 16666)) {
-    wpsLog("HTTP 16666 绑定失败: " + srv->errorString());
-    srv->deleteLater();
-    g.wpsServer = nullptr;
-    return;
-  }
-  wpsLog("调试服务已启动，监听 127.0.0.1:16666 (HTTP)");
-  // 心跳：3 秒无请求视为加载项离线
-  QTimer* t = new QTimer(srv);
-  g.wpsPingTimer = t;
-  QObject::connect(t, &QTimer::timeout, []() {
-    if (g.wpsConnected &&
-        QDateTime::currentMSecsSinceEpoch() - g.wpsLastSeen > 3000) {
-      g.wpsConnected = false;
-      g.wpsRealPos = -1;                        // 离线：清掉旧“真实页号”，避免重连后误存错页
-      wpsLog("客户端离线（3s 无请求）");
-    }
-  });
-  t->start(1000);
+  if (g.wpsBridge) return;
+  auto* bridge = new WpsBridge(qApp);
+  bridge->onConnectionChanged = [](bool online) { g.wpsConnected = online; };
+  bridge->onSlideshowBegin = [](int page) {
+    clearAllPages(); g.wpsRealPos = page;
+    if (g.whiteboard) g.savedSlide = page;
+    else { g.currentSlide = page; loadPage(page); }
+  };
+  bridge->onSlideshowEnd = []() { clearAllPages(); g.wpsRealPos = -1; };
+  bridge->onRealPos = [](int page) {
+    if (g.whiteboard) { g.savedSlide = page; g.wpsRealPos = page; return; }
+    if (page == g.currentSlide && page == g.wpsRealPos) return;
+    saveCurrentPage(); g.wpsRealPos = page; g.currentSlide = page; loadPage(page);
+  };
+  bridge->setWhiteboard(g.whiteboard);
+  if (!bridge->start()) { delete bridge; return; }
+  g.wpsBridge = bridge;
 }
-
 void stopWpsApiServer() {
-  bool wasRunning = g.wpsServer || g.wpsConnected || !g.wpsCmdQueue.isEmpty() || g.wpsPingTimer;
-  if (g.wpsServer) {
-    g.wpsServer->close();
-    g.wpsServer->deleteLater();
-    g.wpsServer = nullptr;
-  }
-  g.wpsPingTimer = nullptr;
+  delete g.wpsBridge; g.wpsBridge = nullptr;
   g.wpsConnected = false;
-  g.wpsCmdQueue.clear();
-  if (wasRunning) wpsLog("调试服务已停止");
 }
-
-void setWpsDebug(bool on, bool persist) {
-  if (g.wpsDebug == on) {                     // 状态没变
-    if (on && !g.wpsServer) startWpsApiServer();
-    if (on && g.wpsServer) ensureWpsAddinRegistered();
-    if (persist) wpsSaveSettings();
-    return;
-  }
-  g.wpsDebug = on;
-  if (on) {
-    startWpsApiServer();
-    if (g.wpsServer) ensureWpsAddinRegistered();
-  } else {
-    stopWpsApiServer();
-    g.wpsRealPos = -1;
-  }
+void setWpsDebug(bool enabled, bool persist) {
+  g.wpsDebug = enabled;
+  if (enabled) startWpsApiServer();
+  else { stopWpsApiServer(); g.wpsRealPos = -1; }
   if (persist) wpsSaveSettings();
-}
-
-// ============================================================
-// WPS 接口调试 HTTP 端点（供 Chromium 里的加载项调用）
-//   /hello?m=xx     加载项上线问候
-//   /push?m=<EVENT> 加载项上报事件（走 wpsHandleLine）
-//   /poll           加载项取走一条待执行指令（NEXT/PREV，无则空）
-//   跨域(CORS)已放开；任意请求即刷新“在线”心跳
-// ============================================================
-static void wpsTouch() {
-  g.wpsLastSeen = QDateTime::currentMSecsSinceEpoch();
-  if (!g.wpsConnected) { g.wpsConnected = true; wpsLog("客户端接入"); }
-}
-
-static void wpsHttpReply(QTcpSocket* s, const QString& body) {
-  QByteArray b = body.toUtf8();
-  QString resp =
-      "HTTP/1.1 200 OK\r\n"
-      "Access-Control-Allow-Origin: *\r\n"
-      "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
-      "Access-Control-Allow-Headers: *\r\n"
-      "Content-Type: text/plain; charset=utf-8\r\n"
-      "Content-Length: " + QString::number(b.size()) + "\r\n"
-      "Connection: close\r\n\r\n";
-  s->write(resp.toUtf8() + b);
-  s->flush();
-  s->disconnectFromHost();
-  s->deleteLater();
-}
-
-static void wpsHandleHttp(QTcpSocket* s) {
-  if (!s->canReadLine()) return;               // 还没收到完整请求行
-  QList<QByteArray> parts = s->readLine().split(' ');
-  if (parts.size() < 2) { s->deleteLater(); return; }
-  QByteArray method = parts[0];
-  QUrl url = QUrl::fromEncoded("http://x" + parts[1]);
-  QString path = url.path();
-  QString m = QUrlQuery(url).queryItemValue("m");
-  wpsTouch();                                   // 任意请求都算在线
-  if (method == "OPTIONS") { wpsHttpReply(s, ""); return; }
-  if (path == "/hello") {
-    wpsLog("加载项问候: " + m);
-    wpsHttpReply(s, "OK sidera");
-    return;
-  }
-  if (path == "/push" && !m.isEmpty()) {
-    wpsHandleLine(m);
-    wpsHttpReply(s, "OK");
-    return;
-  }
-  if (path == "/poll") {
-    QString cmd = g.wpsCmdQueue.isEmpty() ? QString() : g.wpsCmdQueue.dequeue();
-    wpsHttpReply(s, cmd);
-    return;
-  }
-  // 其余路径：从加载项目录提供静态文件（manifest.xml/ribbon.xml/main.js/...）
-  wpsServeAddinFile(s, path);
-}
-
-// 加载项内容目录：环境变量 > 程序所在目录 > 系统安装目录
-static QString wpsAddinDir() {
-  QString env = QString::fromLocal8Bit(qgetenv("WPS_ADDIN_DIR"));
-  if (!env.isEmpty() && QFile::exists(env + "/manifest.xml")) return env;
-  QString app = QCoreApplication::applicationDirPath() + "/wps-addin";
-  if (QFile::exists(app + "/manifest.xml")) return app;
-  QString sys = "/usr/share/sidera/wps-addin";
-  if (QFile::exists(sys + "/manifest.xml")) return sys;
-  return QString();
-}
-
-static void wpsServeAddinFile(QTcpSocket* s, const QString& path) {
-  QString dir = wpsAddinDir();
-  if (dir.isEmpty()) { wpsHttpReply(s, "OK"); return; }
-  QString rel = path.mid(1);                     // 去掉开头 '/'
-  if (rel.isEmpty()) rel = "manifest.xml";
-  // 防目录穿越：只允许纯文件名/一级 js/
-  if (rel.contains("..") || rel.contains("//")) { wpsHttpReply(s, "OK"); return; }
-  QString fp = dir + "/" + rel;
-  if (!QFile::exists(fp) || QFileInfo(fp).isDir()) { wpsHttpReply(s, "OK"); return; }
-  QFile f(fp);
-  if (!f.open(QIODevice::ReadOnly)) { wpsHttpReply(s, "OK"); return; }
-  QByteArray body = f.readAll();
-  f.close();
-  // 简单 Content-Type
-  QString ct = "text/plain";
-  if (rel.endsWith(".xml")) ct = "application/xml";
-  else if (rel.endsWith(".js")) ct = "text/javascript";
-  else if (rel.endsWith(".html") || rel.endsWith(".htm")) ct = "text/html";
-  else if (rel.endsWith(".svg")) ct = "image/svg+xml";
-  else if (rel.endsWith(".json")) ct = "application/json";
-  QString resp =
-      "HTTP/1.1 200 OK\r\n"
-      "Access-Control-Allow-Origin: *\r\n"
-      "Content-Type: " + ct + "; charset=utf-8\r\n"
-      "Content-Length: " + QString::number(body.size()) + "\r\n"
-      "Connection: close\r\n\r\n";
-  s->write(resp.toUtf8() + body);
-  s->flush();
-  s->disconnectFromHost();
-  s->deleteLater();
 }
 
 void goToPrevPage() {
@@ -395,9 +146,9 @@ void goToPrevPage() {
     loadPage(g.currentSlide);
     return;
   }
-  if (g.wpsDebug && g.wpsConnected) {
+  if (g.wpsDebug && g.wpsConnected && g.wpsRealPos > 0 && g.wpsBridge) {
     wpsLog("调试：入队 PREV 指令，等待加载项轮询执行");
-    g.wpsCmdQueue.enqueue("PREV");
+    g.wpsBridge->enqueue("PREV");
     return;
   }
   saveCurrentPage();
@@ -419,7 +170,7 @@ void goToNextPage() {
     if (p > kCacheBoard) {
       // 翻过第 10 页 → 回到第 1 页，并提示 3 秒（不清除第 1 页内容）
       p = 1;
-      g.wbLimitMsgUntil = QDateTime::currentMSecsSinceEpoch() + 3000;
+      g.wbLimitMsgUntil = monotonicMs() + 3000;
       QTimer::singleShot(3000, []() { if (g.mainWidget) g.mainWidget->update(); });
       qDebug() << "[INFO] 白板页数已达上限，回到第 1 页";
     }
@@ -428,9 +179,9 @@ void goToNextPage() {
     return;
   }
   // 调试模式且已连加载项：只入队 NEXT 指令，由加载项执行；不再发假键（避免双重翻页）
-  if (g.wpsDebug && g.wpsConnected) {
+  if (g.wpsDebug && g.wpsConnected && g.wpsRealPos > 0 && g.wpsBridge) {
     wpsLog("调试：入队 NEXT 指令，等待加载项轮询执行");
-    g.wpsCmdQueue.enqueue("NEXT");
+    g.wpsBridge->enqueue("NEXT");
     return;
   }
   saveCurrentPage();
@@ -463,7 +214,8 @@ static bool isOfficeWindow(Display* dpy, Window w) {
     nullptr
   };
   for (int i = 0; keys[i]; i++)
-    if (name.contains(keys[i]) || klass.contains(keys[i])) return true;
+    if (QString(keys[i]).size() <= 3 ? (name == keys[i] || klass == keys[i]) :
+        (name.contains(keys[i]) || klass.contains(keys[i]))) return true;
   return false;
 }
 
@@ -548,8 +300,8 @@ void checkWpsState() {
   if (needClose) XCloseDisplay(dpy);
 
   if (was != g.wpsFullscreen) {
-    if (g.whiteboard) {
-      // 白板模式：与外界隔离，不清空白板笔迹（容量由 cacheCapacity() 动态决定）
+    if (g.whiteboard || g.wpsDebug) {
+      // The linked bridge owns Begin/End. Fullscreen scans must not clear twice.
     } else if (g.wpsFullscreen) {
       // 进入全屏放映：清空所有笔迹
       qDebug() << "[INFO] 进入全屏放映，清空笔迹";

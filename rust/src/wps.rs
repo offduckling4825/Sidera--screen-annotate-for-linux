@@ -2,8 +2,8 @@
 // Sidera - WPS 联动桥（本地 HTTP 127.0.0.1:16666 + 加载项注册 + 心跳）
 // 平台无关；在独立线程运行 TCP 服务，主线程轮询共享状态
 // ============================================================
-use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, Write};
+use std::collections::{BTreeMap, VecDeque};
+use std::io::Write;
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -32,6 +32,7 @@ pub struct WpsShared {
     pub queue: VecDeque<(i64, String)>,
     pub command_failed_until: i64,
     pub events: Vec<WpsEvent>,
+    sequences: BTreeMap<String, u64>,
 }
 
 impl Default for WpsShared {
@@ -50,6 +51,7 @@ impl Default for WpsShared {
             queue: VecDeque::new(),
             command_failed_until: 0,
             events: Vec::new(),
+            sequences: BTreeMap::new(),
         }
     }
 }
@@ -72,21 +74,19 @@ impl Drop for WpsBridge {
 }
 
 pub fn log_file() -> std::path::PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
-    if std::fs::metadata(&home).map(|m| !m.permissions().readonly()).unwrap_or(false) {
-        home.join("wps-api-debug.log")
-    } else {
-        std::path::PathBuf::from("/tmp/wps-api-debug.log")
-    }
+    // A missing home disables the log rather than sharing a writable /tmp file.
+    dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/nonexistent")).join("wps-api-debug.log")
 }
 
 pub fn wps_log(msg: &str) {
     log::info!("[WPSAPI] {}", msg);
+    if cfg!(test) { return; }
     let path = log_file();
-    if std::fs::metadata(&path).map(|m| m.len() > 1024 * 1024).unwrap_or(false) {
-        let _ = std::fs::remove_file(&path);
-    }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true)
+        .mode(0o600).custom_flags(libc::O_NOFOLLOW).open(&path) {
+        if !f.metadata().map(|m| m.is_file()).unwrap_or(false) { return; }
+        if f.metadata().map(|m| m.len() > 1024 * 1024).unwrap_or(false) { let _ = f.set_len(0); }
         let _ = writeln!(f, "{} {}", now_ms(), msg);
     }
 }
@@ -121,12 +121,34 @@ pub fn ensure_addin_registered() {
     // 与手动安装复用同一条安全合并路径：修复 enable_dev，保留其他加载项，
     // 备份后原子替换；遇到损坏的 XML 不覆盖原文件。
     let Some(dir) = addin_dir() else { return };
-    match std::process::Command::new("bash").arg(dir.join("install.sh")).output() {
+    match run_registration(&dir.join("install.sh"), Duration::from_secs(5)) {
         Ok(output) if output.status.success() => {
             wps_log(String::from_utf8_lossy(&output.stdout).trim());
         }
         Ok(output) => wps_log(&format!("加载项登记失败：{}", String::from_utf8_lossy(&output.stderr).trim())),
         Err(error) => wps_log(&format!("无法运行加载项登记：{}", error)),
+    }
+}
+
+fn run_registration(script: &std::path::Path, timeout: Duration) -> std::io::Result<std::process::Output> {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("bash").arg(script).process_group(0)
+        .stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output(),
+            Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            result => {
+                // The installer may be waiting on its XML lock. End its private
+                // process group, including Python, rather than leave an orphan.
+                unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL); }
+                let _ = child.wait();
+                return Err(result.err().unwrap_or_else(|| std::io::Error::new(
+                    std::io::ErrorKind::TimedOut, "加载项登记超过等待时限")));
+            }
+        }
     }
 }
 
@@ -163,32 +185,40 @@ fn query_m(query: &str) -> Option<String> {
     None
 }
 
+fn accept_sequence(shared: &Arc<Mutex<WpsShared>>, query: &str) -> Result<bool, ()> {
+    let field = |key: &str| query.split('&').find_map(|word| word.strip_prefix(key));
+    let (sid, sequence) = (field("sid="), field("seq="));
+    if sid.is_none() && sequence.is_none() { return Ok(true); } // Older add-ins.
+    let sid = sid.filter(|id| !id.is_empty() && id.len() <= 64
+        && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')).ok_or(())?;
+    let sequence = sequence.and_then(|s| s.parse::<u64>().ok()).filter(|s| *s > 0).ok_or(())?;
+    let mut state = shared.lock().unwrap();
+    if state.sequences.get(sid).is_some_and(|previous| sequence <= *previous) { return Ok(false); }
+    if !state.sequences.contains_key(sid) && state.sequences.len() >= 16 { state.sequences.pop_first(); }
+    state.sequences.insert(sid.into(), sequence);
+    Ok(true)
+}
+
 fn reply(stream: &mut TcpStream, body: &[u8]) {
-    let header = format!(
-        "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: *\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    let _ = stream.write_all(header.as_bytes());
-    let _ = stream.write_all(body);
-    let _ = stream.flush();
+    crate::bridge_http::reply(stream, 200, "text/plain; charset=utf-8", body);
 }
 
 fn reply_file(stream: &mut TcpStream, path: &str) {
     let Some(dir) = addin_dir() else {
-        reply(stream, b"OK");
+        crate::bridge_http::reply(stream, 404, "text/plain", b"Not found");
         return;
     };
-    let mut rel = path.trim_start_matches('/').to_string();
-    if rel.is_empty() {
-        rel = "manifest.xml".to_string();
-    }
-    if rel.contains("..") || rel.contains("//") {
-        reply(stream, b"OK");
+    let Some(rel) = crate::bridge_http::static_path(path) else {
+        crate::bridge_http::reply(stream, 404, "text/plain", b"Not found");
         return;
+    };
+    let fp = dir.join(rel);
+    if !fp.canonicalize().ok().zip(dir.canonicalize().ok()).is_some_and(|(file, root)| file.starts_with(root))
+        || std::fs::metadata(&fp).map(|m| !m.is_file() || m.len() > 1024 * 1024).unwrap_or(true) {
+        crate::bridge_http::reply(stream, 404, "text/plain", b"Not found"); return;
     }
-    let fp = dir.join(&rel);
     let Ok(body) = std::fs::read(&fp) else {
-        reply(stream, b"OK");
+        crate::bridge_http::reply(stream, 404, "text/plain", b"Not found");
         return;
     };
     let ct = if rel.ends_with(".xml") {
@@ -204,21 +234,12 @@ fn reply_file(stream: &mut TcpStream, path: &str) {
     } else {
         "text/plain"
     };
-    let header = format!(
-        "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store, no-cache, must-revalidate\r\nPragma: no-cache\r\nExpires: 0\r\nContent-Type: {}; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        ct,
-        body.len()
-    );
-    let _ = stream.write_all(header.as_bytes());
-    let _ = stream.write_all(&body);
-    let _ = stream.flush();
+    crate::bridge_http::reply(stream, 200, ct, &body);
 }
 
 fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
-    // 白板模式：与外界完全隔离，忽略 WPS 事件（与 C++ 版一致）
-    if shared.lock().unwrap().whiteboard {
-        return;
-    }
+    // Track the external presentation even while the independent whiteboard is
+    // visible. UI consumers update only the saved presentation page in that mode.
     let line = raw.trim();
     if line.is_empty() {
         return;
@@ -240,7 +261,12 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
     }
     let pos = extract_num(line, "pos=");
     let name = line.split_whitespace().nth(1).unwrap_or("");
+    if !matches!(name, "SlideShowState" | "SlideShowBegin" | "SlideShowEnd" | "SlideShowNextSlide" | "SlideShowNextClick" | "SlideShowOnNext" | "SlideShowOnPrevious") { return; }
     let mut s = shared.lock().unwrap();
+    if s.events.len() >= 64 { s.events.drain(..32); }
+    let next_deck = extract_num(line, "deck=");
+    let changed_deck = name == "SlideShowState" && pos > 0 && s.real_pos > 0
+        && next_deck > 0 && s.deck_epoch > 0 && next_deck != s.deck_epoch;
     if name == "SlideShowState" {
         // Old add-ins do not send ready=; they must never advertise Start.
         s.can_start = pos < 1 && extract_num(line, "ready=") == 1;
@@ -265,11 +291,12 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
         s.queue.retain(|(_, cmd)| (can_start && cmd == "START") || (can_jump && cmd.starts_with("GOTO ")));
         return;
     }
-    if pos > 0 && pos != s.real_pos {
+    if pos > 0 && (pos != s.real_pos || changed_deck) {
         s.can_start = false;
         s.start_pending_until = 0;
         s.queue.retain(|(_, cmd)| cmd != "START");
-        if s.real_pos < 1 {
+        if s.real_pos < 1 || changed_deck {
+            if changed_deck { s.queue.clear(); }
             s.events.push(WpsEvent::SlideshowBegin(pos));
         } else {
             s.events.push(WpsEvent::RealPos(pos));
@@ -280,12 +307,8 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
 }
 
 fn extract_num(s: &str, key: &str) -> i32 {
-    if let Some(i) = s.find(key) {
-        let rest = &s[i + key.len()..];
-        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        return digits.parse().unwrap_or(-1);
-    }
-    -1
+    s.split_whitespace().find_map(|word| word.strip_prefix(key))
+        .and_then(|value| value.parse::<i32>().ok()).filter(|n| *n > 0).unwrap_or(-1)
 }
 
 fn jump_command(cmd: &str) -> Option<(i32, i32)> {
@@ -297,29 +320,34 @@ fn jump_command(cmd: &str) -> Option<(i32, i32)> {
 }
 
 fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>) {
-    let mut reader = BufReader::new(match stream.try_clone() {
-        Ok(s) => s,
-        Err(_) => return,
-    });
-    let mut line = String::new();
-    if reader.read_line(&mut line).is_err() {
-        return;
-    }
-    // 丢弃请求头（读一小段，防止连接被半包阻塞）
-    let _ = reader.fill_buf();
-
-    let mut parts = line.split_whitespace();
-    let method = parts.next().unwrap_or("");
-    let target = parts.next().unwrap_or("");
+    let request = match crate::bridge_http::read(stream) {
+        Ok(request) => request,
+        Err(status) => { crate::bridge_http::reply(stream, status, "text/plain", b"Request rejected"); return; }
+    };
+    let method = request.method.as_str();
+    let target = request.target.as_str();
     let (path, query) = match target.split_once('?') {
         Some((p, q)) => (p, q),
         None => (target, ""),
     };
     let m = query_m(query);
+    if m.as_ref().is_some_and(|m| m.len() > 2048 || m.chars().any(|ch| ch.is_control())) {
+        crate::bridge_http::reply(stream, 400, "text/plain", b"Invalid message"); return;
+    }
 
     if method == "OPTIONS" {
+        if !matches!(path, "/hello" | "/push" | "/poll") && crate::bridge_http::static_path(path).is_none() {
+            crate::bridge_http::reply(stream, 404, "text/plain", b"Not found"); return;
+        }
         reply(stream, b"");
         return;
+    }
+    if matches!(path, "/push" | "/poll") {
+        match accept_sequence(shared, query) {
+            Ok(true) => (),
+            Ok(false) => { reply(stream, if path == "/push" { b"OK" } else { b"" }); return; }
+            Err(()) => { crate::bridge_http::reply(stream, 400, "text/plain", b"Invalid sequence"); return; }
+        }
     }
     match path {
         "/hello" => {
@@ -484,14 +512,8 @@ impl WpsBridge {
         let mut s = self.shared.lock().unwrap();
         if s.whiteboard != on {
             s.whiteboard = on;
-            s.page_index = -1;
-            s.page_total = -1;
-            s.can_start = false;
             s.start_pending_until = 0;
             s.queue.clear();
-            s.events.clear();
-            s.can_jump = false;
-            s.deck_epoch = -1;
         }
     }
 
@@ -523,6 +545,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn registration_timeout_does_not_block_the_bridge() {
+        let directory = std::env::temp_dir().join(format!("sidera-register-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let script = directory.join("install.sh");
+        std::fs::write(&script, "printf registered").unwrap();
+        let output = run_registration(&script, Duration::from_secs(1)).unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"registered");
+        std::fs::write(&script, "exec sleep 30").unwrap();
+        let start = std::time::Instant::now();
+        assert_eq!(run_registration(&script, Duration::from_millis(100)).unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        assert!(start.elapsed() < Duration::from_secs(2));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn ordered_requests_and_document_changes_preserve_latest_state() {
+        let shared = Arc::new(Mutex::new(WpsShared::default()));
+        assert_eq!(accept_sequence(&shared, "sid=classroom-1&seq=2"), Ok(true));
+        handle_line(&shared, "EVENT SlideShowState pos=4 page=4 total=30 jump=1 deck=90");
+        assert_eq!(accept_sequence(&shared, "sid=classroom-1&seq=1"), Ok(false));
+        assert_eq!(accept_sequence(&shared, "sid=classroom-1&seq=2"), Ok(false));
+        assert_eq!(accept_sequence(&shared, "sid=classroom-1&seq=3"), Ok(true));
+        handle_line(&shared, "EVENT SlideShowState pos=4 page=4 total=30 jump=1 deck=91");
+        assert_eq!(shared.lock().unwrap().events.iter().filter(|event| matches!(event, WpsEvent::SlideshowBegin(4))).count(), 2);
+        assert!(accept_sequence(&shared, "sid=bad!&seq=1").is_err());
+        assert!(accept_sequence(&shared, "sid=classroom&seq=nan").is_err());
+        assert_eq!(accept_sequence(&shared, "m=legacy"), Ok(true));
+        for page in 1..=500 { handle_line(&shared, &format!("EVENT SlideShowState pos={page}")); }
+        assert!(shared.lock().unwrap().events.len() <= 64);
+        assert_eq!(shared.lock().unwrap().real_pos, 500);
+    }
+
+    #[test]
     fn absolute_jump_requires_fresh_capability_and_replaces_stale_destinations() {
         let bridge = WpsBridge::from_listener(TcpListener::bind(("127.0.0.1", 0)).unwrap());
         {
@@ -548,6 +604,7 @@ mod tests {
     fn request(port: u16, req: &str) -> String {
         let mut s = TcpStream::connect(("127.0.0.1", port)).expect("connect");
         s.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let req = req.replace("Host: x\r\n", &format!("Host: 127.0.0.1:{port}\r\n"));
         s.write_all(req.as_bytes()).unwrap();
         s.flush().unwrap();
         let mut buf = String::new();
@@ -586,14 +643,15 @@ mod tests {
             "未收到 SlideshowBegin 事件: {events:?}"
         );
 
-        // 静态加载项分发（能找到 wps-addin 目录时）
-        if addin_dir().is_some() {
+        // Missing fixtures must fail, not silently skip resource verification.
+        assert!(addin_dir().is_some(), "run tests from the repository's rust directory");
+        {
             let m = request(
                 port,
                 "GET /manifest.xml HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
             );
             assert!(
-                m.contains("JsPlugin") || m.to_lowercase().contains("manifest"),
+                m.starts_with("HTTP/1.1 200") && m.contains("<JsPlugin"),
                 "静态 manifest 分发异常: {m:?}"
             );
         }
@@ -679,7 +737,7 @@ mod tests {
         bridge.set_whiteboard(true);
         handle_line(&bridge.shared, "EVENT SlideShowState pos=3 click=0 page=10 total=31");
         bridge.set_whiteboard(false);
-        assert_eq!(bridge.page_progress(), (-1, -1), "wait for fresh data after leaving whiteboard");
+        assert_eq!(bridge.page_progress(), (10, 31), "fresh external state survives whiteboard exit");
         handle_line(&bridge.shared, "EVENT SlideShowState pos=3 click=0 page=10 total=31");
         assert_eq!(bridge.page_progress(), (10, 31));
         handle_line(&bridge.shared, "EVENT SlideShowState pos=3 click=0");

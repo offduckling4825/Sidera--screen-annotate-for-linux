@@ -4,11 +4,14 @@
 // ============================================================
 mod app;
 mod backend;
+mod bridge_http;
 mod desktop;
 mod clipboard;
 mod gnome;
 mod gesture;
+mod instance;
 mod paint;
+mod persistence;
 mod portal;
 mod launch;
 mod splash_paint;
@@ -16,6 +19,7 @@ mod startup;
 mod text;
 mod toolbar;
 mod page_picker;
+mod page_cache;
 mod ui;
 mod ui_icons;
 mod ui_theme;
@@ -27,8 +31,8 @@ mod x11;
 mod navigation_tests;
 
 use std::collections::{HashMap, HashSet};
-use std::io::{Read, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::io::Read;
+use instance::Instance as UnixListener;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -1473,27 +1477,10 @@ fn load_icon(size: u32) -> Option<Pixmap> {
 }
 
 fn single_instance() -> Result<Option<UnixListener>, Box<dyn std::error::Error>> {
-    let path = dirs::runtime_dir()
-        .map(|d| d.join("sidera.sock"))
-        .unwrap_or_else(|| {
-            let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
-            PathBuf::from(format!("/tmp/sidera-{}.sock", user))
-        });
-    if let Ok(mut s) = UnixStream::connect(&path) {
-        let command: &[u8] = if std::env::args().any(|arg| arg == "--toggle") { b"toggle" } else { b"show" };
-        let _ = s.write_all(command);
-        let _ = s.flush();
-        log::warn!("[WARN] Sidera 已在运行，退出新实例");
-        return Ok(None);
-    }
-    let _ = std::fs::remove_file(&path);
-    match UnixListener::bind(&path) {
-        Ok(l) => {
-            let _ = l.set_nonblocking(true);
-            Ok(Some(l))
-        }
-        Err(e) => Err(format!("无法创建单实例通信文件 {}：{e}", path.display()).into()),
-    }
+    let command: &[u8] = if std::env::args().any(|arg| arg == "--toggle") { b"toggle" } else { b"show" };
+    let instance = instance::acquire(command).map_err(|error| format!("无法创建单实例通信文件：{error}"))?;
+    if instance.is_none() { log::warn!("Sidera 已在运行，退出新实例"); }
+    Ok(instance)
 }
 
 pub(crate) struct Timers {
@@ -1518,20 +1505,22 @@ pub(crate) fn tick(
 ) {
     let update = poll_wps(app.wps_debug, app.whiteboard, wps_bridge);
     tick_shared(rt, app, ip, wps_bridge.as_ref(), &update, t);
-    resolve_drawing_tools_collapse(rt, app);
+    resolve_drawing_tools_auto_update(rt, app);
 }
 
-pub(crate) fn fold_drawing_tools(rt: &Rt, app: &mut App) {
-    if !app.drawing_tools.expanded() { return; }
+pub(crate) fn set_drawing_tools_expanded(rt: &Rt, app: &mut App, expanded: bool) {
+    if app.drawing_tools.expanded() == expanded { return; }
     close_all_popups(rt, app);
-    app.drawing_tools.set_expanded(false);
+    app.drawing_tools.set_expanded(expanded);
     apply_input_shape(rt, app);
     rt.redraw_full(app);
 }
 
-pub(crate) fn resolve_drawing_tools_collapse(rt: &Rt, app: &mut App) {
-    if app.drawing_tools.take_auto_collapse_request() && app.drawing_tools_can_auto_collapse() {
-        fold_drawing_tools(rt, app);
+pub(crate) fn resolve_drawing_tools_auto_update(rt: &Rt, app: &mut App) {
+    let Some(update) = app.drawing_tools.take_auto_update() else { return };
+    let Some(has_ink) = app.drawing_tools_auto_state() else { return };
+    if let Some(expanded) = update.expanded_for(has_ink) {
+        set_drawing_tools_expanded(rt, app, expanded);
     }
 }
 
@@ -1653,6 +1642,8 @@ pub(crate) fn tick_shared(rt: &Rt, app: &mut App, _ip: &mut Ip,
                 }
                 WpsEvent::RealPos(pos) => {
                     if app.whiteboard {
+                        app.saved_slide = pos;
+                        app.wps_real_pos = pos;
                         continue;
                     }
                     if app.current_slide == pos && app.wps_real_pos == pos { continue; }

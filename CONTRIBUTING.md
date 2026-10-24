@@ -22,7 +22,7 @@
 
 ## 开发与构建
 
-在 Linux 上使用 Git、Rust / Cargo 和 C 编译工具。此发行版使用 Rust 1.93.1；它是实际构建版本，不是已验证的最低 Rust 版本。
+在 Linux 上使用 Git、Rust / Cargo 和 C 编译工具。`rust-toolchain.toml` 固定 Rust 1.93.1；它是当前构建版本，不是已验证的最低 Rust 版本。
 
 ```sh
 git clone --branch custom https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux.git
@@ -38,6 +38,8 @@ cargo check --tests --examples --locked
 | 范围 | 可用检查 | 说明 |
 | --- | --- | --- |
 | Rust 源码 | `cargo check --tests --examples --locked` | 编译检查，不证明行为正确 |
+| Rust 行为 | `python3 tools/test_rust.py` | 仓库根运行，隔离 HOME/网络/运行目录；另用 --x11 / --wayland 执行协议检查 |
+| C++ 行为 | `python3 cpp/tests/test_bridge_api.py`、`python3 cpp/tests/test_core_state.py` | 真实桥及私有 Sway；不连接现有应用 |
 | WPS JavaScript | `node --check wps-addin/js/bridge.js` | 在仓库根执行，仅语法检查 |
 | GNOME JavaScript | `node --input-type=module --check < compat/gnome-extension/extension.js` | 在仓库根执行；不验证 Shell API |
 | 静态界面 | `cargo run --locked --example render_ui -- /tmp/sidera-preview /path/to/CJK-font.ttc` | 在 rust/ 执行；调用绘制函数，不运行桌面后端 |
@@ -49,7 +51,7 @@ cargo check --tests --examples --locked
 
 `rust/build_deb.sh amd64` 或 `arm64` 会先检查 ELF 架构，并优先选择 `target/container-<arch>/release/sidera`，再回退到 `target/release/sidera`。打包前核对实际被选中的文件，避免取到旧二进制。
 
-通用脚本默认写入 `libc6 >= 2.30`；本机编译产物可能需要更高版本，必须据 ELF 版本需求调整发布包，不能只改文件名。本次预发布包明确写入 `libc6 >= 2.43`；重建步骤与构建来源见[本次发布说明](docs/releases/2026-10-24-custom29.md)。
+当前三个打包入口由 `tools/deb_dependencies.py` 校验 ELF，并用 dpkg-shlibdeps 生成实际依赖；需要匹配架构的库和 dpkg-dev。依赖无法确定时停止，保留已有包。通过 `SIDERA_VERSION` 指定包版本；不能手工降低 libc 声明来伪装兼容。已发布 custom.29 的历史元数据与重建流程见[发布说明](docs/releases/2026-10-24-custom29.md)。
 
 容器脚本需要仓库外准备的 `amd64-sysroot/` 或 `aarch64-sysroot/`、匹配 Rust 工具链、bubblewrap；ARM64 还需要对应的 QEMU / binfmt 配置。这些材料不包含在 Git 仓库。更低系统库构建和 ARM64 均需独立验证后才能发布。
 
@@ -65,4 +67,4 @@ PR 描述建议包含“问题与变化”“验证”“限制 / 升级步骤�
 
 ## 发布核对
 
-发布者应确认分支及提交、包内主程序来源、架构与系统库要求、扩展和加载项版本、源代码入口、许可证与 SHA256。验证未完成时发布为 **pre-release**，明确范围，不写成稳定版。当前 CI 工作流的默认触发范围是 `main`；`custom` 的推送不代表 CI 已通过。
+发布者应确认分支及提交、包内主程序来源、架构与系统库要求、扩展和加载项版本、源代码入口、许可证与 SHA256。验证未完成时发布为 **pre-release**，明确范围，不写成稳定版。CI 已配置 `custom` / `main` 的 push 和 PR；实际执行结果仍应逐次核对，本地检查不代表远程 CI 已通过。

@@ -92,6 +92,23 @@ test('waiting for Application schedules only one retry', () => {
   assertStartedOnce(f);
 });
 
+test('replaced event API gets listeners and obsolete callbacks stop publishing', () => {
+  const f = fixture();
+  f.context.startBridge();
+  const replacement = [];
+  f.app.ApiEvent = { AddApiEventListener(event, callback) { replacement.push({ event, callback }); } };
+  f.intervals.values().next().value();
+  assert.equal(replacement.length, events.length);
+  const before = f.requests.length;
+  f.emit('SlideShowBegin');
+  assert.equal(f.requests.length, before, 'obsolete API must not publish a new Begin');
+  replacement.find(listener => listener.event === 'SlideShowBegin').callback();
+  assert.equal(f.requests.length, before + 1);
+  f.context.startBridge();
+  assert.equal(replacement.length, events.length);
+  assert.equal(f.intervals.size, 1);
+});
+
 test('onLoad tolerates Application becoming available later', () => {
   const f = fixture({ ready: false });
   assert.equal(f.context.OnAddinLoad({}), true);

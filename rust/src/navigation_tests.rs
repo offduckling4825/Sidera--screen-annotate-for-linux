@@ -124,6 +124,25 @@ fn presentation_lifecycle_does_not_erase_visible_or_hidden_whiteboard() {
 }
 
 #[test]
+fn presentation_page_changes_behind_whiteboard_restore_the_current_page() {
+    let (rt, mut app, keys) = fixture(false);
+    app.current_slide = 2;
+    app.wps_real_pos = 2;
+    app.toggle_whiteboard();
+    paint::stroke_tapered(&mut app, (20, 40), (80, 40), 6, 6);
+    let whiteboard = app.canvas.data().to_vec();
+    let update = WpsUpdate { connected: true, events: vec![WpsEvent::RealPos(7)] };
+    tick_shared(&rt, &mut app, &mut Ip::default(), None, &update, &mut Timers::new());
+    assert_eq!(app.canvas.data(), whiteboard.as_slice());
+    assert_eq!(app.current_slide, 1);
+    app.toggle_whiteboard();
+    assert_eq!(app.current_slide, 7);
+    app.toggle_whiteboard();
+    assert_eq!(app.canvas.data(), whiteboard.as_slice());
+    assert_eq!(keys.get(), 0);
+}
+
+#[test]
 fn linked_failure_does_not_double_advance_through_keyboard_fallback() {
     let (rt, mut app, keys) = fixture(true);
     let bridge = WpsBridge::from_listener(std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap());
@@ -288,7 +307,7 @@ fn both_clear_controls_fold_desktop_tools_but_keep_whiteboard_ready() {
                 on_release(&rt, &mut app, &mut ip, None, r.x + r.w / 2, r.y + r.h / 2, 1);
             } else { handle_btn(&rt, &mut app, None, Btn::Clear, false); }
             assert!(!app.page_has_ink && !app.is_drawing);
-            resolve_drawing_tools_collapse(&rt, &mut app);
+            resolve_drawing_tools_auto_update(&rt, &mut app);
             assert_eq!(app.drawing_tools.expanded(), whiteboard);
             assert!(!app.pen_popup_visible && !app.eraser_popup_visible);
             assert_eq!(app.whiteboard, whiteboard);
@@ -300,7 +319,7 @@ fn both_clear_controls_fold_desktop_tools_but_keep_whiteboard_ready() {
             assert!(!app.page_has_ink, "cleared content must not return from its cache");
             if whiteboard {
                 go_next(&rt, &mut app, None);
-                resolve_drawing_tools_collapse(&rt, &mut app);
+                resolve_drawing_tools_auto_update(&rt, &mut app);
                 assert!(app.drawing_tools.expanded(), "blank whiteboard pages remain ready to write");
             } else {
                 handle_btn(&rt, &mut app, None, Btn::Pen, false);
@@ -369,7 +388,7 @@ fn cursor_collapses_only_when_no_actual_ink_remains() {
             app.stroke_pts = vec![(20.0, 20.0, 6.0), (80.0, 20.0, 6.0)];
         }
         switch_to_cursor(&rt, &mut app);
-        resolve_drawing_tools_collapse(&rt, &mut app);
+        resolve_drawing_tools_auto_update(&rt, &mut app);
         assert_eq!(app.drawing_tools.expanded(), matches!(remaining, "ink" | "pending"), "{remaining}");
         assert_eq!(app.mode, 0);
         assert!(!app.is_drawing);
@@ -387,17 +406,46 @@ fn paging_checks_destination_ink_and_preserves_active_drawing_modes() {
             app.slide_cache.insert(2, target); // Empty caches must not be mistaken for ink.
             if mode == 0 { switch_to_cursor(&rt, &mut app); }
             else { switch_to_draw(&rt, &mut app, mode); }
-            resolve_drawing_tools_collapse(&rt, &mut app);
+            resolve_drawing_tools_auto_update(&rt, &mut app);
             assert!(app.drawing_tools.expanded());
             go_next(&rt, &mut app, None);
-            resolve_drawing_tools_collapse(&rt, &mut app);
+            resolve_drawing_tools_auto_update(&rt, &mut app);
             assert_eq!(app.current_slide, 2);
             assert_eq!(app.drawing_tools.expanded(), mode != 0 || target_ink);
             go_prev(&rt, &mut app, None);
-            resolve_drawing_tools_collapse(&rt, &mut app);
+            resolve_drawing_tools_auto_update(&rt, &mut app);
             assert!(app.canvas.pixels().iter().any(|p| p.alpha() != 0));
-            assert_eq!(app.drawing_tools.expanded(), mode != 0 || target_ink,
-                "returning to ink must not reopen a folded group");
+            assert!(app.drawing_tools.expanded(), "returning to ink reopens the drawing tools");
+            assert_eq!(app.mode, mode, "restoring tools must not change the selected mode");
+        }
+    }
+}
+
+#[test]
+fn folded_cursor_tools_follow_actual_ink_without_untucking_the_sidebar() {
+    for tucked in [false, true] {
+        for content in ["ink", "erased", "empty"] {
+            let (rt, mut app, _) = fixture(true);
+            if content != "empty" {
+                paint::stroke_tapered(&mut app, (20, 20), (80, 20), 6, 6);
+                if content == "erased" {
+                    paint::stroke_segment(&mut app, (10, 20), (90, 20), true, 40);
+                }
+            }
+            app.slide_cache.insert(2, app.canvas.clone());
+            app.clear_canvas();
+            if tucked { collapse_sidebars(&rt, &mut app); }
+            assert!(!app.drawing_tools.expanded());
+            go_next(&rt, &mut app, None);
+            resolve_drawing_tools_auto_update(&rt, &mut app);
+            assert_eq!(app.current_slide, 2);
+            assert_eq!(app.mode, 0);
+            assert_eq!(app.collapsed, tucked);
+            assert_eq!(app.drawing_tools.expanded(), content == "ink" && !tucked);
+            assert_eq!(app.canvas.pixels().iter().any(|p| p.alpha() != 0), content == "ink");
+            // Mouse movement/idle checks cannot override the manual whole-bar tuck.
+            resolve_drawing_tools_auto_update(&rt, &mut app);
+            assert_eq!(app.drawing_tools.expanded(), content == "ink" && !tucked);
         }
     }
 }
@@ -414,12 +462,12 @@ fn wps_waits_for_real_page_before_collapsing_and_whiteboard_restores_tools() {
     switch_to_draw(&rt, &mut app, 1);
     paint::stroke_tapered(&mut app, (20, 20), (80, 20), 6, 6);
     switch_to_cursor(&rt, &mut app);
-    resolve_drawing_tools_collapse(&rt, &mut app);
+    resolve_drawing_tools_auto_update(&rt, &mut app);
     app.toggle_whiteboard();
     clear_drawing(&rt, &mut app);
     assert!(app.drawing_tools.expanded());
     app.toggle_whiteboard();
-    resolve_drawing_tools_collapse(&rt, &mut app);
+    resolve_drawing_tools_auto_update(&rt, &mut app);
     assert!(app.drawing_tools.expanded(), "restore the pre-whiteboard tools when ink remains");
     go_next(&rt, &mut app, Some(&bridge));
     let mut ip = Ip::default();
@@ -427,19 +475,30 @@ fn wps_waits_for_real_page_before_collapsing_and_whiteboard_restores_tools() {
     timers.last_wps = Instant::now();
     let same_page = WpsUpdate { connected: true, events: vec![WpsEvent::RealPos(1)] };
     tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &same_page, &mut timers);
-    resolve_drawing_tools_collapse(&rt, &mut app);
+    resolve_drawing_tools_auto_update(&rt, &mut app);
     assert!(app.drawing_tools.expanded(), "a queued command or animation step is not a page change");
     bridge.shared.lock().unwrap().real_pos = 2;
     let next_page = WpsUpdate { connected: true, events: vec![WpsEvent::RealPos(2)] };
     tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &next_page, &mut timers);
-    resolve_drawing_tools_collapse(&rt, &mut app);
+    resolve_drawing_tools_auto_update(&rt, &mut app);
     assert_eq!(app.current_slide, 2);
     assert!(!app.drawing_tools.expanded());
     app.toggle_whiteboard();
     assert!(app.drawing_tools.expanded());
     app.toggle_whiteboard();
-    resolve_drawing_tools_collapse(&rt, &mut app);
+    resolve_drawing_tools_auto_update(&rt, &mut app);
     assert!(!app.drawing_tools.expanded());
+    go_prev(&rt, &mut app, Some(&bridge));
+    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &next_page, &mut timers);
+    resolve_drawing_tools_auto_update(&rt, &mut app);
+    assert!(!app.drawing_tools.expanded(), "queued navigation must wait for restored page content");
+    bridge.shared.lock().unwrap().real_pos = 1;
+    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &same_page, &mut timers);
+    resolve_drawing_tools_auto_update(&rt, &mut app);
+    assert_eq!(app.current_slide, 1);
+    assert!(app.canvas.pixels().iter().any(|p| p.alpha() != 0));
+    assert!(app.drawing_tools.expanded());
+    assert_eq!(app.mode, 0);
 }
 
 #[test]

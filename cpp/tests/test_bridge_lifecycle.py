@@ -36,6 +36,10 @@ def main():
             "--bind", str(isolated_home), str(Path.home()),
             # Keep test files visible even when the checkout is under the real home.
             "--ro-bind", str(repo), str(repo),
+            "--tmpfs", "/run", "--clearenv",
+            "--setenv", "PATH", "/usr/bin:/bin",
+            "--setenv", "HOME", str(Path.home()),
+            "--setenv", "WPS_ADDIN_DIR", str(repo / "wps-addin"),
             "--unshare-net", "--chdir", str(scratch), str(binary),
         ], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
         print(result.stdout, end="")

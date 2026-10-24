@@ -118,7 +118,7 @@ int timedPenWidth() {
   int base = g.penWidth();
   if (g.strokeStartMs <= 0) return base;
   int minw = qMax(1, int(qRound(base * kStrokeMinScale)));
-  qint64 dt = QDateTime::currentMSecsSinceEpoch() - g.strokeStartMs;
+  qint64 dt = monotonicMs() - g.strokeStartMs;
   double t = qBound(0.0, double(dt) / double(kStrokeRampMs), 1.0);
   return minw + int(qRound((base - minw) * t));
 }

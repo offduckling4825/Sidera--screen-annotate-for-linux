@@ -1,5 +1,5 @@
 # Sidera 构建（宿主机 amd64；aarch64 见 README / 手写交叉命令）
-# Wayland 后端：检测到 libwayland-dev + wayland-scanner 时自动编译，否则退化为纯 X11。
+# WITH_WAYLAND=auto/0/1；需要 wayland-client、xkbcommon 与 wayland-scanner。
 CXX      ?= g++
 CC       ?= gcc
 CXXFLAGS ?= -std=c++17 -O2 -fPIC
@@ -17,7 +17,17 @@ HDR = $(wildcard src/*.h)
 
 # ---- Wayland 后端（可选） ----
 WL_SCANNER := $(shell command -v wayland-scanner 2>/dev/null)
-HAVE_WL    := $(shell pkg-config --exists wayland-client && test -n "$(WL_SCANNER)" && echo 1)
+WITH_WAYLAND ?= auto
+WL_AVAILABLE := $(shell pkg-config --exists wayland-client xkbcommon && test -n "$(WL_SCANNER)" && echo 1)
+ifeq ($(WITH_WAYLAND),1)
+  ifneq ($(WL_AVAILABLE),1)
+    $(error WITH_WAYLAND=1 requires wayland-client, xkbcommon and wayland-scanner)
+  endif
+endif
+ifeq ($(filter $(WITH_WAYLAND),auto 0 1),)
+  $(error WITH_WAYLAND must be auto, 0 or 1)
+endif
+HAVE_WL := $(if $(filter 0,$(WITH_WAYLAND)),,$(WL_AVAILABLE))
 WL_C       =
 WL_H       =
 ifeq ($(HAVE_WL),1)
@@ -89,14 +99,20 @@ build/wlr-screencopy-unstable-v1-protocol.c: ../protocols/wlr-screencopy-unstabl
 	@mkdir -p build
 	$(WL_SCANNER) private-code $< $@
 
-%.o: %.cpp $(HDR) $(WL_H)
+# A feature/toolchain change must invalidate old objects, including main.o.
+build/config: FORCE
+	@mkdir -p build
+	@printf '%s\n' '$(CXX) $(CXXFLAGS) $(LDFLAGS) $(DEFS) $(QTFLAGS) $(INC) $(LIBS)' > $@.tmp
+	@cmp -s $@.tmp $@ && rm $@.tmp || mv $@.tmp $@
+
+%.o: %.cpp $(HDR) $(WL_H) build/config
 	$(CXX) $(CXXFLAGS) $(DEFS) $(QTFLAGS) $(INC) -c $< -o $@
 
 %.o: %.c
 	$(CC) -O2 -fPIC -c $< -o $@
 
 $(OUT): $(CPP_OBJS) $(C_OBJS)
-	$(CXX) $(CPP_OBJS) $(C_OBJS) $(QTLIBS) $(LIBS) -o $@
+	$(CXX) $(LDFLAGS) $(CPP_OBJS) $(C_OBJS) $(QTLIBS) $(LIBS) -o $@
 
 clean:
 	rm -f annotate_amd64 annotate_aarch64
@@ -109,4 +125,4 @@ test:
 test-lifecycle:
 	python3 tests/test_bridge_lifecycle.py
 
-.PHONY: all clean test test-lifecycle
+.PHONY: all clean test test-lifecycle FORCE

@@ -2,6 +2,8 @@
 //! application event loop, WPS connection, input injection or test runner.
 #![allow(dead_code)]
 #[path = "../src/app.rs"] mod app;
+#[path = "../src/persistence.rs"] mod persistence;
+#[path = "../src/page_cache.rs"] mod page_cache;
 #[path = "../src/paint.rs"] mod paint;
 #[path = "../src/text.rs"] mod text;
 #[path = "../src/toolbar.rs"] mod toolbar;

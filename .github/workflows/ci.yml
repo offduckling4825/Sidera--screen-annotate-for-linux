@@ -2,9 +2,9 @@ name: Build & Verify
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, custom ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, custom ]
 
 jobs:
   wps-addin:
@@ -26,11 +26,15 @@ jobs:
       - name: Test WPS add-in registration
         run: python3 wps-addin/tests/test_install.py
 
+      - name: Check Markdown links and anchors
+        run: python3 tools/check_markdown.py
+
       - name: Verify WPS add-in startup and state sync
         run: |
           node --check wps-addin/main.js
           node --check wps-addin/js/bridge.js
           node --test wps-addin/tests/bridge.test.cjs wps-addin/tests/state-sync.test.cjs
+          node --test compat/gnome-extension/tests/chrome.test.mjs
 
   build-amd64:
     runs-on: ubuntu-latest
@@ -46,21 +50,24 @@ jobs:
             pkg-config \
             python3 bubblewrap \
             qtbase5-dev \
-            libqt5widgets5 \
-            libqt5network5 \
+            libwayland-dev libxkbcommon-dev sway dbus-x11 fonts-noto-cjk \
             libx11-dev \
             libxcb1-dev \
             libxext-dev \
             libxtst-dev
 
-      - name: Test C++ bridge lifecycle
+      - name: Test shared C++ bridge in isolation
         working-directory: cpp
-        run: make test-lifecycle
+        run: make test
 
       - name: Compile Sidera
         working-directory: cpp
         run: |
-          make -j$(nproc)
+          make -j$(nproc) WITH_WAYLAND=0
+          make -j$(nproc) WITH_WAYLAND=1
+
+      - name: Test C++ cache and Wayland buffer lifecycle
+        run: python3 cpp/tests/test_core_state.py
 
       - name: Verify build artifact
         working-directory: cpp
@@ -77,13 +84,14 @@ jobs:
       - name: Install startup test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3 bubblewrap xvfb
+          sudo apt-get install -y python3 bubblewrap xvfb dpkg-dev gcc fonts-noto-cjk sway dbus-x11
 
       - name: Test DEB packaging architecture checks
         run: python3 rust/tests/test_build_deb.py
 
       - name: Ensure clippy
-        run: rustup component add clippy
+        working-directory: rust
+        run: rustup show active-toolchain
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -101,15 +109,16 @@ jobs:
         run: cargo build --release --locked
 
       - name: Test
-        working-directory: rust
-        run: cargo test --locked
+        run: python3 tools/test_rust.py
 
       - name: Test startup diagnostics and backend selection
-        run: python3 rust/tests/test_startup.py rust/target/release/sidera
+        run: python3 tools/run_isolated.py --timeout 180 -- python3 rust/tests/test_startup.py rust/target/release/sidera
 
       - name: Test X11 touch and input regions
-        working-directory: rust
-        run: xvfb-run -a cargo test --locked x11:: -- --ignored --test-threads=1
+        run: python3 tools/test_rust.py --x11
+
+      - name: Test Wayland buffer lifecycle
+        run: python3 tools/test_rust.py --wayland
 
       - name: Clippy
         working-directory: rust

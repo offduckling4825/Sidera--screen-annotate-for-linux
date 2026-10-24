@@ -63,7 +63,7 @@
 | --- | --- |
 | 屏幕批注 | 画笔、橡皮、撤回与清除；光标模式把工具栏外的点击交还给桌面。 |
 | 工具与反馈 | 笔尖跟随所选颜色，橡皮图标随尺寸适度变化；选中态明显，取消悬浮反馈，强化按下反馈。 |
-| 绘图工具组 | 默认收起橡皮、清除与撤回，保留画笔与翻页入口；选画笔展开，清除后收回，光标模式下空画布在切换或翻页后收回。白板模式保持展开。 |
+| 绘图工具组 | 默认收起橡皮、清除与撤回，保留画笔与翻页入口；选画笔展开，清除后收回，光标模式下空画布在切换或翻页后收回。返回有笔迹页自动展开（本地 custom.30 修复）；白板模式保持展开。 |
 | 工具栏拖动 | 上下两个拖拽点，拖动高亮，范围限制在屏幕内；整栏收起后只留边缘小角，不自动弹开。 |
 | 白板 | 进入即切换画笔，光标按钮禁用；关闭再打开保留本次运行的内容与页码。**退出程序后不持久保存。** |
 | WPS 联动 | 识别文档后可从当前页开始放映，放映中显示“结束放映”；真实换页切换批注，页内动画不切换页缓存。 |
@@ -133,7 +133,7 @@ sidera-wps-addin-install
 
 ## 从源码构建
 
-在 Linux 上准备 Rust / Cargo、C 编译器和 Git；打包还需要 `dpkg-deb`、`readelf` 与 Python 3。
+在 Linux 上准备 Rust / Cargo、C 编译器和 Git；工具链固定为 1.93.1。打包还需要 `dpkg-dev`（含 dpkg-shlibdeps）、`dpkg-deb`、`readelf` 与 Python 3。
 
 ```sh
 git clone --branch custom https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux.git
@@ -141,7 +141,9 @@ cd Sidera--screen-annotate-for-linux/rust
 cargo build --release --locked
 ```
 
-这会生成 `rust/target/release/sidera`。本机编译会继承本机系统库要求；通用打包脚本中的最低依赖声明不能代替实际 ELF 检查。
+这会生成 `rust/target/release/sidera`。本机编译会继承本机系统库要求；当前打包脚本检查真实 ELF 并自动生成动态依赖，不再使用固定的最低 libc 声明。ARM64 或低版本系统需要在对应构建环境打包并验收。
+
+本地未发布修改与公开 custom.29 分开记录。本轮旧问题复查、隔离测试和剩余限制见 [复查报告](docs/audit/REVIEW_2026-10-24.md)；测试命令见 [测试环境](docs/TEST_ENVIRONMENT.md)。
 
 `build_amd64.sh` / `build_aarch64.sh` 保留容器构建入口，但需要自行准备脚本要求的 sysroot、Rust 工具链及必要的跨架构工具；sysroot **不在仓库中**。详细构建与发布核对见 [CONTRIBUTING.md](CONTRIBUTING.md)。C++ 旧实现及其构建脚本在 [cpp/](cpp/)。
 

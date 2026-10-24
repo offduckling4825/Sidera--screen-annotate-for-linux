@@ -2,8 +2,8 @@
 """Black-box DEB packaging checks; no Rust build, installation or root required.
 
 Run on Linux: python3 rust/tests/test_build_deb.py
-Requires bash, binutils, dpkg-deb and standard coreutils. The ELF fixtures carry
-architecture metadata only; these tests do not prove native application startup.
+Requires bash, binutils, dpkg-dev and a C compiler. Rejection tests use invalid
+ELF fixtures; successful package tests contain a compiled native executable.
 """
 
 from pathlib import Path
@@ -31,7 +31,7 @@ def elf_fixture(machine, elf_class=2, byte_order=1, kind=2):
 class BuildDebTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        missing = [name for name in ("bash", "readelf", "dpkg-deb")
+        missing = [name for name in ("bash", "readelf", "dpkg-deb", "dpkg-shlibdeps", "cc")
                    if shutil.which(name) is None]
         if missing:
             raise RuntimeError("Missing test dependencies: " + ", ".join(missing))
@@ -50,6 +50,8 @@ class BuildDebTests(unittest.TestCase):
             shutil.copyfile(REPO / name, repo / name)
         shutil.copytree(REPO / "wps-addin", repo / "wps-addin")
         shutil.copytree(REPO / "compat/gnome-extension", repo / "compat/gnome-extension")
+        (repo / "tools").mkdir()
+        shutil.copyfile(REPO / "tools/deb_dependencies.py", repo / "tools/deb_dependencies.py")
         return repo
 
     def place_binary(self, repo, relative_path, contents):
@@ -80,21 +82,20 @@ class BuildDebTests(unittest.TestCase):
         self.assertFalse((staging / "usr").exists())
 
     def test_matching_architectures_produce_consistent_packages(self):
-        cases = (
-            ("amd64", "container-amd64/release", 62, 2),
-            ("amd64", "release", 62, 3),  # PIE executables use ET_DYN.
-            ("aarch64", "container-aarch64/release", 183, 2),
-            ("arm64", "container-aarch64/release", 183, 3),
-            ("arm64", "release", 183, 2),
-        )
-        for arch, location, machine, kind in cases:
-            with self.subTest(arch=arch, location=location, kind=kind):
+        arch = subprocess.check_output(["dpkg", "--print-architecture"], text=True).strip()
+        self.assertIn(arch, ("amd64", "arm64"))
+        container = "amd64" if arch == "amd64" else "aarch64"
+        for location in (f"container-{container}/release", "release"):
+            with self.subTest(arch=arch, location=location):
                 repo = self.make_repo()
-                contents = elf_fixture(machine, kind=kind)
+                source = repo / "fixture.c"
+                source.write_text('#include <stdio.h>\nint main(void) { puts("sidera package fixture"); return 0; }\n')
+                subprocess.run(["cc", str(source), "-o", str(repo / "fixture")], check=True)
+                contents = (repo / "fixture").read_bytes()
                 self.place_binary(repo, location, contents)
                 if location != "release":
                     # A correctly targeted container build takes priority.
-                    other_machine = 183 if machine == 62 else 62
+                    other_machine = 183 if arch == "amd64" else 62
                     self.place_binary(repo, "release", elf_fixture(other_machine))
                 result = self.build(repo, arch)
                 self.assertEqual(result.returncode, 0, result.stdout)
@@ -104,6 +105,9 @@ class BuildDebTests(unittest.TestCase):
                     ["dpkg-deb", "-f", str(package), "Architecture"], text=True,
                 ).strip()
                 self.assertEqual(control_arch, deb_arch)
+                dependencies = subprocess.check_output(["dpkg-deb", "-f", str(package), "Depends"], text=True)
+                self.assertIn("libc6 (>=", dependencies)
+                self.assertIn("python3", dependencies)
                 unpacked = repo / "unpacked"
                 subprocess.run(["dpkg-deb", "-x", str(package), str(unpacked)], check=True)
                 installed = unpacked / "usr/bin/sidera"
@@ -137,6 +141,12 @@ class BuildDebTests(unittest.TestCase):
 
     def test_missing_binary_is_rejected(self):
         self.assert_rejected(self.make_repo(), "arm64")
+
+    def test_header_only_executable_is_not_a_valid_package(self):
+        for arch, machine in (("amd64", 62), ("arm64", 183)):
+            repo = self.make_repo()
+            self.place_binary(repo, "release", elf_fixture(machine))
+            self.assert_rejected(repo, arch)
 
 
 if __name__ == "__main__":

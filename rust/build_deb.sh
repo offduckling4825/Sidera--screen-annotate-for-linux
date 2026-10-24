@@ -4,19 +4,19 @@
 #   用法: ./build_deb.sh [amd64|aarch64]
 #   产物: <repo>/sidera_3.0-Electro-testing_<amd64|arm64>.deb
 #
-# 依赖：dpkg-deb、readelf（binutils）
+# 依赖：dpkg-dev、binutils、python3；必须能解析目标架构的系统库
 # 前置：先用 ./build_container.sh <arch> 编译出二进制
 #       （或普通 cargo build --release，用架构匹配的 target/release 兜底）
 #
 # 与 C++ 版打包脚本的区别：
 #   - 二进制来自 Rust 构建（target/container-<arch>/release/sidera）
-#   - 运行时不依赖 Qt / libX11，只声明 libc6 + libgcc-s1
+#   - 运行依赖从实际 ELF 推导，不硬编码最低 glibc
 # ============================================================
 set -e
 
 ARG="${1:-amd64}"
-HERE="$(cd "$(dirname "$0")" && pwd)"      # .../cpp/rust
-REPO="$(cd "$HERE/.." && pwd)"             # .../cpp
+HERE="$(cd "$(dirname "$0")" && pwd)"      # <repo>/rust
+REPO="$(cd "$HERE/.." && pwd)"             # <repo>
 
 case "$ARG" in
   amd64)        SRC_ARCH=amd64;  DEB_ARCH=amd64; ELF_MACHINE='Advanced Micro Devices X86-64';;
@@ -27,7 +27,9 @@ esac
 PKG_NAME="sidera"
 # 注意：dpkg 要求 Version 以数字开头，故采用 "3.0-Electro-testing"；
 # 如需改版本只改这里即可。
-VERSION="3.0-Electro-testing"
+VERSION="${SIDERA_VERSION:-3.0-Electro-testing}"
+dpkg --validate-version "$VERSION" || exit 1
+[[ "$VERSION" != */* && "$VERSION" != *[[:space:]]* ]] || exit 1
 
 # 优先容器构建产物，其次普通 release
 BIN="$HERE/target/container-$SRC_ARCH/release/sidera"
@@ -65,10 +67,12 @@ if ! LC_ALL=C awk -v expected="$ELF_MACHINE" '
   exit 1
 fi
 
-PKG_DIR="$REPO/${PKG_NAME}_${VERSION}_${DEB_ARCH}"
-echo "==> 打包 $BIN -> ${PKG_DIR}.deb"
+DEPENDS="$(python3 "$REPO/tools/deb_dependencies.py" "$BIN" "$DEB_ARCH")"
+OUTPUT="$REPO/${PKG_NAME}_${VERSION}_${DEB_ARCH}.deb"
+PKG_DIR="$(mktemp -d "$REPO/.sidera-package.XXXXXXXX")"
+trap 'rm -rf -- "$PKG_DIR"; rm -f -- "$PKG_DIR.deb"' EXIT
+echo "==> 打包 $BIN -> $OUTPUT"
 
-rm -rf "$PKG_DIR"
 mkdir -p "$PKG_DIR/DEBIAN" \
          "$PKG_DIR/usr/bin" \
          "$PKG_DIR/usr/share/applications" \
@@ -137,7 +141,8 @@ Section: graphics
 Priority: optional
 Architecture: ${DEB_ARCH}
 Maintainer: User <user@localhost>
-Depends: libc6 (>= 2.30), libgcc-s1, python3
+Depends: ${DEPENDS}
+Recommends: fonts-noto-cjk
 Suggests: gnome-shell (>= 46), libglib2.0-bin, xdg-desktop-portal
 Description: Sidera (Rust) 屏幕批注工具
  纯 Rust 实现，不依赖 Qt / libX11；加载项安装工具使用 Python 3。
@@ -164,11 +169,12 @@ for ENTRY in sidera-gnome.desktop sidera-compat.desktop; do
 done
 
 # ---------- 打包 ----------
-dpkg-deb --build --root-owner-group "$PKG_DIR"
+dpkg-deb --build --root-owner-group "$PKG_DIR" "$PKG_DIR.deb"
+mv -f -- "$PKG_DIR.deb" "$OUTPUT"
 
 echo ""
 echo "========== 打包完成 =========="
-ls -lh "${PKG_DIR}.deb"
+ls -lh "$OUTPUT"
 echo ""
-echo "安装: sudo dpkg -i ${PKG_DIR}.deb"
+echo "安装: sudo apt install $OUTPUT"
 echo "卸载: sudo dpkg -r ${PKG_NAME}"

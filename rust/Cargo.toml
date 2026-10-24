@@ -2,7 +2,7 @@
 name = "sidera"
 version = "3.0.0"
 edition = "2021"
-description = "Sidera - screen annotation overlay (pure Rust, X11, no Qt)"
+description = "Sidera - screen annotation overlay (Rust, X11, layer-shell and GNOME Wayland)"
 license = "GPL-3.0-only"
 
 [[bin]]

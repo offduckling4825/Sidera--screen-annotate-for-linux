@@ -81,6 +81,10 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>, depth: u32) {
 
 impl Fonts {
     pub fn load() -> Self {
+        static FONTS: std::sync::OnceLock<Fonts> = std::sync::OnceLock::new();
+        FONTS.get_or_init(Self::load_system).clone()
+    }
+    fn load_system() -> Self {
         let mut files: Vec<PathBuf> = Vec::new();
         collect(Path::new("/usr/share/fonts"), &mut files, 0);
         collect(Path::new("/usr/local/share/fonts"), &mut files, 0);
@@ -93,13 +97,22 @@ impl Fonts {
         files.sort_by_key(|p| -score(&p.to_string_lossy()));
 
         let mut list = Vec::new();
-        for p in files.iter().take(40) {
-            if list.len() >= 3 {
-                break;
-            }
+        let samples: Vec<char> = "课堂画笔橡皮清除撤回设置页码跳转开始结束放映白板0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".chars().collect();
+        let mut covered = vec![false; samples.len()];
+        for p in &files {
+            if list.len() >= 8 || covered.iter().all(|found| *found) { break; }
+            // Bound malformed/oversized font files without an arbitrary first-40 cutoff.
+            if std::fs::metadata(p).map(|m| m.len() > 64 * 1024 * 1024).unwrap_or(true) { continue; }
             if let Ok(data) = std::fs::read(p) {
                 if let Ok(f) = FontArc::try_from_vec(data) {
-                    list.push(f);
+                    let mut useful = list.is_empty();
+                    for (index, ch) in samples.iter().enumerate() {
+                        if !covered[index] && f.glyph_id(*ch).0 != 0 {
+                            covered[index] = true;
+                            useful = true;
+                        }
+                    }
+                    if useful { list.push(f); }
                 }
             }
         }
@@ -107,6 +120,9 @@ impl Fonts {
             log::warn!("[字体] 未找到可用系统字体，界面文字将不显示");
         } else {
             log::info!("[字体] 已加载 {} 个字体", list.len());
+            if list.iter().all(|f| f.glyph_id('画').0 == 0) {
+                log::warn!("[字体] 缺少中文字形，请安装 fonts-noto-cjk 或等效中文字体");
+            }
         }
         Fonts { list }
     }
@@ -121,6 +137,8 @@ impl Fonts {
                 let sf = f.as_scaled(PxScale::from(px));
                 let gid = sf.glyph_id(ch);
                 w += sf.h_advance(gid);
+            } else {
+                w += px * 0.5;
             }
         }
         w
@@ -225,7 +243,7 @@ mod tests {
         let mut pm = Pixmap::new(240, 60).unwrap();
         fonts.draw(
             &mut pm,
-            "测试Abc123",
+            "测试画笔",
             5.0,
             40.0,
             30.0,
@@ -234,7 +252,12 @@ mod tests {
         );
         let nonzero = pm.data().chunks_exact(4).filter(|p| p[3] != 0).count();
         eprintln!("nonzero px = {}", nonzero);
-        pm.save_png("/tmp/text_test.png").ok();
-        assert!(nonzero > 50, "text did not render (nonzero={})", nonzero);
+        assert!(nonzero > 50, "Chinese glyphs did not render; install fonts-noto-cjk (nonzero={})", nonzero);
+    }
+
+    #[test]
+    fn missing_glyphs_reserve_the_same_width_as_drawing() {
+        let fonts = Fonts { list: Vec::new() };
+        assert_eq!(fonts.text_width("画笔A", 20.0), 30.0);
     }
 }
