@@ -2,6 +2,8 @@
 
 日期：2026-09-30。适用分支：`custom`。所有阶段目前为计划，问题编号见 [ISSUES.md](ISSUES.md)。阶段按验收推进；没有承诺未经实测的完成日期。
 
+2026-10-24 追加：Rust 已抽出 `Desktop`，GNOME 原生扩展与 layer-shell 共用逐屏状态、工具同步和单个 WPS 桥；补充持久剪贴板服务与有界 Portal 请求。显示几何统一为原子调整并保留笔迹。GNOME 渲染/输入通过本地有界 IPC 适配，业务绘图不放入扩展。代码已通过编译检查，用户要求亲自进行交互验收，因此这些实现进度不代表阶段验收完成；详见 [GNOME 原生扩展说明](../compat/gnome-extension/README.md)。
+
 ## 1. 目标与约束
 
 目标是让笔迹不因分页/重连/显示变化意外丢失，让各平台的支持能力可判断，让一次修复能够通过测试持续保持。
@@ -204,7 +206,7 @@ rust/src/
 | --- | --- | --- |
 | 1 | 端口/目录注入，修正接口测试误通过与副作用 | 缺资源、端口占用、真实家目录不变 |
 | 2 | 默认画布与 DPI 撤回修复 | 1080p初值、缩放像素比较 |
-| 3 | Rust Wayland busy-buffer 与 C++ resize修复 | 缓冲单元测试、ASan/实机resize |
+| 3 | Rust Wayland busy-buffer 已于 2026-10-24 修复；C++ resize 仍待修 | Rust 存储与 Sway resize/scale 回归已过；C++ ASan/实机resize 待执行 |
 | 4 | JS 幂等、上报重试与 Begin/End轮询 | 本次JS探针升级为回归断言 |
 | 5 | WPS 会话控制器、白板恢复 | 同页重连、白板外部换页、重复Begin |
 | 6 | C++ 统一桥和登记合并 | 两后端统一fixture、多加载项XML、启停 |

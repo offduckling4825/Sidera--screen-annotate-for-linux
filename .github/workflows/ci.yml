@@ -107,6 +107,10 @@ jobs:
       - name: Test startup diagnostics and backend selection
         run: python3 rust/tests/test_startup.py rust/target/release/sidera
 
+      - name: Test X11 touch and input regions
+        working-directory: rust
+        run: xvfb-run -a cargo test --locked x11:: -- --ignored --test-threads=1
+
       - name: Clippy
         working-directory: rust
         run: cargo clippy --all-targets --locked

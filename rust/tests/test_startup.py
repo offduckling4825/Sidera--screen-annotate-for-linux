@@ -10,14 +10,113 @@ from pathlib import Path
 import select
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 
 
 BINARY = Path(sys.argv.pop(1)).resolve() if len(sys.argv) > 1 else None
+
+
+class WaylandRegistryStub:
+    """A registry-only Wayland peer; it never creates windows or touches a desktop.
+
+    Native-endian wire messages implement wl_display.get_registry/sync and
+    wl_registry.global/bind. Omitting layer-shell exercises the real client
+    binding error, rather than replacing Sidera's protocol detection logic.
+    """
+
+    def __init__(self, path, globals=("wl_compositor", "wl_shm")):
+        self.path = path
+        self.globals = globals
+        self.sync_count = 0
+        self.errors = []
+        self.stopped = threading.Event()
+        self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.listener.bind(str(path))
+        self.listener.listen(1)
+        self.listener.settimeout(0.2)
+        self.worker = threading.Thread(target=self.serve, daemon=True)
+
+    @staticmethod
+    def message(object_id, opcode, payload):
+        return struct.pack("=II", object_id, ((len(payload) + 8) << 16) | opcode) + payload
+
+    @staticmethod
+    def string(value):
+        value = value.encode("ascii") + b"\0"
+        return struct.pack("=I", len(value)) + value + b"\0" * (-len(value) % 4)
+
+    def serve(self):
+        try:
+            while not self.stopped.is_set():
+                try:
+                    connection, _ = self.listener.accept()
+                    break
+                except socket.timeout:
+                    continue
+            else:
+                return
+            with connection:
+                connection.settimeout(0.2)
+                pending = b""
+                registry_id = None
+                while not self.stopped.is_set():
+                    try:
+                        incoming = connection.recv(4096)
+                    except socket.timeout:
+                        continue
+                    if not incoming:
+                        return
+                    pending += incoming
+                    while len(pending) >= 8:
+                        object_id, header = struct.unpack_from("=II", pending)
+                        size, opcode = header >> 16, header & 0xFFFF
+                        if size < 8 or size % 4:
+                            raise ValueError("Invalid Wayland request size")
+                        if len(pending) < size:
+                            break
+                        payload, pending = pending[8:size], pending[size:]
+                        if object_id == 1 and opcode == 1:  # wl_display.get_registry
+                            registry_id, = struct.unpack("=I", payload)
+                            for name, interface in enumerate(self.globals, 1):
+                                version = 6 if interface == "wl_compositor" else 1
+                                announcement = struct.pack("=I", name) + self.string(interface) + struct.pack("=I", version)
+                                connection.sendall(self.message(registry_id, 0, announcement))
+                        elif object_id == 1 and opcode == 0:  # wl_display.sync
+                            callback, = struct.unpack("=I", payload)
+                            connection.sendall(self.message(callback, 0, struct.pack("=I", 0)))
+                            connection.sendall(self.message(1, 1, struct.pack("=I", callback)))  # delete_id
+                            self.sync_count += 1
+                        elif object_id == registry_id and opcode == 0:  # wl_registry.bind
+                            pass  # Missing layer-shell makes startup stop before any object requests.
+                        else:
+                            raise ValueError(f"Unexpected Wayland request: object={object_id}, opcode={opcode}")
+        except (ConnectionResetError, BrokenPipeError):
+            pass  # The client can close immediately after receiving the registry.
+        except Exception as error:
+            if not self.stopped.is_set():
+                self.errors.append(error)
+
+    def __enter__(self):
+        self.worker.start()
+        return self
+
+    def __exit__(self, exception_type, exception, traceback):
+        self.stopped.set()
+        self.worker.join(timeout=2)
+        self.listener.close()
+        if self.worker.is_alive():
+            raise AssertionError("Wayland registry stub did not stop")
+        if exception_type is None:
+            if self.errors:
+                raise AssertionError(f"Wayland registry stub failed: {self.errors}")
+            if self.sync_count == 0:
+                raise AssertionError("Sidera did not complete the registry roundtrip")
 
 
 class StartupTests(unittest.TestCase):
@@ -112,6 +211,30 @@ class StartupTests(unittest.TestCase):
     def test_auto_wayland_failure_does_not_silently_use_x11(self):
         result = self.launch(XDG_SESSION_TYPE="wayland", WAYLAND_DISPLAY="missing")
         self.assert_failure(result, "无法连接 Wayland")
+        self.assertNotIn("平台: x11", result.stdout)
+
+    def test_auto_missing_layer_shell_falls_back_to_x11(self):
+        with WaylandRegistryStub(self.root / "runtime/wayland-test"):
+            result = self.launch(SIDERA_BACKEND="auto", XDG_SESSION_TYPE="wayland", WAYLAND_DISPLAY="wayland-test")
+        self.assert_rendered(result)
+        self.assertIn("使用 X11/XWayland 兼容模式", result.stdout)
+
+    def test_explicit_wayland_missing_layer_shell_does_not_fall_back(self):
+        with WaylandRegistryStub(self.root / "runtime/wayland-test"):
+            result = self.launch(SIDERA_BACKEND="wayland", XDG_SESSION_TYPE="wayland", WAYLAND_DISPLAY="wayland-test")
+        self.assert_failure(result, "zwlr_layer_shell_v1")
+        self.assertNotIn("平台: x11", result.stdout)
+
+    def test_missing_layer_shell_without_x11_display_does_not_fall_back(self):
+        with WaylandRegistryStub(self.root / "runtime/wayland-test"):
+            result = self.launch(DISPLAY="", XDG_SESSION_TYPE="wayland", WAYLAND_DISPLAY="wayland-test")
+        self.assert_failure(result, "zwlr_layer_shell_v1")
+        self.assertNotIn("平台: x11", result.stdout)
+
+    def test_missing_compositor_does_not_fall_back(self):
+        with WaylandRegistryStub(self.root / "runtime/wayland-test", globals=("wl_shm",)):
+            result = self.launch(XDG_SESSION_TYPE="wayland", WAYLAND_DISPLAY="wayland-test")
+        self.assert_failure(result, "wl_compositor")
         self.assertNotIn("平台: x11", result.stdout)
 
     def test_invalid_backend_is_reported(self):

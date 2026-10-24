@@ -6,6 +6,7 @@ use ab_glyph::{Font, FontArc, OutlineCurve, PxScale, ScaleFont};
 use std::path::{Path, PathBuf};
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Shader, Transform};
 
+#[derive(Clone)]
 pub struct Fonts {
     pub list: Vec<FontArc>,
 }

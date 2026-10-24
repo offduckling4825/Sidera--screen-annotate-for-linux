@@ -14,6 +14,10 @@ pub const SB_BASE_W: f64 = 56.0;
 pub const SB_BASE_BTN: f64 = 34.0;
 pub const SB_BASE_ICON: f64 = 24.0;
 pub const SB_BASE_DOT: f64 = 19.0;
+pub const DEFAULT_SB_SCALE: f64 = 1.0;
+pub const DEFAULT_SIDEBAR_ALPHA: u8 = 80;
+pub const DEFAULT_LARGE_TOUCH_THRESHOLD: f64 = 64.0;
+pub const DEFAULT_LARGE_ERASE_SCALE10: i32 = 12;
 pub const MAX_UNDO: usize = 12;
 /// 撤回瓦片边长（像素）；内存与笔迹覆盖面积成正比，而非整张画布
 pub const UNDO_TILE: i32 = 128;
@@ -72,11 +76,12 @@ pub struct App {
     pub pen_popup_visible: bool,
     pub eraser_popup_visible: bool,
     pub more_menu_open: bool,
+    pub page_picker: Option<crate::page_picker::PagePicker>,
     pub settings_open: bool,
     pub popup_on_right: bool,
 
-    // 悬停高亮 / 弹窗淡入动画 / 设置里的确认与诊断
-    pub hover: Option<(crate::ui::Btn, bool)>,
+    // 触屏按下反馈 / 弹窗淡入动画 / 设置里的确认与诊断
+    pub press: Option<crate::ui::PressFeedback>,
     pub open_anim: i64,
     pub confirm_quit: bool,
     pub show_diag: bool,
@@ -85,11 +90,17 @@ pub struct App {
     // 白板
     pub whiteboard: bool,
     pub whiteboard_bg_index: i32,
+    pub saved_mode: i32, // 退出白板时恢复进入前的工具。
+    pub saved_drawing_tools: bool,
 
     // 侧边栏
+    pub launch: crate::launch::Launch,
     pub collapsed: bool,
+    pub drawing_tools: crate::toolbar::DrawingTools,
+    pub sidebar_drag: Option<crate::ui::SidebarDragFeedback>,
     pub sb_y: i32,
-    pub collapse_ts: i64,
+    pub sidebar_anim_start: Option<std::time::Instant>,
+    pub sidebar_anim_from: f32,
 
     // 颜色/粗细
     pub cur_color: usize,
@@ -114,12 +125,22 @@ pub struct App {
     pub wps_debug: bool,
     pub wps_connected: bool,
     pub wps_real_pos: i32,
+    pub wps_page_index: i32,
+    pub wps_page_total: i32,
+    pub wps_can_jump: bool,
+    pub wps_deck_epoch: i32,
+    pub wps_navigation_ready: bool,
+    pub presentation_action: crate::ui::PresentationAction,
+    pub presentation_transition: crate::toolbar::PresentationTransition,
+    pub touch_frame_contacts: usize,
 
     // 多页缓存
     pub slide_cache: BTreeMap<i32, Pixmap>,
     pub whiteboard_cache: BTreeMap<i32, Pixmap>,
     pub current_slide: i32,
+    // 两种模式各自记住上次页码；切换模式不会销毁另一份缓存。
     pub saved_slide: i32,
+    pub whiteboard_slide: i32,
     pub page_has_ink: bool,
     pub wb_limit_msg_until: i64,
 
@@ -157,6 +178,23 @@ pub struct App {
     pub log_cleared_until: i64,
 }
 
+pub fn valid_geometry(w: i32, h: i32, scale: f64) -> bool {
+    w > 0 && h > 0 && scale.is_finite() && (1.0..=4.0).contains(&scale)
+        && ((w as f64 * scale).round() * (h as f64 * scale).round()) <= 67_108_864.0
+}
+
+fn fit_pixmap(source: &Pixmap, w: u32, h: u32) -> Pixmap {
+    if (source.width(), source.height()) == (w, h) {
+        return clone_pixmap(source);
+    }
+    let mut target = Pixmap::new(w, h).expect("validated canvas geometry");
+    target.draw_pixmap(0, 0, source.as_ref(), &tiny_skia::PixmapPaint {
+        quality: tiny_skia::FilterQuality::Bilinear, ..Default::default()
+    }, tiny_skia::Transform::from_scale(w as f32 / source.width() as f32,
+                                        h as f32 / source.height() as f32), None);
+    target
+}
+
 pub fn whiteboard_bg(sel: i32) -> Color {
     let i = sel.clamp(0, WHITEBOARD_COLORS.len() as i32 - 1) as usize;
     let (r, g, b) = WHITEBOARD_COLORS[i];
@@ -170,18 +208,25 @@ impl App {
             pen_popup_visible: false,
             eraser_popup_visible: false,
             more_menu_open: false,
+            page_picker: None,
             settings_open: false,
             popup_on_right: false,
-            hover: None,
+            press: None,
             open_anim: 0,
             confirm_quit: false,
             show_diag: false,
             diag_text: String::new(),
             whiteboard: false,
             whiteboard_bg_index: 1,
+            saved_mode: 0,
+            launch: crate::launch::Launch::default(),
             collapsed: false,
-            sb_y: (screen_h - sb_height_of(1.0)) / 2,
-            collapse_ts: 0,
+            drawing_tools: crate::toolbar::DrawingTools::default(),
+            sidebar_drag: None,
+            saved_drawing_tools: false,
+            sb_y: ((screen_h - sb_height_of(DEFAULT_SB_SCALE)) / 2).max(0),
+            sidebar_anim_start: None,
+            sidebar_anim_from: 0.0,
             cur_color: 0,
             cur_pen: 1,
             cur_eraser: 1,
@@ -189,25 +234,34 @@ impl App {
             last_pt: (0, 0),
             stroke_start_ms: 0,
             last_pen_w: 0,
-            sb_scale: 1.0,
-            sidebar_alpha: 80,
+            sb_scale: DEFAULT_SB_SCALE,
+            sidebar_alpha: DEFAULT_SIDEBAR_ALPHA,
             hotkey_ok: false,
             wps_fullscreen: false,
             wps_debug: true,
             wps_connected: false,
             wps_real_pos: -1,
+            wps_page_index: -1,
+            wps_page_total: -1,
+            wps_can_jump: false,
+            wps_deck_epoch: -1,
+            wps_navigation_ready: false,
+            presentation_action: crate::ui::PresentationAction::Escape,
+            presentation_transition: crate::toolbar::PresentationTransition::default(),
+            touch_frame_contacts: 0,
             slide_cache: BTreeMap::new(),
             whiteboard_cache: BTreeMap::new(),
             current_slide: 1,
             saved_slide: 1,
+            whiteboard_slide: 1,
             page_has_ink: false,
             wb_limit_msg_until: 0,
             palm_erase_preview: Vec::new(),
             palm_erase_w: PALM_ERASE_WIDTH,
             right_click_cursor_on: true,
             erase_by_finger: false,
-            large_touch_threshold: 64.0,
-            large_erase_scale10: 12,
+            large_touch_threshold: DEFAULT_LARGE_TOUCH_THRESHOLD,
+            large_erase_scale10: DEFAULT_LARGE_ERASE_SCALE10,
             t_prev_pos: HashMap::new(),
             t_prev_role: HashMap::new(),
             t_prev_preview: Vec::new(),
@@ -232,20 +286,17 @@ impl App {
         ((self.screen_h as f64) * self.scale).round().max(1.0) as u32
     }
     fn rebuild_canvas(&mut self) {
-        self.canvas = Pixmap::new(self.canvas_w(), self.canvas_h()).unwrap();
-        self.canvas.fill(Color::TRANSPARENT);
+        self.canvas = fit_pixmap(&self.canvas, self.canvas_w(), self.canvas_h());
         self.stroke_pts.clear();
-        self.page_has_ink = false;
+        self.is_drawing = false;
+        self.reset_palm_gesture();
         self.clear_undo();
     }
     /// 设置设备缩放（改变时重建物理分辨率画布）
     pub fn set_scale(&mut self, s: f64) {
+        if !s.is_finite() { return; }
         let s = s.clamp(1.0, 4.0);
-        if (self.scale - s).abs() < 1e-3 {
-            return;
-        }
-        self.scale = s;
-        self.rebuild_canvas();
+        self.configure_geometry(self.screen_w, self.screen_h, s);
     }
 
     // ---- 侧边栏尺寸 ----
@@ -262,11 +313,63 @@ impl App {
         (SB_BASE_DOT * self.sb_scale) as i32
     }
     pub fn sb_height(&self) -> i32 {
-        // 22 + 11 个按钮 + 10 个间距(6)
-        22 + 11 * self.sb_btn() + 10 * 6
+        sb_compact_height_of(self.sb_scale) + self.drawing_tools_height()
+            - self.sb_page_h() - 6 + self.sidebar_page_space()
+    }
+    /// Keep the visible toolbar on screen without losing its preferred anchor.
+    /// Height changes (tools, page count, scale) share these bounds with dragging.
+    pub fn sidebar_y(&self, height: i32) -> i32 {
+        self.sb_y.clamp(0, (self.screen_h - height).max(0))
+    }
+    pub fn sidebar_page_visible(&self) -> bool {
+        self.whiteboard || (self.wps_debug && self.wps_connected
+            && (self.wps_page_index > 0 || self.wps_page_total > 0))
+    }
+    pub fn sidebar_page_space(&self) -> i32 {
+        if self.sidebar_page_visible() { self.sb_page_h() + 6 } else { 0 }
+    }
+    pub fn page_picker_context(&self) -> Option<(i32, i32, crate::page_picker::Source)> {
+        if self.whiteboard {
+            Some((self.current_slide, CACHE_BOARD, crate::page_picker::Source::Whiteboard))
+        } else if self.wps_debug && self.wps_connected && self.wps_can_jump
+            && self.wps_deck_epoch > 0 && self.wps_page_index > 0 && self.wps_page_total >= self.wps_page_index {
+            Some((self.wps_page_index, self.wps_page_total, crate::page_picker::Source::Wps(self.wps_deck_epoch)))
+        } else { None }
+    }
+    pub fn drawing_tools_height(&self) -> i32 {
+        (self.drawing_tools_full_height() as f32 * self.drawing_tools.fraction()).round() as i32
+    }
+    pub fn drawing_tools_full_height(&self) -> i32 {
+        3 * (self.sb_btn() + 6)
+    }
+    pub fn sb_page_h(&self) -> i32 {
+        page_counter_height(self.sb_scale)
     }
     pub fn collapsed_h(&self) -> i32 {
-        self.sb_btn() * 3 + 12
+        (64.0 * self.sb_scale).round().clamp(56.0, 72.0) as i32
+    }
+    pub fn collapsed_w(&self) -> i32 {
+        (24.0 * self.sb_scale).round().clamp(24.0, 30.0) as i32
+    }
+    pub fn sidebar_retract(&self) -> f32 {
+        let target = if self.collapsed { 1.0 } else { 0.0 };
+        let Some(start) = self.sidebar_anim_start else { return target };
+        let t = (start.elapsed().as_secs_f32() / 0.18).clamp(0.0, 1.0);
+        let eased = 1.0 - (1.0 - t).powi(3);
+        self.sidebar_anim_from + (target - self.sidebar_anim_from) * eased
+    }
+    pub fn set_sidebar_collapsed(&mut self, collapsed: bool) {
+        if self.collapsed == collapsed { return; }
+        self.sidebar_anim_from = self.sidebar_retract();
+        self.sidebar_anim_start = Some(std::time::Instant::now());
+        self.collapsed = collapsed;
+    }
+    pub fn finish_sidebar_animation(&mut self) -> bool {
+        if self.sidebar_anim_start.is_some_and(|start| start.elapsed().as_millis() >= 180) {
+            self.sidebar_anim_start = None;
+            return true;
+        }
+        false
     }
     pub fn sb_x_left(&self) -> i32 {
         4
@@ -382,6 +485,22 @@ impl App {
     }
 
     // ---- 画布 ----
+    pub fn request_drawing_tools_collapse(&mut self) {
+        if !self.whiteboard && self.mode == 0 {
+            self.drawing_tools.request_auto_collapse();
+        }
+    }
+
+    pub fn drawing_tools_can_auto_collapse(&mut self) -> bool {
+        if self.whiteboard || self.mode != 0 || self.is_drawing || !self.stroke_pts.is_empty() {
+            return false;
+        }
+        // Erasing/undo can leave the conservative ink flag set. Inspect actual
+        // alpha only at a requested transition, never on idle animation frames.
+        self.page_has_ink = self.canvas.pixels().iter().any(|pixel| pixel.alpha() != 0);
+        !self.page_has_ink
+    }
+
     pub fn clear_canvas(&mut self) {
         self.stroke_pts.clear();
         self.canvas.fill(Color::TRANSPARENT);
@@ -389,24 +508,32 @@ impl App {
         self.clear_undo();
     }
 
-    /// 屏幕尺寸变化或实际画布尺寸不匹配时，重建画布并重置相关状态。
+    /// 显示变化时按画面比例保留笔迹；物理像素撤回记录不能跨尺寸复用。
     pub fn resize_screen(&mut self, w: i32, h: i32) {
-        if w <= 0 || h <= 0 {
+        self.configure_geometry(w, h, self.scale);
+    }
+
+    pub fn configure_geometry(&mut self, w: i32, h: i32, scale: f64) {
+        if !valid_geometry(w, h, scale) {
             return;
         }
         // Wayland 首次 configure 可能与默认逻辑尺寸相同，但画布仍是 1×1 占位图。
         if self.screen_w == w
             && self.screen_h == h
+            && (self.scale - scale).abs() < 1e-3
             && self.canvas.width() == self.canvas_w()
             && self.canvas.height() == self.canvas_h()
         {
             return;
         }
+        let resized = self.screen_w != w || self.screen_h != h;
+        self.drawing_tools.settle();
+        self.scale = scale;
         self.screen_w = w;
         self.screen_h = h;
         self.rebuild_canvas();
         let sbh = if self.collapsed { self.collapsed_h() } else { self.sb_height() };
-        self.sb_y = ((h - sbh) / 2).clamp(0, (h - sbh).max(0));
+        if resized { self.sb_y = ((h - sbh) / 2).clamp(0, (h - sbh).max(0)); }
     }
 
     // ---- 当前生效缓存 ----
@@ -414,7 +541,7 @@ impl App {
         if self.whiteboard {
             return false;
         }
-        self.wps_fullscreen || (self.wps_debug && self.wps_connected)
+        self.wps_fullscreen || (self.wps_debug && self.wps_connected && self.wps_real_pos > 0)
     }
     pub fn cache_capacity(&self) -> i32 {
         if self.whiteboard {
@@ -428,6 +555,12 @@ impl App {
 
     pub fn save_current_page(&mut self) {
         if !self.page_has_ink {
+            // 清空后的空白页也要覆盖旧快照，否则重开/翻回该页会复活旧笔迹。
+            if self.whiteboard {
+                self.whiteboard_cache.remove(&self.current_slide);
+            } else {
+                self.slide_cache.remove(&self.current_slide);
+            }
             crate::wps::wps_log(&format!("[PAGE] save 跳过 page={} (无笔迹)", self.current_slide));
             return;
         }
@@ -475,26 +608,26 @@ impl App {
             self.slide_cache.get(&page)
         };
         if let Some(c) = cached {
-            let mut snap = Pixmap::new(c.width(), c.height()).expect("pixmap");
-            snap.data_mut().copy_from_slice(c.data());
-            self.canvas = snap;
+            // 缓存保留原始分辨率；恢复时适配当前输出，不能把旧尺寸当作新画布。
+            self.canvas = fit_pixmap(c, self.canvas_w(), self.canvas_h());
             self.page_has_ink = true;
         } else {
             self.page_has_ink = false;
         }
         self.clear_undo();
+        self.request_drawing_tools_collapse();
     }
 
-    pub fn clear_all_pages(&mut self) {
-        crate::wps::wps_log("[PAGE] clear_all_pages");
-        self.stroke_pts.clear();
+    /// 放映开始/结束或全屏状态变化只重置透明批注，不影响独立白板。
+    pub fn clear_slide_pages(&mut self) {
+        crate::wps::wps_log("[PAGE] clear_slide_pages");
         self.slide_cache.clear();
-        self.whiteboard_cache.clear();
+        self.saved_slide = 1;
+        if self.whiteboard { return; }
         self.current_slide = 1;
-        self.page_has_ink = false;
         self.is_drawing = false;
-        self.canvas.fill(Color::TRANSPARENT);
-        self.clear_undo();
+        self.clear_canvas();
+        self.request_drawing_tools_collapse();
     }
 
     pub fn clear_current_strokes(&mut self) {
@@ -510,28 +643,41 @@ impl App {
     }
 
     pub fn toggle_whiteboard(&mut self) {
+        if self.is_drawing { crate::paint::commit_stroke(self); }
+        self.is_drawing = false;
         self.stroke_pts.clear();
+        self.reset_palm_gesture();
+        self.save_current_page();
         if !self.whiteboard {
-            self.save_current_page();
             self.saved_slide = self.current_slide;
-            self.whiteboard_cache.clear();
+            self.saved_mode = self.mode;
+            self.saved_drawing_tools = self.drawing_tools.expanded();
             self.whiteboard = true;
-            self.current_slide = 1;
-            self.canvas.fill(Color::TRANSPARENT);
-            self.page_has_ink = false;
+            self.mode = 1;
+            self.drawing_tools.set_expanded(true);
+            self.current_slide = self.whiteboard_slide;
         } else {
-            self.whiteboard_cache.clear();
+            self.whiteboard_slide = self.current_slide;
             self.whiteboard = false;
+            self.mode = self.saved_mode;
+            self.drawing_tools.set_expanded(self.saved_drawing_tools);
             self.current_slide = self.saved_slide;
-            self.canvas.fill(Color::TRANSPARENT);
-            self.load_page(self.current_slide);
         }
-        self.clear_undo();
+        self.wb_limit_msg_until = 0;
+        self.load_page(self.current_slide);
     }
 }
 
 pub fn sb_height_of(scale: f64) -> i32 {
-    22 + 11 * (SB_BASE_BTN * scale) as i32 + 60
+    22 + 11 * (SB_BASE_BTN * scale) as i32 + 60 + page_counter_height(scale) + 6
+}
+
+fn sb_compact_height_of(scale: f64) -> i32 {
+    sb_height_of(scale) - 3 * ((SB_BASE_BTN * scale) as i32 + 6)
+}
+
+fn page_counter_height(scale: f64) -> i32 {
+    (28.0 * scale).round().clamp(24.0, 36.0) as i32
 }
 
 // ---------------- 配置持久化 ~/.config/sidera/config ----------------
@@ -676,6 +822,132 @@ mod canvas_tests {
 }
 
 #[cfg(test)]
+mod whiteboard_tests {
+    use super::*;
+
+    fn app_with_ink() -> App {
+        let mut app = App::new(Pixmap::new(100, 80).unwrap(), 100, 80);
+        app.current_slide = 7;
+        draw(&mut app, 20);
+        app
+    }
+
+    fn draw(app: &mut App, y: i32) {
+        app.begin_undo();
+        crate::paint::stroke_tapered(app, (20, y), (80, y), 6, 6);
+    }
+
+    #[test]
+    fn reopening_restores_last_whiteboard_page_without_mixing_overlay_ink() {
+        let mut app = app_with_ink();
+        let overlay = app.canvas.data().to_vec();
+        app.toggle_whiteboard();
+        assert_eq!(app.current_slide, 1);
+        assert!(!app.page_has_ink);
+        draw(&mut app, 40);
+        let first = app.canvas.data().to_vec();
+        app.save_current_page();
+        app.current_slide = 2;
+        app.load_page(2);
+        app.cur_color = 1;
+        draw(&mut app, 60);
+        let second = app.canvas.data().to_vec();
+        app.whiteboard_bg_index = 0;
+
+        for _ in 0..3 {
+            app.toggle_whiteboard();
+            assert!(!app.whiteboard);
+            assert_eq!(app.current_slide, 7);
+            assert_eq!(app.canvas.data(), overlay.as_slice());
+            app.toggle_whiteboard();
+            assert!(app.whiteboard);
+            assert_eq!(app.current_slide, 2);
+            assert_eq!(app.canvas.data(), second.as_slice());
+            assert_eq!(app.whiteboard_bg_index, 0);
+            assert_eq!(app.whiteboard_cache[&1].data(), first.as_slice());
+        }
+        draw(&mut app, 30);
+        let edited = app.canvas.data().to_vec();
+        assert_ne!(edited, second);
+        app.toggle_whiteboard();
+        app.toggle_whiteboard();
+        assert_eq!(app.canvas.data(), edited.as_slice());
+    }
+
+    #[test]
+    fn cleared_whiteboard_page_stays_blank_and_other_pages_survive() {
+        for clear in [App::clear_canvas, App::clear_current_strokes] {
+            let mut app = app_with_ink();
+            app.toggle_whiteboard();
+            draw(&mut app, 30);
+            let first = app.canvas.data().to_vec();
+            app.save_current_page();
+            app.current_slide = 2;
+            app.load_page(2);
+            draw(&mut app, 50);
+            app.toggle_whiteboard();
+            app.toggle_whiteboard(); // Page 2 now has an older cached snapshot.
+            clear(&mut app);
+            app.toggle_whiteboard();
+            app.toggle_whiteboard();
+            assert_eq!(app.current_slide, 2);
+            assert!(!app.page_has_ink);
+            assert!(app.canvas.data().iter().all(|&b| b == 0));
+            assert!(!app.whiteboard_cache.contains_key(&2));
+            app.current_slide = 1;
+            app.load_page(1);
+            assert_eq!(app.canvas.data(), first.as_slice());
+        }
+    }
+
+    #[test]
+    fn slide_reset_preserves_visible_and_hidden_whiteboard() {
+        for visible in [true, false] {
+            let mut app = app_with_ink();
+            app.toggle_whiteboard();
+            app.current_slide = 3;
+            draw(&mut app, 40);
+            let board = app.canvas.data().to_vec();
+            if !visible { app.toggle_whiteboard(); }
+            app.clear_slide_pages();
+            assert!(app.slide_cache.is_empty());
+            if visible {
+                assert_eq!(app.current_slide, 3);
+                assert_eq!(app.canvas.data(), board.as_slice());
+                assert_eq!(app.undo.len(), 1);
+                app.toggle_whiteboard();
+            }
+            assert_eq!(app.current_slide, 1);
+            assert!(!app.page_has_ink);
+            assert!(app.canvas.data().iter().all(|&b| b == 0));
+            app.toggle_whiteboard();
+            assert_eq!(app.current_slide, 3);
+            assert_eq!(app.canvas.data(), board.as_slice());
+        }
+    }
+
+    #[test]
+    fn blank_last_page_and_pending_stroke_survive_mode_switch() {
+        let mut app = app_with_ink();
+        app.toggle_whiteboard();
+        app.current_slide = 3;
+        app.toggle_whiteboard();
+        app.toggle_whiteboard();
+        assert_eq!(app.current_slide, 3);
+        assert!(!app.page_has_ink);
+        app.is_drawing = true;
+        app.stroke_pts = vec![(20.0, 40.0, 6.0), (80.0, 40.0, 6.0)];
+        app.toggle_whiteboard();
+        assert!(!app.is_drawing);
+        assert!(app.stroke_pts.is_empty());
+        app.toggle_whiteboard();
+        assert_eq!(app.current_slide, 3);
+        assert!(app.page_has_ink);
+        assert!(app.canvas.pixel(50, 40).unwrap().alpha() > 0);
+    }
+}
+
+#[cfg(test)]
 mod undo_tests {
     use super::*;
     use tiny_skia::Color;
@@ -700,5 +972,38 @@ mod undo_tests {
         };
         assert_eq!(px(10, 10), (255, 0, 0, 255), "已保存瓦片应恢复为红");
         assert_eq!(px(280, 280), (0, 0, 255, 255), "未保存瓦片区域应保持蓝");
+    }
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::*;
+
+    #[test]
+    fn resize_and_scale_preserve_ink_and_restore_cached_dimensions() {
+        let mut canvas = Pixmap::new(20, 10).unwrap();
+        canvas.fill(Color::from_rgba8(160, 20, 30, 255));
+        let mut app = App::new(canvas, 20, 10);
+        app.page_has_ink = true;
+        app.slide_cache.insert(7, app.canvas.clone());
+        app.configure_geometry(30, 20, 1.5);
+        assert_eq!((app.canvas.width(), app.canvas.height()), (45, 30));
+        assert!(app.page_has_ink);
+        assert!(app.canvas.pixels().iter().all(|p| p.alpha() == 255));
+        app.clear_canvas();
+        app.load_page(7);
+        assert_eq!((app.canvas.width(), app.canvas.height()), (45, 30));
+        assert!(app.canvas.pixels().iter().all(|p| p.red() == 160));
+        assert_eq!((app.slide_cache[&7].width(), app.slide_cache[&7].height()), (20, 10));
+    }
+
+    #[test]
+    fn invalid_geometry_keeps_existing_canvas() {
+        let mut app = App::new(Pixmap::new(20, 10).unwrap(), 20, 10);
+        for geometry in [(0, 5, 1.0), (20, 10, f64::NAN), (i32::MAX, i32::MAX, 4.0)] {
+            app.configure_geometry(geometry.0, geometry.1, geometry.2);
+            assert_eq!((app.screen_w, app.screen_h, app.scale), (20, 10, 1.0));
+            assert_eq!((app.canvas.width(), app.canvas.height()), (20, 10));
+        }
     }
 }

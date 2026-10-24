@@ -49,6 +49,7 @@ class BuildDebTests(unittest.TestCase):
         for name in ("sidera.svg", "sidera.png", "README.classroom.md", "LICENSE"):
             shutil.copyfile(REPO / name, repo / name)
         shutil.copytree(REPO / "wps-addin", repo / "wps-addin")
+        shutil.copytree(REPO / "compat/gnome-extension", repo / "compat/gnome-extension")
         return repo
 
     def place_binary(self, repo, relative_path, contents):

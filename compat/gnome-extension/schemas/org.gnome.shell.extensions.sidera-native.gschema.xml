@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.sidera-native" path="/org/gnome/shell/extensions/sidera-native/">
+    <key name="toggle-annotation" type="as">
+      <default>['&lt;Control&gt;&lt;Shift&gt;d']</default>
+      <summary>切换画笔与光标</summary>
+    </key>
+    <key name="release-input" type="as">
+      <default>['&lt;Control&gt;&lt;Shift&gt;Escape']</default>
+      <summary>紧急关闭批注覆盖层并恢复桌面输入</summary>
+    </key>
+  </schema>
+</schemalist>

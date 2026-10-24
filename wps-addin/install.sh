@@ -1,6 +1,6 @@
 #!/bin/bash
 # 只合并本项目的 WPS 加载项登记，保留其他加载项
-# 前提：批注 app 已带“WPS 接口调试模式”运行（内容由 app 的 16666 服务提供）
+# 前提：批注 app 已开启“WPS 联动”（内容由 app 的 16666 服务提供）
 set -e
 if ! command -v python3 >/dev/null 2>&1; then
   echo "错误：登记 WPS 加载项需要 python3，请先安装。" >&2
@@ -104,5 +104,5 @@ except (OSError, ValueError, ExpatError) as error:
     print(f"错误：WPS 加载项登记失败，原文件未替换：{error}", file=sys.stderr)
     sys.exit(1)
 PY
-echo "提示：请先启动“Sidera”并开启 设置→WPS接口调试，再重新打开 WPS 演示。"
+echo "提示：请先启动“Sidera”并开启 设置→WPS联动，再重新打开 WPS 演示。"
 echo "      放映时加载项会把真实页号回传，批注缓存随真实换页切换。"

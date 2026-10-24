@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Sidera（GNOME 原生）
+Comment=先退出其他模式的 Sidera，再打开原生 GNOME 批注
+Exec=env SIDERA_BACKEND=gnome sidera
+Icon=/usr/share/pixmaps/sidera.svg
+Categories=Graphics;Utility;
+OnlyShowIn=GNOME;
+Terminal=false

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Wayland 测试桌面
+Comment=打开独立 Sway 窗口测试 Sidera 原生 Wayland 和 XWayland
+Exec=/usr/local/bin/sidera-wayland-lab
+Icon=sidera
+Terminal=false
+Categories=Development;

@@ -4,13 +4,14 @@
 pub enum DisplayBackend {
     X11,
     Wayland,
+    Gnome,
 }
 
 pub fn detect_backend() -> Result<DisplayBackend, String> {
     let backend = match std::env::var("SIDERA_BACKEND") {
         Ok(value) => Some(value),
         Err(std::env::VarError::NotPresent) => None,
-        Err(_) => return Err("SIDERA_BACKEND 必须是 auto、x11 或 wayland".into()),
+        Err(_) => return Err("SIDERA_BACKEND 必须是 auto、x11、wayland 或 gnome".into()),
     };
     select_backend(
         backend.as_deref(),
@@ -18,6 +19,23 @@ pub fn detect_backend() -> Result<DisplayBackend, String> {
         std::env::var("WAYLAND_DISPLAY").ok().as_deref(),
         std::env::var("WAYLAND_SOCKET").ok().as_deref(),
     )
+}
+
+/// Only auto mode may use XWayland when the compositor lacks layer-shell.
+/// Connection errors and explicit Wayland requests must remain errors.
+pub fn allow_x11_fallback() -> bool {
+    matches!(std::env::var("SIDERA_BACKEND").unwrap_or_default().trim().to_ascii_lowercase().as_str(), "" | "auto")
+        && std::env::var("DISPLAY").is_ok_and(|value| !value.trim().is_empty())
+}
+
+/// Xwayland 24.1.10 can crash the entire desktop when mapping an ARGB window.
+/// Check the connected server, not a package installed on the client machine.
+pub fn validate_x11_server(is_xwayland: bool, release: u32, vendor: &[u8]) -> Result<(), String> {
+    const FIXED_VENDOR: &[u8] = b"The X.Org Foundation (Sidera damage-report fix)";
+    if is_xwayland && release == 12_401_010 && vendor != FIXED_VENDOR {
+        return Err("检测到 Xwayland 24.1.10：此版本存在映射透明窗口时导致桌面退出的已知错误。请更新到包含 damage_report 修复的版本（上游 24.1.11 或更高），或使用已验证的本地修复包。Sidera 已在创建窗口前停止。".into());
+    }
+    Ok(())
 }
 
 fn select_backend(
@@ -29,8 +47,9 @@ fn select_backend(
     match requested.unwrap_or("auto").trim().to_ascii_lowercase().as_str() {
         "x11" => return Ok(DisplayBackend::X11),
         "wayland" => return Ok(DisplayBackend::Wayland),
+        "gnome" => return Ok(DisplayBackend::Gnome),
         "" | "auto" => (),
-        _ => return Err("SIDERA_BACKEND 必须是 auto、x11 或 wayland".into()),
+        _ => return Err("SIDERA_BACKEND 必须是 auto、x11、wayland 或 gnome".into()),
     }
     match session.unwrap_or_default().trim().to_ascii_lowercase().as_str() {
         "x11" => return Ok(DisplayBackend::X11),
@@ -96,6 +115,23 @@ mod tests {
     use super::{select_backend, DisplayBackend::*};
 
     #[test]
+    fn unsafe_xwayland_is_rejected_before_window_creation() {
+        assert!(super::validate_x11_server(true, 12_401_010, b"The X.Org Foundation").is_err());
+    }
+
+    #[test]
+    fn fixed_xwayland_and_native_x11_remain_available() {
+        for (wayland, version, vendor) in [
+            (true, 12_401_011, &b"The X.Org Foundation"[..]),
+            (true, 12_401_009, &b"The X.Org Foundation"[..]),
+            (false, 12_401_010, &b"The X.Org Foundation"[..]),
+            (true, 12_401_010, &b"The X.Org Foundation (Sidera damage-report fix)"[..]),
+        ] {
+            assert!(super::validate_x11_server(wayland, version, vendor).is_ok());
+        }
+    }
+
+    #[test]
     fn native_x11_session_wins_over_inherited_wayland_variables() {
         assert_eq!(select_backend(None, Some("x11"), Some("wayland-0"), Some("9")), Ok(X11));
     }
@@ -122,6 +158,7 @@ mod tests {
     fn explicit_backend_overrides_session_without_rewriting_environment() {
         assert_eq!(select_backend(Some("x11"), Some("wayland"), Some("wayland-0"), None), Ok(X11));
         assert_eq!(select_backend(Some("wayland"), Some("x11"), None, None), Ok(Wayland));
+        assert_eq!(select_backend(Some("gnome"), Some("wayland"), None, None), Ok(Gnome));
     }
 
     #[test]

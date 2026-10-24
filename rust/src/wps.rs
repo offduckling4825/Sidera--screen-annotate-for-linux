@@ -22,8 +22,15 @@ pub struct WpsShared {
     pub connected: bool,
     pub last_seen: i64,
     pub real_pos: i32,
+    pub page_index: i32,
+    pub page_total: i32,
+    pub can_jump: bool,
+    pub deck_epoch: i32,
+    pub can_start: bool,
+    pub start_pending_until: i64,
     pub whiteboard: bool,
-    pub queue: VecDeque<String>,
+    pub queue: VecDeque<(i64, String)>,
+    pub command_failed_until: i64,
     pub events: Vec<WpsEvent>,
 }
 
@@ -33,8 +40,15 @@ impl Default for WpsShared {
             connected: false,
             last_seen: 0,
             real_pos: -1,
+            page_index: -1,
+            page_total: -1,
+            can_jump: false,
+            deck_epoch: -1,
+            can_start: false,
+            start_pending_until: 0,
             whiteboard: false,
             queue: VecDeque::new(),
+            command_failed_until: 0,
             events: Vec::new(),
         }
     }
@@ -104,44 +118,15 @@ fn addin_dir() -> Option<std::path::PathBuf> {
 }
 
 pub fn ensure_addin_registered() {
-    let Some(home) = dirs::home_dir() else { return };
-    let path = home.join(".local/share/Kingsoft/wps/jsaddons/publish.xml");
-    let entry = "  <jspluginonline name=\"sidera-bridge\" type=\"wpp\" url=\"http://127.0.0.1:16666/\" debug=\"\" enable=\"enable\" install=\"null\"/>\n";
-    let content = std::fs::read_to_string(&path).unwrap_or_default();
-
-    // 去掉旧的 screen-annotate-bridge 条目（它常是 enable_dev，WPS 正常模式不加载）
-    let mut working = content.clone();
-    if working.contains("screen-annotate-bridge") {
-        working = working
-            .lines()
-            .filter(|l| !l.contains("screen-annotate-bridge"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if !working.ends_with('\n') {
-            working.push('\n');
+    // 与手动安装复用同一条安全合并路径：修复 enable_dev，保留其他加载项，
+    // 备份后原子替换；遇到损坏的 XML 不覆盖原文件。
+    let Some(dir) = addin_dir() else { return };
+    match std::process::Command::new("bash").arg(dir.join("install.sh")).output() {
+        Ok(output) if output.status.success() => {
+            wps_log(String::from_utf8_lossy(&output.stdout).trim());
         }
-    }
-
-    let has_sidera = working.contains("sidera-bridge");
-    let new = if has_sidera {
-        working
-    } else if working.contains("<jsplugins>") && working.contains("</jsplugins>") {
-        working.replace("</jsplugins>", &format!("{}</jsplugins>", entry))
-    } else {
-        format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<jsplugins>\n{}</jsplugins>\n",
-            entry
-        )
-    };
-
-    if new == content {
-        return;
-    }
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if std::fs::write(&path, new).is_ok() {
-        wps_log(&format!("已自动登记/规范化加载项 → {}", path.display()));
+        Ok(output) => wps_log(&format!("加载项登记失败：{}", String::from_utf8_lossy(&output.stderr).trim())),
+        Err(error) => wps_log(&format!("无法运行加载项登记：{}", error)),
     }
 }
 
@@ -238,29 +223,59 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
     if line.is_empty() {
         return;
     }
-    wps_log(&format!("收 << {}", line));
+    if line.starts_with("COMMAND_FAILED ") {
+        let mut s = shared.lock().unwrap();
+        s.command_failed_until = now_ms() + 3000;
+        s.start_pending_until = 0;
+        s.queue.clear();
+        wps_log(line);
+        return;
+    }
+    if line.starts_with("COMMAND_OK ") {
+        wps_log(line);
+        return;
+    }
     if !line.starts_with("EVENT ") {
         return;
     }
     let pos = extract_num(line, "pos=");
-    let click = extract_num(line, "click=");
     let name = line.split_whitespace().nth(1).unwrap_or("");
-    wps_log(&format!("事件 {} pos={} click={}", name, pos, click));
     let mut s = shared.lock().unwrap();
-    if name == "SlideShowBegin" {
-        let p = if pos > 0 { pos } else { 1 };
-        s.real_pos = p;
-        s.events.push(WpsEvent::SlideshowBegin(p));
-        return;
+    if name == "SlideShowState" {
+        // Old add-ins do not send ready=; they must never advertise Start.
+        s.can_start = pos < 1 && extract_num(line, "ready=") == 1;
+        // Missing fields (including older add-ins) clear stale document data.
+        let page = extract_num(line, "page=");
+        let total = extract_num(line, "total=");
+        s.page_total = if total > 0 { total } else { -1 };
+        s.page_index = if page > 0 && (total < 1 || page <= total) { page } else { -1 };
+        s.deck_epoch = extract_num(line, "deck=");
+        s.can_jump = extract_num(line, "jump=") == 1 && s.deck_epoch > 0 && page > 0 && total >= page;
+        let (can_jump, epoch) = (s.can_jump, s.deck_epoch);
+        s.queue.retain(|(_, cmd)| !cmd.starts_with("GOTO ") || (can_jump && jump_command(cmd).is_some_and(|(_, id)| id == epoch)));
     }
-    if name == "SlideShowEnd" {
+    if name == "SlideShowEnd" || (name == "SlideShowState" && pos < 1) {
+        if s.real_pos > 0 {
+            s.events.push(WpsEvent::SlideshowEnd);
+            wps_log("放映结束");
+        }
         s.real_pos = -1;
-        s.events.push(WpsEvent::SlideshowEnd);
+        if name == "SlideShowEnd" { s.can_start = false; s.start_pending_until = 0; s.can_jump = false; }
+        let (can_start, can_jump) = (s.can_start, s.can_jump);
+        s.queue.retain(|(_, cmd)| (can_start && cmd == "START") || (can_jump && cmd.starts_with("GOTO ")));
         return;
     }
     if pos > 0 && pos != s.real_pos {
+        s.can_start = false;
+        s.start_pending_until = 0;
+        s.queue.retain(|(_, cmd)| cmd != "START");
+        if s.real_pos < 1 {
+            s.events.push(WpsEvent::SlideshowBegin(pos));
+        } else {
+            s.events.push(WpsEvent::RealPos(pos));
+        }
         s.real_pos = pos;
-        s.events.push(WpsEvent::RealPos(pos));
+        wps_log(&format!("事件 {} pos={}", name, pos));
     }
 }
 
@@ -271,6 +286,14 @@ fn extract_num(s: &str, key: &str) -> i32 {
         return digits.parse().unwrap_or(-1);
     }
     -1
+}
+
+fn jump_command(cmd: &str) -> Option<(i32, i32)> {
+    let mut words = cmd.split_whitespace();
+    if words.next()? != "GOTO" { return None; }
+    let page: i32 = words.next()?.parse().ok()?;
+    let epoch: i32 = words.next()?.parse().ok()?;
+    (page > 0 && epoch > 0 && words.next().is_none()).then_some((page, epoch))
 }
 
 fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>) {
@@ -294,19 +317,6 @@ fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>) {
     };
     let m = query_m(query);
 
-    {
-        let mut s = shared.lock().unwrap();
-        s.last_seen = now_ms();
-        let newly = !s.connected;
-        if newly {
-            s.connected = true;
-        }
-        drop(s);
-        if newly {
-            wps_log("客户端接入");
-        }
-    }
-
     if method == "OPTIONS" {
         reply(stream, b"");
         return;
@@ -323,9 +333,28 @@ fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>) {
             reply(stream, b"OK");
         }
         "/poll" => {
+            // 只有带实际放映状态的轮询才算联动就绪。加载静态文件、
+            // 启动探针或浏览器预检不能把按钮错误地显示为可用。
+            let Some(state) = m.filter(|m| m.starts_with("EVENT SlideShowState pos=")) else {
+                reply(stream, b"");
+                return;
+            };
+            handle_line(shared, &state);
             let cmd = {
                 let mut s = shared.lock().unwrap();
-                s.queue.pop_front()
+                if !s.connected { wps_log("WPS 加载项已就绪"); }
+                s.connected = true;
+                s.last_seen = now_ms();
+                s.queue.retain(|(created, _)| now_ms() - created <= 1500);
+                let playing = s.real_pos > 0;
+                let can_start = s.can_start;
+                let (can_jump, epoch, total) = (s.can_jump, s.deck_epoch, s.page_total);
+                if s.whiteboard { s.queue.clear(); }
+                else { s.queue.retain(|(_, cmd)| {
+                    if let Some((page, id)) = jump_command(cmd) { can_jump && epoch == id && page <= total }
+                    else if cmd == "START" { can_start && !playing } else { playing }
+                }); }
+                s.queue.pop_front().map(|(_, cmd)| cmd)
             };
             if let Some(c) = &cmd {
                 wps_log(&format!("加载项取走 {}", c));
@@ -339,6 +368,17 @@ fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>) {
 impl WpsBridge {
     pub fn start() -> Option<WpsBridge> {
         let listener = TcpListener::bind(("127.0.0.1", 16666)).ok()?;
+        let bridge = Self::from_listener(listener);
+        wps_log("WPS 桥已启动，监听 127.0.0.1:16666");
+        match addin_dir() {
+            Some(d) => wps_log(&format!("加载项目录: {}", d.display())),
+            None => wps_log("警告: 未找到 wps-addin 目录（请设置 WPS_ADDIN_DIR）"),
+        }
+        ensure_addin_registered();
+        Some(bridge)
+    }
+
+    pub(crate) fn from_listener(listener: TcpListener) -> WpsBridge {
         let _ = listener.set_nonblocking(true);
         let shared = Arc::new(Mutex::new(WpsShared::default()));
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -361,30 +401,98 @@ impl WpsBridge {
             }
             // listener 随线程结束被 drop，端口在此释放
         });
-        wps_log("WPS 桥已启动，监听 127.0.0.1:16666");
-        match addin_dir() {
-            Some(d) => wps_log(&format!("加载项目录: {}", d.display())),
-            None => wps_log("警告: 未找到 wps-addin 目录，静态分发将返回空（请设置 WPS_ADDIN_DIR）"),
-        }
-        ensure_addin_registered();
-        Some(WpsBridge {
+        WpsBridge {
             shared,
             shutdown,
             handle: Some(handle),
-        })
+        }
     }
 
     pub fn connected(&self) -> bool {
-        self.shared.lock().unwrap().connected
+        let s = self.shared.lock().unwrap();
+        s.connected && now_ms() - s.last_seen <= 3000
     }
 
-    pub fn enqueue(&self, cmd: &str) {
-        self.shared.lock().unwrap().queue.push_back(cmd.to_string());
+    pub fn ready(&self) -> bool {
+        let s = self.shared.lock().unwrap();
+        s.connected && now_ms() - s.last_seen <= 3000 && s.real_pos > 0
+            && !s.whiteboard && now_ms() >= s.command_failed_until
+    }
+
+    pub fn showing(&self) -> bool {
+        self.position().is_some()
+    }
+
+    pub fn position(&self) -> Option<i32> {
+        let s = self.shared.lock().unwrap();
+        (s.connected && now_ms() - s.last_seen <= 3000 && s.real_pos > 0 && !s.whiteboard).then_some(s.real_pos)
+    }
+
+    pub fn start_available(&self) -> bool {
+        let s = self.shared.lock().unwrap();
+        s.connected && now_ms() - s.last_seen <= 3000 && s.can_start && s.real_pos < 1 && !s.whiteboard
+    }
+
+    pub fn page_progress(&self) -> (i32, i32) {
+        let s = self.shared.lock().unwrap();
+        if s.connected && now_ms() - s.last_seen <= 3000 && !s.whiteboard {
+            (s.page_index, s.page_total)
+        } else {
+            (-1, -1)
+        }
+    }
+
+    pub fn enqueue(&self, cmd: &str) -> bool {
+        let mut s = self.shared.lock().unwrap();
+        let start = cmd == "START";
+        if !matches!(cmd, "START" | "NEXT" | "PREV" | "EXIT") || !s.connected
+            || now_ms() - s.last_seen > 3000 || s.whiteboard
+            || (start && (!s.can_start || s.real_pos > 0 || now_ms() < s.start_pending_until))
+            || (!start && s.real_pos < 1)
+            || now_ms() < s.command_failed_until {
+            return false;
+        }
+        s.queue.retain(|(created, _)| now_ms() - created <= 1500);
+        if s.queue.len() >= 8 { return false; }
+        s.queue.push_back((now_ms(), cmd.to_string()));
+        if start { s.start_pending_until = now_ms() + 3000; }
         wps_log(&format!("入队指令 {}", cmd));
+        true
+    }
+
+    pub fn jump_epoch(&self) -> Option<i32> {
+        let s = self.shared.lock().unwrap();
+        (s.connected && now_ms() - s.last_seen <= 3000 && !s.whiteboard && s.can_jump
+            && now_ms() >= s.command_failed_until).then_some(s.deck_epoch)
+    }
+
+    pub fn enqueue_jump(&self, page: i32, epoch: i32) -> bool {
+        let mut s = self.shared.lock().unwrap();
+        if !s.connected || now_ms() - s.last_seen > 3000 || s.whiteboard || !s.can_jump
+            || epoch != s.deck_epoch || page < 1 || page > s.page_total || now_ms() < s.command_failed_until {
+            return false;
+        }
+        // Keep only the newest absolute destination; do not replay a trail of
+        // intermediate selections after a slow or temporarily blocked poll.
+        s.queue.retain(|(created, cmd)| now_ms() - created <= 1500 && !cmd.starts_with("GOTO "));
+        if s.queue.len() >= 8 { return false; }
+        s.queue.push_back((now_ms(), format!("GOTO {page} {epoch}")));
+        true
     }
 
     pub fn set_whiteboard(&self, on: bool) {
-        self.shared.lock().unwrap().whiteboard = on;
+        let mut s = self.shared.lock().unwrap();
+        if s.whiteboard != on {
+            s.whiteboard = on;
+            s.page_index = -1;
+            s.page_total = -1;
+            s.can_start = false;
+            s.start_pending_until = 0;
+            s.queue.clear();
+            s.events.clear();
+            s.can_jump = false;
+            s.deck_epoch = -1;
+        }
     }
 
     pub fn take_events(&self) -> Vec<WpsEvent> {
@@ -397,7 +505,11 @@ impl WpsBridge {
         let mut s = self.shared.lock().unwrap();
         if s.connected && now_ms() - s.last_seen > 3000 {
             s.connected = false;
-            // 不再清 real_pos（避免重连把同页误判为换页）
+            s.can_jump = false;
+            s.can_start = false;
+            s.start_pending_until = 0;
+            s.queue.clear();
+            // 保留已知页号，短暂断线后重连同一页不清除已有墨迹。
             drop(s);
             wps_log("客户端离线（3s 无请求）");
             return true;
@@ -409,6 +521,28 @@ impl WpsBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn absolute_jump_requires_fresh_capability_and_replaces_stale_destinations() {
+        let bridge = WpsBridge::from_listener(TcpListener::bind(("127.0.0.1", 0)).unwrap());
+        {
+            let mut s = bridge.shared.lock().unwrap();
+            s.connected = true; s.last_seen = now_ms();
+        }
+        handle_line(&bridge.shared, "EVENT SlideShowState pos=-1 page=3 total=20 jump=1 deck=90");
+        assert!(bridge.enqueue_jump(8, 90));
+        assert!(bridge.enqueue_jump(12, 90));
+        assert!(!bridge.enqueue_jump(21, 90));
+        assert!(!bridge.enqueue_jump(5, 89));
+        assert_eq!(bridge.shared.lock().unwrap().queue.len(), 1);
+        assert_eq!(bridge.shared.lock().unwrap().queue[0].1, "GOTO 12 90");
+        handle_line(&bridge.shared, "EVENT SlideShowState pos=-1 page=3 total=20 jump=1 deck=91");
+        assert!(bridge.shared.lock().unwrap().queue.is_empty());
+        assert!(!bridge.enqueue_jump(5, 90));
+        handle_line(&bridge.shared, "EVENT SlideShowState pos=3 page=3 total=20");
+        assert_eq!(bridge.jump_epoch(), None, "older add-ins cannot advertise an unsupported command");
+        assert!(!bridge.enqueue_jump(5, 91));
+    }
     use std::io::{Read, Write};
 
     fn request(port: u16, req: &str) -> String {
@@ -423,35 +557,26 @@ mod tests {
 
     #[test]
     fn bridge_endpoints() {
-        // 用测试端口避免与真实 16666 冲突：直接调用内部逻辑需要端口参数，
-        // 这里复用 start()（16666）；若已被占用则跳过。
-        let Some(bridge) = WpsBridge::start() else {
-            eprintln!("16666 已被占用，跳过");
-            return;
-        };
-        // 轮询直到服务就绪
-        let mut ready = false;
-        for _ in 0..50 {
-            if TcpStream::connect(("127.0.0.1", 16666)).is_ok() {
-                ready = true;
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        assert!(ready, "服务未就绪");
-
-        let hello = request(16666, "GET /hello?m=sidera-bridge HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        // 临时端口、不运行注册器：测试不能占用生产桥或修改用户 WPS 配置。
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let bridge = WpsBridge::from_listener(listener);
+        let hello = request(port, "GET /hello?m=sidera-bridge HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
         assert!(hello.contains("OK sidera"), "hello 响应异常: {hello:?}");
+        assert!(!bridge.connected());
+        assert!(!bridge.enqueue("NEXT"));
 
         let push = request(
-            16666,
+            port,
             "GET /push?m=EVENT%20SlideShowBegin%20pos=3%20click=0 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
         );
         assert!(push.contains("OK"), "push 响应异常: {push:?}");
 
-        // 入队 NEXT 后 /poll 应返回 NEXT
-        bridge.enqueue("NEXT");
-        let poll = request(16666, "GET /poll HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        let poll_request = "GET /poll?m=EVENT%20SlideShowState%20pos=3%20click=0 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+        request(port, poll_request);
+        assert!(bridge.ready());
+        assert!(bridge.enqueue("NEXT"));
+        let poll = request(port, poll_request);
         assert!(poll.contains("NEXT"), "poll 响应异常: {poll:?}");
 
         // 事件应被记录
@@ -464,7 +589,7 @@ mod tests {
         // 静态加载项分发（能找到 wps-addin 目录时）
         if addin_dir().is_some() {
             let m = request(
-                16666,
+                port,
                 "GET /manifest.xml HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
             );
             assert!(
@@ -473,12 +598,135 @@ mod tests {
             );
         }
 
-        // 回归：关闭后必须能重新绑定 16666（Drop 需停止线程并释放端口）
+        assert!(bridge.enqueue("PREV"));
+        bridge.shared.lock().unwrap().queue.front_mut().unwrap().0 -= 1600;
+        assert!(!request(port, poll_request).contains("PREV"), "过期指令不得补执行");
+        assert!(bridge.enqueue("EXIT"));
+        request(port, "GET /poll?m=EVENT%20SlideShowState%20pos=-1%20click=-1 HTTP/1.1\r\nHost: x\r\n\r\n");
+        assert!(!bridge.ready());
+        assert!(bridge.shared.lock().unwrap().queue.is_empty());
+        assert!(bridge.take_events().iter().any(|e| matches!(e, WpsEvent::SlideshowEnd)));
+
+        // 回归：Drop 停止线程并释放端口。
         drop(bridge);
-        let restarted = WpsBridge::start();
-        assert!(
-            restarted.is_some(),
-            "关闭 WPS 桥后无法重新启动：端口/线程未释放"
-        );
+        TcpListener::bind(("127.0.0.1", port)).expect("关闭桥后端口未释放");
+    }
+
+    #[test]
+    fn readiness_disconnect_whiteboard_and_command_failure() {
+        let bridge = WpsBridge::from_listener(TcpListener::bind(("127.0.0.1", 0)).unwrap());
+        {
+            let mut s = bridge.shared.lock().unwrap();
+            s.connected = true; s.last_seen = now_ms(); s.real_pos = 2;
+        }
+        assert!(bridge.enqueue("NEXT"));
+        bridge.shared.lock().unwrap().last_seen -= 4000;
+        assert!(!bridge.ready());
+        assert!(!bridge.enqueue("NEXT")); // 不依赖 UI 心跳定时器及时运行。
+        assert!(bridge.tick());
+        assert!(bridge.shared.lock().unwrap().queue.is_empty());
+        {
+            let mut s = bridge.shared.lock().unwrap();
+            s.connected = true; s.last_seen = now_ms();
+        }
+        assert!(bridge.enqueue("PREV"));
+        bridge.set_whiteboard(true);
+        assert!(!bridge.ready());
+        assert!(bridge.shared.lock().unwrap().queue.is_empty());
+        bridge.set_whiteboard(false);
+        assert!(bridge.ready());
+        handle_line(&bridge.shared, "COMMAND_FAILED NEXT");
+        assert!(!bridge.ready());
+        assert!(!bridge.enqueue("NEXT"));
+    }
+
+    #[test]
+    fn repeated_state_and_animation_do_not_switch_pages() {
+        let shared = Arc::new(Mutex::new(WpsShared::default()));
+        handle_line(&shared, "EVENT SlideShowState pos=1 click=0");
+        handle_line(&shared, "EVENT SlideShowBegin pos=1 click=0");
+        handle_line(&shared, "EVENT SlideShowState pos=1 click=1");
+        assert_eq!(shared.lock().unwrap().events.len(), 1);
+        handle_line(&shared, "EVENT SlideShowState pos=2 click=0");
+        assert!(matches!(shared.lock().unwrap().events.last(), Some(WpsEvent::RealPos(2))));
+        handle_line(&shared, "EVENT SlideShowEnd pos=-1 click=-1");
+        handle_line(&shared, "EVENT SlideShowState pos=-1 click=-1");
+        assert_eq!(shared.lock().unwrap().events.len(), 3);
+        handle_line(&shared, "EVENT SlideShowState pos=2 click=0");
+        assert!(matches!(shared.lock().unwrap().events.last(), Some(WpsEvent::SlideshowBegin(2))));
+    }
+
+    #[test]
+    fn page_counters_are_separate_from_show_order_and_expire_with_the_link() {
+        let bridge = WpsBridge::from_listener(TcpListener::bind(("127.0.0.1", 0)).unwrap());
+        {
+            let mut s = bridge.shared.lock().unwrap();
+            s.connected = true; s.last_seen = now_ms();
+        }
+        handle_line(&bridge.shared, "EVENT SlideShowState pos=2 click=0 page=9 total=30");
+        assert_eq!(bridge.page_progress(), (9, 30));
+        assert_eq!(bridge.position(), Some(2));
+        assert!(matches!(bridge.take_events().as_slice(), [WpsEvent::SlideshowBegin(2)]));
+        handle_line(&bridge.shared, "EVENT SlideShowState pos=2 click=1 page=9 total=31");
+        assert_eq!(bridge.page_progress(), (9, 31));
+        assert!(bridge.take_events().is_empty(), "counter changes must not clear annotation pages");
+        handle_line(&bridge.shared, "EVENT SlideShowState pos=-1 click=-1 ready=1 page=6 total=31");
+        assert_eq!(bridge.page_progress(), (6, 31), "editing still has a real current slide");
+        assert_eq!(bridge.position(), None);
+        bridge.shared.lock().unwrap().last_seen -= 4000;
+        assert_eq!(bridge.page_progress(), (-1, -1), "do not display stale metadata while offline");
+        bridge.shared.lock().unwrap().last_seen = now_ms();
+        bridge.set_whiteboard(true);
+        handle_line(&bridge.shared, "EVENT SlideShowState pos=3 click=0 page=10 total=31");
+        bridge.set_whiteboard(false);
+        assert_eq!(bridge.page_progress(), (-1, -1), "wait for fresh data after leaving whiteboard");
+        handle_line(&bridge.shared, "EVENT SlideShowState pos=3 click=0 page=10 total=31");
+        assert_eq!(bridge.page_progress(), (10, 31));
+        handle_line(&bridge.shared, "EVENT SlideShowState pos=3 click=0");
+        assert_eq!(bridge.page_progress(), (-1, -1), "older add-ins clear previous counters");
+        handle_line(&bridge.shared, "EVENT SlideShowState pos=3 click=0 page=32 total=31");
+        assert_eq!(bridge.page_progress(), (-1, 31));
+    }
+
+    #[test]
+    fn registration_files_and_preflight_do_not_establish_a_connection() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let bridge = WpsBridge::from_listener(listener);
+        for req in ["GET /ribbon.xml", "OPTIONS /poll", "GET /poll", "GET /hello"] {
+            request(port, &format!("{req} HTTP/1.1\r\nHost: x\r\n\r\n"));
+            assert!(!bridge.connected());
+            assert!(!bridge.ready());
+        }
+    }
+
+    #[test]
+    fn start_requires_a_fresh_ready_deck_and_survives_idle_poll() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let bridge = WpsBridge::from_listener(listener);
+        let ready = "GET /poll?m=EVENT%20SlideShowState%20pos=-1%20click=-1%20ready=1 HTTP/1.1\r\nHost: x\r\n\r\n";
+        assert!(!bridge.start_available());
+        assert!(!bridge.enqueue("START"));
+        request(port, ready);
+        assert!(bridge.start_available());
+        assert!(!bridge.enqueue("NEXT"));
+        assert!(bridge.enqueue("START"));
+        assert!(!bridge.enqueue("START"));
+        assert!(request(port, ready).ends_with("START"));
+        assert!(!bridge.enqueue("START"), "repeated taps must wait for the show or timeout");
+        handle_line(&bridge.shared, "EVENT SlideShowState pos=1 click=0 ready=0");
+        assert!(!bridge.start_available());
+        assert!(bridge.ready());
+        assert!(!bridge.enqueue("START"));
+        handle_line(&bridge.shared, "EVENT SlideShowState pos=-1 click=-1 ready=1");
+        assert!(bridge.enqueue("START"));
+        request(port, "GET /poll?m=EVENT%20SlideShowState%20pos=-1%20click=-1 HTTP/1.1\r\nHost: x\r\n\r\n");
+        assert!(!bridge.start_available(), "old add-ins never advertise START");
+        assert!(bridge.shared.lock().unwrap().queue.is_empty());
+        request(port, ready);
+        bridge.shared.lock().unwrap().last_seen -= 4000;
+        assert!(!bridge.start_available());
+        assert!(!bridge.enqueue("START"));
     }
 }

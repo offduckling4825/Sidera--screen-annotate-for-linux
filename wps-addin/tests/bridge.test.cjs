@@ -63,7 +63,7 @@ function assertStartedOnce(f) {
     const before = f.requests.length;
     f.emit(event);
     assert.equal(f.requests.length, before + 1, `${event} should push exactly once`);
-    assert.equal(new URL(f.requests.at(-1)).searchParams.get('m'), `EVENT ${event} pos=3 click=2`);
+    assert.equal(new URL(f.requests.at(-1)).searchParams.get('m'), `EVENT ${event} pos=3 click=2 ready=0`);
   }
 }
 
@@ -107,7 +107,7 @@ test('polling continues while ApiEvent is unavailable', async () => {
   assert.equal(f.intervals.size, 1);
   f.intervals.values().next().value();
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(f.requests.filter(url => url.endsWith('/poll')).length, 1);
+  assert.equal(f.requests.filter(url => new URL(url).pathname === '/poll').length, 1);
   f.app.ApiEvent = f.api;
   f.retry();
   assertStartedOnce(f);
@@ -149,4 +149,38 @@ test('manual startup after readiness cancels the pending retry', () => {
   f.app.ApiEvent = f.api;
   f.context.startBridge();
   assertStartedOnce(f);
+});
+
+test('WppApplication and wps.ApiEvent work without a global Application alias', () => {
+  const f = fixture({ ready: false, withEvents: false });
+  f.context.window.wps = { WppApplication: () => f.app, ApiEvent: f.api };
+  f.context.OnAddinLoad({});
+  assertStartedOnce(f);
+  assert.equal(f.context.bridgeState().pos, 3);
+});
+
+test('absolute page jump works in show and edit views and rejects a replaced document', () => {
+  for (const showing of [false, true]) {
+    const f = fixture();
+    const calls = [];
+    const view = { Slide: { SlideIndex: 3 }, CurrentShowPosition: 3,
+      GotoSlide(page) { calls.push(page); this.Slide.SlideIndex = page; } };
+    const deck = { FullName: '/home/teacher/lesson.dps', Slides: { Count: 24 } };
+    if (showing) deck.SlideShowWindow = { View: view };
+    else f.app.ActiveWindow = { View: view };
+    f.app.ActivePresentation = deck;
+    const before = f.context.bridgeState();
+    assert.equal(before.jump, 1);
+    f.context.bridgeCmd(`GOTO 10 ${before.deck}`);
+    assert.deepEqual(calls, [10]);
+    f.context.bridgeCmd(`GOTO 25 ${before.deck}`);
+    assert.deepEqual(calls, [10], 'out-of-range jumps must not reach WPS');
+    deck.FullName = '/home/teacher/another-lesson.dps';
+    f.context.bridgeCmd(`GOTO 8 ${before.deck}`);
+    assert.deepEqual(calls, [10], 'a delayed command must not jump a new document');
+    const current = f.context.bridgeState();
+    assert.notEqual(current.deck, before.deck);
+    f.context.bridgeCmd(`GOTO 8 ${current.deck}`);
+    assert.deepEqual(calls, [10, 8]);
+  }
 });

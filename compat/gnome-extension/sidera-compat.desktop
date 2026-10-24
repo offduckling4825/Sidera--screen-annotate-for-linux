@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Sidera（兼容模式）
+Comment=先退出原生模式，再使用 X11 或 XWayland 批注
+Exec=env SIDERA_BACKEND=x11 sidera
+Icon=/usr/share/pixmaps/sidera.svg
+Categories=Graphics;Utility;
+Terminal=false

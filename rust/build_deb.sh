@@ -86,6 +86,14 @@ cp -r "$REPO/wps-addin/." "$PKG_DIR/usr/share/sidera/wps-addin/"
 chmod 755 "$PKG_DIR/usr/share/sidera/wps-addin/install.sh"
 install -m 755 "$REPO/wps-addin/install.sh" "$PKG_DIR/usr/bin/sidera-wps-addin-install"
 
+# GNOME's native overlay needs a per-user Shell extension. Package its source,
+# but do not enable it or restart sessions from the root post-install script.
+mkdir -p "$PKG_DIR/usr/share/sidera/gnome-extension"
+cp -r "$REPO/compat/gnome-extension/." "$PKG_DIR/usr/share/sidera/gnome-extension/"
+install -m 755 "$REPO/compat/gnome-extension/install.py" "$PKG_DIR/usr/bin/sidera-gnome-install"
+install -m 644 "$REPO/compat/gnome-extension/sidera-gnome.desktop" "$PKG_DIR/usr/share/applications/"
+install -m 644 "$REPO/compat/gnome-extension/sidera-compat.desktop" "$PKG_DIR/usr/share/applications/"
+
 # ---------- 文档 ----------
 cp "$REPO/README.classroom.md" "$PKG_DIR/usr/share/doc/sidera/README.classroom.md"
 cp "$REPO/LICENSE" "$PKG_DIR/usr/share/doc/sidera/copyright"
@@ -95,6 +103,13 @@ cp "$REPO/LICENSE" "$PKG_DIR/usr/share/doc/sidera/LICENSE"
 cp "$REPO/sidera.svg" "$PKG_DIR/usr/share/icons/hicolor/scalable/apps/sidera.svg"
 cp "$REPO/sidera.svg" "$PKG_DIR/usr/share/pixmaps/sidera.svg"
 cp "$REPO/sidera.png" "$PKG_DIR/usr/share/icons/hicolor/256x256/apps/sidera.png"
+
+# GNOME may retain a texture for an absolute icon path after its file changes.
+# A content-specific path lets the desktop-entry update invalidate that texture.
+# Keep the conventional names above for autostart entries and in-app artwork.
+ICON_SHA="$(sha256sum "$REPO/sidera.svg")"
+ICON_PATH="/usr/share/pixmaps/sidera-${ICON_SHA:0:12}.svg"
+cp "$REPO/sidera.svg" "$PKG_DIR$ICON_PATH"
 
 # ---------- uinput 权限（KWin 等无虚拟键盘协议时，用内核虚拟键盘发翻页键）----------
 mkdir -p "$PKG_DIR/lib/udev/rules.d" "$PKG_DIR/etc/modules-load.d"
@@ -123,6 +138,7 @@ Priority: optional
 Architecture: ${DEB_ARCH}
 Maintainer: User <user@localhost>
 Depends: libc6 (>= 2.30), libgcc-s1, python3
+Suggests: gnome-shell (>= 46), libglib2.0-bin, xdg-desktop-portal
 Description: Sidera (Rust) 屏幕批注工具
  纯 Rust 实现，不依赖 Qt / libX11；加载项安装工具使用 Python 3。
  全屏透明画布批注，支持画笔/橡皮/白板，触控屏友好。
@@ -137,10 +153,15 @@ Type=Application
 Name=Sidera
 Comment=Sidera软件
 Exec=sidera
-Icon=/usr/share/pixmaps/sidera.svg
+Icon=$ICON_PATH
 Categories=Graphics;Utility;
 Terminal=false
 EOF
+
+# All launch modes must use the same refreshed icon, with stable desktop IDs.
+for ENTRY in sidera-gnome.desktop sidera-compat.desktop; do
+  sed -i "s|^Icon=.*|Icon=$ICON_PATH|" "$PKG_DIR/usr/share/applications/$ENTRY"
+done
 
 # ---------- 打包 ----------
 dpkg-deb --build --root-owner-group "$PKG_DIR"
