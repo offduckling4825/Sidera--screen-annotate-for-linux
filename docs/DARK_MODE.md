@@ -52,3 +52,16 @@ python3 tools/test_rust.py --wayland
 ```
 
 图像检查与隔离协议检查不能替代实机操作。由用户在真实桌面验收：切换三档并重启程序、系统明暗切换、WPS 放映、绘图穿透、白板往返、多个显示器与触屏。不能据此宣称所有桌面版本已经通过。
+
+## 本地测试包
+
+2026-10-25 已从源码 `31ef325a473c46bbe379b404efc7ce43f181ff6a` 编译并覆盖安装 **3.0-Electro-testing+custom20261025.33** 到 VMware Ubuntu 26.04.1 amd64。此版保留原来的白板底色；包要求 libc6 ≥ 2.43，不能作为 Ubuntu 24.04 或麒麟 ARM64 的安装包。
+
+- 安装状态为 `install ok installed`，37 个安装文件的 SHA-256 与包内容一致。
+- 原有用户配置校验一致，GNOME 扩展文件未变化；此次更新不需要重新登录桌面。
+- 安装保留旧 Sidera 进程，退出并重开 Sidera 后使用新版；未操作真实桌面或 WPS。
+- 旧包与二进制保留在虚拟机的 `/var/backups/sidera-compat-20261025/`。
+
+包 SHA-256：`e23a89cd7fe485fea137cff250b18ed0db1ebdac65762cda2579fbf6927814d7`。
+
+程序 SHA-256：`7b1f27763f45967bf863cadd327e2c2a4fb9c6ef11baba89fe24ca12cb50e0cc`。
