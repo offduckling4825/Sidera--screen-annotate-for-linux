@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 本地 WSL Ubuntu 26.04 amd64 | Rust/Cargo 1.93.1、GCC 15.2、Qt 5.15.18、Python 3.14、bubblewrap、Xvfb、Sway 1.11/wlroots 0.19.2 | 编译、接口及私有图形协议检查；不等于真实桌面体验 |
 | Windows / NAS 工作区 | PowerShell、Node 24.19；custom 分支 | 编辑、Node 模拟测试；Linux 构建使用本地文件系统副本 |
-| VMware Ubuntu 26.04.1 amd64 | GNOME 50.1 Wayland、glibc 2.43；已按用户要求覆盖安装 custom.31，扩展文件版本 6 | 已校验安装文件；真实桌面与 WPS 验收由用户进行 |
+| VMware Ubuntu 26.04.1 amd64 | GNOME 50.1 Wayland、glibc 2.43；已覆盖安装带主题功能的 custom.32，扩展文件版本 6 | 37 个安装文件校验通过、原有配置保留；真实桌面与 WPS 验收由用户进行 |
 | 学校银河麒麟 V10 SP1 | Phytium D2000/8 E8C、ARM64、UKUI 原生 X11、glibc 2.31、Qt 5.12；报告已装上游 2.6 | 环境报告，不是新 Rust 包验收；有图形窗口不代表 Wayland |
 | Ubuntu 24.04 / GNOME 46–49 / KDE / 原生 ARM64 | 缺少完整当前版本验收 | 不预填为已支持或已通过 |
 
