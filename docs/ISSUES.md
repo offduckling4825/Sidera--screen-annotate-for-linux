@@ -153,7 +153,7 @@ C++ HTTP/登记桥和页缓存已共用；Rust 分离 Desktop、缓存、HTTP、
 
 ### S27 — CI、文档与元数据
 
-CI 配置已覆盖 custom/main、隔离 Rust/JS/C++ 与协议检查，文档统一当前状态和历史记录。远程执行、ARM64/最低系统矩阵未确认。上游 LICENSE 与 Cargo 许可表述差异继续公开说明，未经权利人确认不擅改。
+CI 配置已覆盖 custom/main、隔离 Rust/JS/C++ 与协议检查；已修复 Ubuntu runner 的隔离权限配置与登记测试依赖预装目录的问题。远程结果按[每次提交的 Actions 运行](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml)核对，ARM64/最低系统矩阵仍未完成。上游 LICENSE 与 Cargo 许可表述差异继续公开说明，未经权利人确认不擅改。
 
 ### S28 — 编译打包安装后应用图标不显示
 
