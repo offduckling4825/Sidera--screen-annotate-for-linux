@@ -106,7 +106,7 @@
 
 两种包均需要 Python 3，动态库依赖从实际 ELF 生成；不能沿用旧 `.29` amd64 包的 libc6 ≥ 2.43 结论。详见[更新记录](CHANGELOG.md)、[custom.35 发布记录](docs/releases/2026-10-25-custom35.md)和 Release 内的构建记录。旧版本仍保留在历史 Release 中。
 
-custom.35 针对小屏幕设置增加自适应分页，完成按钮固定可见；双架构构建、隔离检查与附件校验记录见 Release 的 BUILDINFO。真实桌面和 WPS 操作验收仍由用户进行，**不标记为完整实机验收通过或稳定版**。参见[测试环境与验证边界](docs/TEST_ENVIRONMENT.md)。
+custom.35 针对小屏幕设置增加自适应分页，完成按钮固定可见；两种架构各通过 136 项隔离检查，附件校验记录见 Release 的 BUILDINFO。真实桌面和 WPS 操作验收仍由用户进行，**不标记为完整实机验收通过或稳定版**。参见[测试环境与验证边界](docs/TEST_ENVIRONMENT.md)。
 
 ## 安装与开始使用
 
