@@ -8,7 +8,7 @@ on:
 
 jobs:
   wps-addin:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -21,7 +21,10 @@ jobs:
       - name: Install WPS installer test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3 bubblewrap
+          sudo apt-get install -y python3 bubblewrap apparmor
+
+      - name: Prepare isolated test environment
+        run: bash .github/scripts/prepare-isolation.sh
 
       - name: Test WPS add-in registration
         run: python3 wps-addin/tests/test_install.py
@@ -37,7 +40,7 @@ jobs:
           node --test compat/gnome-extension/tests/chrome.test.mjs
 
   build-amd64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -48,13 +51,16 @@ jobs:
           sudo apt-get install -y \
             build-essential \
             pkg-config \
-            python3 bubblewrap \
+            python3 bubblewrap apparmor \
             qtbase5-dev \
             libwayland-dev libxkbcommon-dev sway dbus-x11 fonts-noto-cjk \
             libx11-dev \
             libxcb1-dev \
             libxext-dev \
             libxtst-dev
+
+      - name: Prepare isolated test environment
+        run: bash .github/scripts/prepare-isolation.sh
 
       - name: Test shared C++ bridge in isolation
         working-directory: cpp
@@ -76,7 +82,7 @@ jobs:
           echo "annotate_amd64 built successfully."
 
   rust:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -84,7 +90,10 @@ jobs:
       - name: Install startup test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3 bubblewrap xvfb dpkg-dev gcc fonts-noto-cjk sway dbus-x11
+          sudo apt-get install -y python3 bubblewrap apparmor xvfb dpkg-dev gcc fonts-noto-cjk sway dbus-x11
+
+      - name: Prepare isolated test environment
+        run: bash .github/scripts/prepare-isolation.sh
 
       - name: Test DEB packaging architecture checks
         run: python3 rust/tests/test_build_deb.py

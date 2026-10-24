@@ -32,6 +32,10 @@ sudo apt-get install -y build-essential pkg-config dpkg-dev binutils \
 
 隔离工具使用只读系统、临时 HOME/XDG 目录、私有网络/PID 与运行目录；Wayland 检查另启动自己的 D-Bus、headless Sway 和软件渲染，不连接用户图形会话。缺依赖或隔离失败直接报错，不降级到真实桌面。
 
+GitHub Actions 固定使用 Ubuntu 24.04，避免 `ubuntu-latest` 镜像迁移改变基线。三个任务在编译前运行 `.github/scripts/prepare-isolation.sh`：先检测网络/PID 隔离，需要时仅在临时 runner 内加载 `/usr/bin/bwrap` 的 AppArmor 配置，再验证嵌套隔离与私有回环连接。不关闭全局 AppArmor 限制，不以 root 运行测试，也不跳过失败用例。
+
+该准备脚本拒绝在普通机器和自托管 runner 上执行。本地若出现 `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`，应由环境管理员按发行版规则检查应用配置；不要删除测试的 `--unshare-net`。背景见 [Ubuntu 24.04 用户命名空间限制](https://github.com/ubuntu/ubuntu-release-notes/blob/main/docs/24.04/index.md#unprivileged-user-namespace-restrictions) 和 [AppArmor 文档](https://documentation.ubuntu.com/security/security-features/privilege-restriction/apparmor/)。
+
 ## 可重复执行的代码检查
 
 从仓库根目录执行。首次编译需要下载的依赖应提前获取；真正运行用例时网络隔离。
@@ -143,4 +147,4 @@ PASS / FAIL / 未执行 / 不支持：
 证据与 CPU/RSS/延迟：
 ```
 
-CI 已配置 custom/main 的 push/PR 检查，但没有本轮远程运行结果，也没有 ARM64 和最低系统安装矩阵。发布前仍需对应包、目标机器和上述适用场景的证据；“未执行”不能改写成“通过”。
+CI 已配置 custom/main 的 push/PR 检查；逐次结果见 [Build & Verify](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml)。`171f100` 的三个任务曾因 runner 的 AppArmor 策略在启动隔离环境时失败，不能计为远程测试通过；后续提交以其自身运行结果为准。仍缺少 ARM64 和最低系统安装矩阵，发布前需要对应包、目标机器和适用场景的证据；“未执行”不能改写成“通过”。

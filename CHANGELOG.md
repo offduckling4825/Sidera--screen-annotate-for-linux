@@ -2,6 +2,11 @@
 
 记录本仓库 `custom` 分支的用户可见变化。上游发行版请查看[原项目](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/releases)。
 
+## 未发布 · CI 环境修复
+
+- 修复 GitHub Ubuntu 24.04 runner 拒绝隔离网络，导致 Rust、C++ 和 WPS 登记检查一起失败的问题；仅为临时 runner 的 bubblewrap 加载所需 AppArmor 配置。
+- 固定 CI 系统版本，提前验证私有回环和嵌套隔离；保留全部测试及隔离要求。
+
 ## 未发布 · 旧问题复查
 
 - 修复超过固定页数后丢笔迹，Rust/C++ 共用各自的无损压缩与私有临时存储策略；白板期间继续跟踪外部放映。
