@@ -9,10 +9,11 @@
 | 本地 WSL Ubuntu 26.04 amd64 | Rust/Cargo 1.93.1、GCC 15.2、Qt 5.15.18、Python 3.14、bubblewrap、Xvfb、Sway 1.11/wlroots 0.19.2 | 编译、接口及私有图形协议检查；不等于真实桌面体验 |
 | Windows / NAS 工作区 | PowerShell、Node 24.19；custom 分支 | 编辑、Node 模拟测试；Linux 构建使用本地文件系统副本 |
 | VMware Ubuntu 26.04.1 amd64 | GNOME 50.1 Wayland、glibc 2.43；已覆盖安装带主题功能且保留白板底色的 custom.33，扩展文件版本 6 | 37 个安装文件校验通过、原有配置保留；真实桌面与 WPS 验收由用户进行 |
+| GitHub 原生 Ubuntu 22.04 amd64 / ARM64 | custom.34 发布构建基线；Rust 1.93.1 | 发布工作流分别编译、检查主题与私有协议，再验证包内程序；实际结果见 Release 的 BUILDINFO |
 | 学校银河麒麟 V10 SP1 | Phytium D2000/8 E8C、ARM64、UKUI 原生 X11、glibc 2.31、Qt 5.12；报告已装上游 2.6 | 环境报告，不是新 Rust 包验收；有图形窗口不代表 Wayland |
 | Ubuntu 24.04 / GNOME 46–49 / KDE / 原生 ARM64 | 缺少完整当前版本验收 | 不预填为已支持或已通过 |
 
-历史 VM 的 XWayland 穿透/不闪和 custom.4 WPS 联动曾得到用户确认；后续功能及本轮修改不能继承为“全部通过”。当前公开预发布仍为 [custom.29](releases/2026-10-24-custom29.md)。
+历史 VM 的 XWayland 穿透/不闪和 custom.4 WPS 联动曾得到用户确认；后续功能及本轮修改不能继承为“全部通过”。当前发行记录见 [custom.34](releases/2026-10-25-custom34.md)，历史 [custom.29](releases/2026-10-24-custom29.md) 另行保留。
 
 ## 准备独立开发环境
 
@@ -150,4 +151,4 @@ PASS / FAIL / 未执行 / 不支持：
 证据与 CPU/RSS/延迟：
 ```
 
-CI 已配置 custom/main 的 push/PR 检查；逐次结果见 [Build & Verify](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml)。`171f100` 的三个任务曾因 runner 的 AppArmor 策略在启动隔离环境时失败，不能计为远程测试通过；后续提交以其自身运行结果为准。仍缺少 ARM64 和最低系统安装矩阵，发布前需要对应包、目标机器和适用场景的证据；“未执行”不能改写成“通过”。
+CI 已配置 custom/main 的 push/PR 检查；逐次结果见 [Build & Verify](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml)。`171f100` 的三个任务曾因 runner 的 AppArmor 策略在启动隔离环境时失败，不能计为远程测试通过；后续提交以其自身运行结果为准。双架构发布工作流补充原生 amd64 / ARM64 Ubuntu 22.04 的编译和隔离检查，但真实安装与最低系统矩阵仍需目标机器和适用场景的证据；“未执行”不能改写成“通过”。

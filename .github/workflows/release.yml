@@ -1,0 +1,136 @@
+name: Build release packages
+run-name: Release packages for ${{ inputs.release_tag || github.ref_name }}
+
+on:
+  push:
+    tags: ['v3.0-Electro-testing-custom*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing custom release tag
+        required: true
+        default: v3.0-Electro-testing-custom20261025.34
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  packages:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            machine: x86_64
+            runner: ubuntu-22.04
+          - architecture: arm64
+            machine: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      DEB_ARCH: ${{ matrix.architecture }}
+      EXPECTED_MACHINE: ${{ matrix.machine }}
+      RUST_VERSION: 1.93.1
+      RUSTUP_TOOLCHAIN: 1.93.1
+      REQUIRE_FULL_TESTS: '1'
+      CARGO_TERM_COLOR: never
+    steps:
+      - name: Checkout build and verification tools
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate release tag and native architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v3\.0-Electro-testing-custom[0-9]{8}\.[0-9]+$ ]]
+          test "$(uname -m)" = "$EXPECTED_MACHINE"
+          test "$(dpkg --print-architecture)" = "$DEB_ARCH"
+          version="${RELEASE_TAG#v}"
+          echo "SIDERA_VERSION=${version/-custom/+custom}" >> "$GITHUB_ENV"
+
+      - name: Checkout the exact application tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref_name }}
+          path: release-source
+          persist-credentials: false
+
+      - name: Install build and isolated test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential binutils dpkg-dev python3 \
+            bubblewrap apparmor xvfb fonts-noto-cjk dbus-x11 sway
+
+      - name: Prepare isolated test environment
+        run: bash .github/scripts/prepare-isolation.sh
+
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs -o "$RUNNER_TEMP/rustup-init.sh"
+            sh "$RUNNER_TEMP/rustup-init.sh" -y --profile minimal --default-toolchain none
+          fi
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Compile the tagged application natively
+        working-directory: release-source/rust
+        run: |
+          cargo build --release --locked
+          cargo check --tests --examples --locked
+
+      - name: Verify Rust behavior including themes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release-artifacts
+          python3 release-source/tools/test_rust.py 2>&1 | tee "release-artifacts/RUST-TESTS-${DEB_ARCH}.txt"
+
+      - name: Verify private X11 and Wayland protocols
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 release-source/tools/test_rust.py --x11 2>&1 | tee "release-artifacts/X11-TESTS-${DEB_ARCH}.txt"
+          python3 release-source/tools/test_rust.py --wayland 2>&1 | tee "release-artifacts/WAYLAND-TESTS-${DEB_ARCH}.txt"
+
+      - name: Package and verify architecture and dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp rust/build_deb.sh release-source/rust/build_deb.sh
+          mkdir -p release-source/tools
+          cp tools/deb_dependencies.py release-source/tools/deb_dependencies.py
+          bash release-source/rust/build_deb.sh "$DEB_ARCH"
+          git -C release-source diff --exit-code -- rust/src rust/Cargo.toml rust/Cargo.lock wps-addin compat
+          cp "release-source/sidera_${SIDERA_VERSION}_${DEB_ARCH}.deb" release-artifacts/
+          dpkg-deb --extract "release-artifacts/sidera_${SIDERA_VERSION}_${DEB_ARCH}.deb" "$PWD/release-unpacked"
+          cmp release-source/rust/target/release/sidera "$PWD/release-unpacked/usr/bin/sidera"
+          sudo apt-get --simulate install "$PWD/release-artifacts/sidera_${SIDERA_VERSION}_${DEB_ARCH}.deb"
+
+      - name: Test the packaged executable in isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/run_isolated.py --timeout 180 -- \
+            python3 release-source/rust/tests/test_startup.py \
+            "$PWD/release-unpacked/usr/bin/sidera" \
+            2>&1 | tee "release-artifacts/STARTUP-TESTS-${DEB_ARCH}.txt"
+
+      - name: Record provenance and checksums
+        run: python3 tools/release_metadata.py release-source release-artifacts
+
+      - name: Upload verified package and records
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidera-${{ matrix.architecture }}-${{ inputs.release_tag || github.ref_name }}
+          path: release-artifacts/
+          if-no-files-found: error
+          retention-days: 30

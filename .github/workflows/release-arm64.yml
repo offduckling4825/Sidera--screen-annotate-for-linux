@@ -107,7 +107,7 @@ jobs:
             2>&1 | tee release-artifacts/STARTUP-TESTS-arm64.txt
 
       - name: Record source identity and checksums
-        run: python3 tools/release_arm64_metadata.py release-source release-artifacts
+        run: python3 tools/release_metadata.py release-source release-artifacts
 
       - name: Upload verified package and build record
         uses: actions/upload-artifact@v4

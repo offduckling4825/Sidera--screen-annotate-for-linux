@@ -21,7 +21,7 @@
 >
 > Sidera 原项目来自 [offduckling4825/Sidera--screen-annotate-for-linux](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux)，保留原作者 **Carl_Jin / jinyicheng** 的署名和授权声明。本分支由 **shizhelei · Gary_6Stones** 进行课堂体验与兼容性改进，不代表上游官方发行版。
 
-当前开发集中在 **Rust 3.0 的 `custom` 分支**；仓库也保留上游 C++ / Qt5 2.6 实现。下面介绍的是本分支 Rust 版，不表示 C++ 版已同步这些改动。最近发布：[2026.10.24 · custom.29](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/releases/tag/v3.0-Electro-testing-custom20261024.29)。
+当前开发集中在 **Rust 3.0 的 `custom` 分支**；仓库也保留上游 C++ / Qt5 2.6 实现。下面介绍的是本分支 Rust 版，不表示 C++ 版已同步这些改动。当前发行：[2026.10.25 · custom.34 · 深色模式与双架构](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/releases/tag/v3.0-Electro-testing-custom20261025.34)。
 
 ## 界面预览
 
@@ -32,7 +32,7 @@
 <p align="center"><sub>生产绘制代码生成的静态预览；课堂背景与页码为演示数据，不是桌面实测截图。</sub></p>
 
 <details>
-<summary>查看深色课堂界面（custom 分支新增，尚未发布）</summary>
+<summary>查看深色课堂界面（custom.34，amd64 / ARM64）</summary>
 
 ![深色课堂界面：深灰绿面板、薄荷绿选中态、保留原色的画笔](docs/assets/preview/classroom-dark.png)
 
@@ -92,11 +92,19 @@
 | GNOME Wayland | 配套 GNOME Shell 原生扩展 | 需要按用户安装扩展；元数据列出 GNOME 46–50，不代表这些版本已逐一实测。 |
 | GNOME 兼容入口 | XWayland | 保留兼容路径；特定 Mutter / Xwayland 组合存在系统侧限制，见[兼容性记录](docs/audit/COMPATIBILITY_2026-10-24.md)。 |
 | 支持 layer-shell 的 Wayland 桌面 | 原生 Wayland | 输入模拟、截图、剪贴板按合成器协议能力工作；缺少协议时功能可能不可用。 |
-| Ubuntu 24.04 / 麒麟 / ARM64 | 需要匹配环境的构建 | **本次没有发布适用这些环境的已验收安装包。** 不要强装下面的 amd64 / libc 2.43 包。 |
+| amd64 / ARM64 | Release 提供两种原生构建的 DEB | custom.34 均以 Ubuntu 22.04 为构建基线；实际依赖见 DEB 的 Depends 和各自 BUILDINFO，真实桌面仍需验收。 |
+| 麒麟等发行版 | 需要匹配系统库与桌面环境 | 分别核对架构、glibc 及桌面版本，不能只看处理器名称；学校 ARM64 / glibc 2.31 环境仍不在当前构建基线内。 |
 
 ### 本次 release 的范围
 
-`3.0-Electro-testing+custom20261024.29` 是 **预发布测试版**，提供 **amd64 DEB，要求 libc6 ≥ 2.43**。构建环境为 WSL Ubuntu 26.04，已覆盖安装到 VMware Ubuntu 26.04.1 / GNOME 50.1。
+`3.0-Electro-testing+custom20261025.34` 是 **预发布测试版**，提供相同应用源码版本的 **amd64 与 ARM64 DEB**，包含浅色／深色／跟随系统、保持原样的白板底色，以及 `.29` 之后的状态、WPS 桥和兼容性修复。
+
+| 安装包架构 | 构建基线 | 来源与检查 |
+| --- | --- | --- |
+| amd64 | 原生 Ubuntu 22.04 x86_64 | `BUILDINFO-amd64.md` 记录实际依赖、源码、工具链、哈希与隔离测试结果。 |
+| arm64 | 原生 Ubuntu 22.04 AArch64 | `BUILDINFO-arm64.md` 记录实际依赖、源码、工具链、哈希与隔离测试结果。 |
+
+两种包均需要 Python 3，动态库依赖从实际 ELF 生成；不能沿用旧 `.29` amd64 包的 libc6 ≥ 2.43 结论。详见[更新记录](CHANGELOG.md)、[custom.34 发布记录](docs/releases/2026-10-25-custom34.md)和 Release 内的构建记录。旧版本仍保留在历史 Release 中。
 
 已完成发布编译、源码编译检查、静态界面检查与安装文件校验；新增交互的操作验收仍由用户进行，**不标记为完整测试通过或稳定版**。参见[测试环境与验证边界](docs/TEST_ENVIRONMENT.md)。
 
@@ -104,7 +112,7 @@
 
 ### 1. 核对系统并安装
 
-从 [Releases](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/releases) 下载 DEB 与 `SHA256SUMS`。先核对：
+从 [custom.34 Release](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/releases/tag/v3.0-Electro-testing-custom20261025.34) 下载对应架构的 DEB 与 `SHA256SUMS`。先核对：
 
 ```sh
 dpkg --print-architecture
@@ -115,7 +123,16 @@ getconf GNU_LIBC_VERSION
 
 ```sh
 sha256sum --check SHA256SUMS --ignore-missing
-sudo apt install ./sidera_3.0-Electro-testing+custom20261024.29_amd64.deb
+dpkg-deb -f ./sidera_3.0-Electro-testing+custom20261025.34_amd64.deb Architecture Depends
+sudo apt install ./sidera_3.0-Electro-testing+custom20261025.34_amd64.deb
+```
+
+对于匹配条件的 ARM64 系统：
+
+```sh
+sha256sum --check SHA256SUMS --ignore-missing
+dpkg-deb -f ./sidera_3.0-Electro-testing+custom20261025.34_arm64.deb Architecture Depends
+sudo apt install ./sidera_3.0-Electro-testing+custom20261025.34_arm64.deb
 ```
 
 不要跳过依赖检查或替换系统 libc。C++ 与 Rust 包使用相同的 `sidera` 包名，安装会替换已有版本。安装包不包含 WPS，也不自动替换系统图形服务器。
@@ -152,7 +169,7 @@ cargo build --release --locked
 
 这会生成 `rust/target/release/sidera`。本机编译会继承本机系统库要求；当前打包脚本检查真实 ELF 并自动生成动态依赖，不再使用固定的最低 libc 声明。ARM64 或低版本系统需要在对应构建环境打包并验收。
 
-本地未发布修改与公开 custom.29 分开记录。本轮旧问题复查、隔离测试和剩余限制见 [复查报告](docs/audit/REVIEW_2026-10-24.md)；测试命令见 [测试环境](docs/TEST_ENVIRONMENT.md)。
+custom.34 包含此前复查与主题修改，旧 custom.29 保留独立历史记录。本轮旧问题复查、隔离测试和剩余限制见 [复查报告](docs/audit/REVIEW_2026-10-24.md)；测试命令见 [测试环境](docs/TEST_ENVIRONMENT.md)。
 
 `build_amd64.sh` / `build_aarch64.sh` 保留容器构建入口，但需要自行准备脚本要求的 sysroot、Rust 工具链及必要的跨架构工具；sysroot **不在仓库中**。详细构建与发布核对见 [CONTRIBUTING.md](CONTRIBUTING.md)。C++ 旧实现及其构建脚本在 [cpp/](cpp/)。
 

@@ -2,7 +2,7 @@
 
 更新：2026-10-24，`custom` 当前工作区。重新核对最初 S01–S28 与后续修改，旧描述不再代表当前缺陷。历史过程见 [audit](audit/README.md)，本轮证据见 [复查记录](audit/REVIEW_2026-10-24.md)。
 
-**代码修复**表示已修改并有隔离检查支持；**待实机**表示目标桌面/WPS/硬件尚未验收；**开放**表示仍有明确工程工作。当前修改尚未发布，不能用于宣称 custom.29 已包含本轮修复。
+**代码修复**表示已修改并有隔离检查支持；**待实机**表示目标桌面/WPS/硬件尚未验收；**开放**表示仍有明确工程工作。当前修复随 [custom.34](releases/2026-10-25-custom34.md) 提供，不能用于宣称旧 custom.29 已包含本轮修复。
 
 ## 当前索引
 
@@ -153,7 +153,7 @@ C++ HTTP/登记桥和页缓存已共用；Rust 分离 Desktop、缓存、HTTP、
 
 ### S27 — CI、文档与元数据
 
-CI 配置已覆盖 custom/main、隔离 Rust/JS/C++ 与协议检查；已修复 Ubuntu runner 的隔离权限配置与登记测试依赖预装目录的问题。远程结果按[每次提交的 Actions 运行](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml)核对，ARM64/最低系统矩阵仍未完成。上游 LICENSE 与 Cargo 许可表述差异继续公开说明，未经权利人确认不擅改。
+CI 配置已覆盖 custom/main、隔离 Rust/JS/C++ 与协议检查；已修复 Ubuntu runner 的隔离权限配置与登记测试依赖预装目录的问题。远程结果按[每次提交的 Actions 运行](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml)核对；发布流程另外覆盖原生 amd64 / ARM64 Ubuntu 22.04 构建与隔离检查，实际结果见 Release 的构建记录。最低系统和真实安装矩阵仍未完成，尤其学校 glibc 2.31 环境。上游 LICENSE 与 Cargo 许可表述差异继续公开说明，未经权利人确认不擅改。
 
 ### S28 — 编译打包安装后应用图标不显示
 
