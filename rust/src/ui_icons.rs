@@ -1,7 +1,7 @@
 //! Classroom tools drawn on a shared 24-unit grid, independent of system fonts.
 use tiny_skia::{Color, FillRule, LineCap, LineJoin, Paint, Path, PathBuilder, Shader, Stroke};
 use crate::ui::Ctx;
-use crate::ui_theme::{self as theme, c};
+use crate::ui_theme::c;
 
 #[derive(Clone, Copy)]
 pub enum Glyph { Cursor, Pen, Eraser, Up, Down, More, Camera, Settings, Check, Info, Document, Right }
@@ -32,14 +32,15 @@ fn polygon(points: &[(f32, f32)]) -> Option<Path> {
 }
 
 pub fn draw(ctx: &mut Ctx, glyph: Glyph, x: f32, y: f32, size: f32, ink: Color, accent: Color) {
+    let palette = ctx.palette;
     let tr = ctx.tr.pre_translate(x, y).pre_scale(size / 24.0, size / 24.0);
-    let mut g = Ctx { pm: &mut *ctx.pm, tr };
+    let mut g = Ctx { palette, pm: &mut *ctx.pm, tr };
     let line = |g: &mut Ctx, a, b| g.stroke_line(a, b, ink, 1.8);
     match glyph {
         Glyph::Cursor => {
             path(&mut g, polygon(&[(5.0, 3.0), (19.0, 12.0), (12.5, 13.2),
                 (16.0, 19.3), (12.7, 21.0), (9.4, 14.8), (5.0, 19.0)]),
-                Some(c(theme::PAPER)), Some(ink));
+                Some(c(palette.paper)), Some(ink));
         }
         Glyph::Pen => {
             let mut p = PathBuilder::new();
@@ -52,9 +53,9 @@ pub fn draw(ctx: &mut Ctx, glyph: Glyph, x: f32, y: f32, size: f32, ink: Color, 
             p.line_to(9.4, 18.7);
             p.close();
             let outline = p.finish();
-            path(&mut g, outline.clone(), Some(c(theme::PAPER)), None);
+            path(&mut g, outline.clone(), Some(c(palette.paper)), None);
             path(&mut g, polygon(&[(14.0, 6.0), (16.7, 3.5), (18.3, 3.5),
-                (20.5, 5.7), (20.5, 7.3), (18.0, 10.0)]), Some(c(theme::ACCENT_LIGHT)), None);
+                (20.5, 5.7), (20.5, 7.3), (18.0, 10.0)]), Some(c(palette.accent_light)), None);
             // Keep enough coloured area at normal toolbar size; an outlined
             // triangle alone collapses to a dark point at low pixel density.
             path(&mut g, polygon(&[(3.8, 20.2), (5.3, 14.6), (7.5, 12.4),
@@ -78,12 +79,12 @@ pub fn draw(ctx: &mut Ctx, glyph: Glyph, x: f32, y: f32, size: f32, ink: Color, 
             p.quad_to(2.6, 14.2, 4.2, 12.2);
             p.close();
             let outline = p.finish();
-            path(&mut g, outline.clone(), Some(c(theme::ERASER)), None);
+            path(&mut g, outline.clone(), Some(c(palette.eraser)), None);
             let mut p = PathBuilder::new();
             p.move_to(7.5, 8.9); p.line_to(17.1, 16.5); p.line_to(13.6, 20.0);
             p.line_to(8.0, 20.0); p.line_to(4.2, 16.2);
             p.quad_to(2.6, 14.2, 4.2, 12.2); p.close();
-            path(&mut g, p.finish(), Some(c(theme::PAPER)), None);
+            path(&mut g, p.finish(), Some(c(palette.paper)), None);
             path(&mut g, outline, None, Some(ink));
             line(&mut g, (7.5, 8.9), (17.1, 16.5));
             line(&mut g, (17.0, 20.0), (22.0, 20.0));
@@ -112,7 +113,7 @@ pub fn draw(ctx: &mut Ctx, glyph: Glyph, x: f32, y: f32, size: f32, ink: Color, 
             for (y, x) in [(6.0, 9.0), (12.0, 15.0), (18.0, 9.0)] {
                 line(&mut g, (3.0, y), (21.0, y));
                 let mut p = PathBuilder::new(); p.push_circle(x, y, 2.2);
-                path(&mut g, p.finish(), Some(c(theme::PAPER)), Some(ink));
+                path(&mut g, p.finish(), Some(c(palette.paper)), Some(ink));
             }
         }
         Glyph::Check => {

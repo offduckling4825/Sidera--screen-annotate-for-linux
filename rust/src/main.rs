@@ -23,6 +23,7 @@ mod page_cache;
 mod ui;
 mod ui_icons;
 mod ui_theme;
+mod system_theme;
 mod uinput;
 mod wayland;
 mod wps;
@@ -509,7 +510,8 @@ pub(crate) fn go_next(rt: &Rt, app: &mut App, wps: Option<&WpsBridge>) {
 
 pub(crate) fn exit_presentation(rt: &Rt, app: &mut App, wps: Option<&WpsBridge>) {
     if app.whiteboard {
-        app.whiteboard_bg_index = (app.whiteboard_bg_index + 1) % app::WHITEBOARD_COLORS.len() as i32;
+        app.whiteboard_bg_index = (app.whiteboard_bg_index + 1) % app::WHITEBOARD_BACKGROUND_COUNT;
+        app::save_settings(app);
         rt.redraw_full(app);
         return;
     }
@@ -581,6 +583,8 @@ pub(crate) fn collect_system_info(rt: &Rt, app: &App) -> String {
         if rt.has_compositor() { "有" } else { "无" }
     ));
     s.push_str(&format!("显示后端: {}\n", rt.backend.description()));
+    s.push_str(&format!("界面主题: {}（当前{}）\n", app.theme.preference.label(),
+        if app.theme.dark() { "深色" } else { "浅色" }));
     s.push_str(&format!("直接翻页按键: {}\n右键转发: {}\nCtrl+Shift+D: {}\n",
         rt.backend.can_inject_keys_without_prompt(), rt.backend.can_forward_right_click(), app.hotkey_ok));
     s.push_str(&format!(
@@ -638,6 +642,10 @@ fn apply_slider(app: &mut App, id: ui::SliderId, v: f32) {
 pub(crate) fn handle_settings_hit(rt: &Rt, app: &mut App, hit: SetHit) {
     if std::env::var("SIDERA_TRACE").is_ok() { log::info!("[SETTINGS] 命中 {:?}", hit); }
     match hit {
+        SetHit::Theme(preference) => {
+            app.apply_theme(ui_theme::Theme { preference, system_dark: system_theme::dark() });
+            app::save_settings(app);
+        }
         SetHit::ResetSlider(id) => {
             apply_slider(app, id, id.default_value());
             app::save_settings(app);
@@ -1579,6 +1587,7 @@ pub(crate) fn poll_wps(enabled: bool, whiteboard: bool, wps_bridge: &mut Option<
 
 pub(crate) fn tick_shared(rt: &Rt, app: &mut App, _ip: &mut Ip,
     wps_bridge: Option<&WpsBridge>, update: &WpsUpdate, t: &mut Timers) {
+    if app.update_system_theme(system_theme::dark()) { rt.redraw_full(app); }
     tick_launch(rt, app, wps_bridge, update.connected);
     let jump_epoch = if app.wps_debug { wps_bridge.and_then(WpsBridge::jump_epoch) } else { None };
     let jump_changed = app.wps_can_jump != jump_epoch.is_some() || app.wps_deck_epoch != jump_epoch.unwrap_or(-1);
@@ -1780,6 +1789,7 @@ fn run_application() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    system_theme::start();
     let fonts = Fonts::load();
     let icon_big = load_icon(84);
     let icon = load_icon(44);
@@ -1838,6 +1848,7 @@ fn run_application() -> Result<(), Box<dyn std::error::Error>> {
     canvas.fill(tiny_skia::Color::TRANSPARENT);
     let mut app = App::new(canvas, logical_w, logical_h);
     app::load_settings(&mut app);
+    app.update_system_theme(system_theme::dark());
     // X11 DPI 缩放：逻辑尺寸 × scale = 物理分辨率画布
     app.set_scale(scale);
     // 环境变量仅本次运行覆盖（不落盘），与 C++ 版一致

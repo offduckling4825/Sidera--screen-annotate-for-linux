@@ -28,6 +28,8 @@ pub const STROKE_RAMP_MS: i64 = 600;
 pub const STROKE_MIN_SCALE: f64 = 0.85;
 
 pub const WHITEBOARD_COLORS: [(u8, u8, u8); 2] = [(0x0F, 0x3D, 0x2E), (255, 255, 255)];
+pub const WHITEBOARD_THEME: i32 = 2;
+pub const WHITEBOARD_BACKGROUND_COUNT: i32 = 3;
 
 pub const COLORS: [(u8, u8, u8); 10] = [
     (255, 40, 40),
@@ -118,6 +120,7 @@ pub struct App {
     // 侧边栏外观
     pub sb_scale: f64,
     pub sidebar_alpha: u8,
+    pub theme: crate::ui_theme::Theme,
 
     // 平台
     pub hotkey_ok: bool,
@@ -219,7 +222,7 @@ impl App {
             show_diag: false,
             diag_text: String::new(),
             whiteboard: false,
-            whiteboard_bg_index: 1,
+            whiteboard_bg_index: WHITEBOARD_THEME,
             saved_mode: 0,
             launch: crate::launch::Launch::default(),
             collapsed: false,
@@ -238,6 +241,7 @@ impl App {
             last_pen_w: 0,
             sb_scale: DEFAULT_SB_SCALE,
             sidebar_alpha: DEFAULT_SIDEBAR_ALPHA,
+            theme: crate::ui_theme::Theme::default(),
             hotkey_ok: false,
             wps_fullscreen: false,
             wps_debug: true,
@@ -391,7 +395,20 @@ impl App {
         ERASER_SIZES[self.cur_eraser]
     }
     pub fn whiteboard_bg_color(&self) -> Color {
-        whiteboard_bg(self.whiteboard_bg_index)
+        if self.whiteboard_bg_index == WHITEBOARD_THEME { crate::ui_theme::c(self.theme.palette().board) }
+        else { whiteboard_bg(self.whiteboard_bg_index) }
+    }
+
+    /// A theme switch only invalidates UI artwork, never canvas/undo/page caches.
+    pub fn apply_theme(&mut self, theme: crate::ui_theme::Theme) -> bool {
+        let changed = self.theme.dark() != theme.dark();
+        self.theme = theme;
+        if changed { self.launch.card.get_mut().take(); }
+        changed
+    }
+
+    pub fn update_system_theme(&mut self, dark: bool) -> bool {
+        self.apply_theme(crate::ui_theme::Theme { system_dark: dark, ..self.theme })
     }
 
     pub fn timed_pen_width(&self) -> i32 {
@@ -678,6 +695,17 @@ fn parse_settings(app: &mut App, content: &str) {
         let k = &line[..eq];
         let v = &line[eq + 1..];
         match k {
+            "theme" => {
+                if let Some(preference) = crate::ui_theme::Preference::parse(v) {
+                    app.apply_theme(crate::ui_theme::Theme { preference, ..app.theme });
+                }
+            }
+            "whiteboardBackground" => match v {
+                "green" => app.whiteboard_bg_index = 0,
+                "white" => app.whiteboard_bg_index = 1,
+                "theme" => app.whiteboard_bg_index = WHITEBOARD_THEME,
+                _ => {}
+            },
             "wpsDebug" => app.wps_debug = v == "1",
             "sbScale" => {
                 if let Ok(f) = v.parse::<f64>() {
@@ -708,8 +736,14 @@ fn parse_settings(app: &mut App, content: &str) {
 
 pub fn save_settings(app: &App) {
     let Some(path) = config_file() else { log::warn!("无法确定设置目录"); return };
-    let content = format!(
-        "wpsDebug={}\nsbScale={:.2}\nsidebarAlpha={}\nrightClickCursor={}\neraseByFinger={}\nlargeTouchThreshold={}\nlargeEraseScale10={}\n",
+    if let Err(e) = crate::persistence::atomic_write(&path, serialize_settings(app).as_bytes()) {
+        log::warn!("保存设置失败：{e}");
+    }
+}
+
+fn serialize_settings(app: &App) -> String {
+    format!(
+        "wpsDebug={}\nsbScale={:.2}\nsidebarAlpha={}\nrightClickCursor={}\neraseByFinger={}\nlargeTouchThreshold={}\nlargeEraseScale10={}\ntheme={}\nwhiteboardBackground={}\n",
         if app.wps_debug { 1 } else { 0 },
         app.sb_scale,
         app.sidebar_alpha,
@@ -717,10 +751,9 @@ pub fn save_settings(app: &App) {
         if app.erase_by_finger { 1 } else { 0 },
         app.large_touch_threshold as i32,
         app.large_erase_scale10,
-    );
-    if let Err(e) = crate::persistence::atomic_write(&path, content.as_bytes()) {
-        log::warn!("保存设置失败：{e}");
-    }
+        app.theme.preference.key(),
+        match app.whiteboard_bg_index { 0 => "green", 1 => "white", _ => "theme" },
+    )
 }
 
 #[cfg(test)]
@@ -952,6 +985,70 @@ mod undo_tests {
         };
         assert_eq!(px(10, 10), (255, 0, 0, 255), "已保存瓦片应恢复为红");
         assert_eq!(px(280, 280), (0, 0, 255, 255), "未保存瓦片区域应保持蓝");
+    }
+}
+
+#[cfg(test)]
+mod theme_tests {
+    use super::*;
+    use crate::ui_theme::{Preference, Theme};
+
+    #[test]
+    fn preferences_and_explicit_board_background_round_trip_without_persisting_system_state() {
+        let make = || App::new(Pixmap::new(120, 100).unwrap(), 120, 100);
+        let mut legacy = make();
+        parse_settings(&mut legacy, "sbScale=1.13\nsidebarAlpha=99\n");
+        assert_eq!(legacy.theme.preference, Preference::Light);
+        assert_eq!(legacy.whiteboard_bg_index, WHITEBOARD_THEME);
+        for preference in [Preference::Light, Preference::Dark, Preference::System] {
+            for background in 0..WHITEBOARD_BACKGROUND_COUNT {
+                let mut source = make();
+                source.theme = Theme { preference, system_dark: true };
+                source.whiteboard_bg_index = background;
+                source.sb_scale = 1.13;
+                let mut loaded = make();
+                parse_settings(&mut loaded, &serialize_settings(&source));
+                assert_eq!(loaded.theme.preference, preference);
+                assert!(!loaded.theme.system_dark);
+                assert_eq!(loaded.whiteboard_bg_index, background);
+                assert_eq!(loaded.sb_scale, source.sb_scale);
+                parse_settings(&mut loaded, "theme=unknown\nwhiteboardBackground=999\n");
+                assert_eq!(loaded.theme.preference, preference);
+                assert_eq!(loaded.whiteboard_bg_index, background);
+            }
+        }
+    }
+
+    #[test]
+    fn switching_themes_preserves_ink_pages_undo_and_manual_board_colour() {
+        let mut app = App::new(Pixmap::new(120, 100).unwrap(), 120, 100);
+        app.begin_undo();
+        crate::paint::stroke_tapered(&mut app, (20, 20), (90, 20), 8, 8);
+        app.save_current_page();
+        let ink = app.canvas.data().to_vec();
+        let light_board = app.whiteboard_bg_color();
+        app.launch.card.get_mut().replace(Pixmap::new(8, 8).unwrap());
+        assert!(app.apply_theme(Theme { preference: Preference::Dark, system_dark: false }));
+        assert!(app.launch.card.borrow().is_none());
+        assert_ne!(app.whiteboard_bg_color(), light_board);
+        assert_eq!(app.canvas.data(), ink);
+        assert_eq!(app.slide_cache.get(&1).unwrap().data(), ink);
+        assert_eq!(app.undo.len(), 1);
+        app.toggle_whiteboard();
+        crate::paint::stroke_tapered(&mut app, (20, 40), (90, 40), 8, 8);
+        app.save_current_page();
+        let board_ink = app.canvas.data().to_vec();
+        app.whiteboard_bg_index = 0;
+        let manual_board = app.whiteboard_bg_color();
+        app.apply_theme(Theme { preference: Preference::System, system_dark: true });
+        assert!(app.update_system_theme(false));
+        assert_eq!(app.whiteboard_bg_color(), manual_board);
+        assert_eq!(app.canvas.data(), board_ink);
+        assert_eq!(app.whiteboard_cache.get(&1).unwrap().data(), board_ink);
+        app.toggle_whiteboard();
+        assert_eq!(app.canvas.data(), ink);
+        app.apply_theme(Theme { preference: Preference::Light, system_dark: false });
+        assert!(!app.update_system_theme(true));
     }
 }
 

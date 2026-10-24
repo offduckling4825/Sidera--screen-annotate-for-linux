@@ -11,6 +11,7 @@ Rust 是课堂定制功能的主要实现，支持原生 X11、GNOME 扩展、la
 - [问题状态与剩余工作](ISSUES.md)
 - [下一步重构计划](REFACTOR_PLAN.md)
 - [测试环境及命令](TEST_ENVIRONMENT.md)
+- [浅色/深色主题与验证范围](DARK_MODE.md)
 - [本轮复查证据](audit/REVIEW_2026-10-24.md)
 - [历次记录索引](audit/README.md)
 

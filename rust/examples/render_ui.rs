@@ -20,7 +20,9 @@ use tiny_skia::{Pixmap, PixmapPaint, Transform};
 use app::App;
 use text::Fonts;
 use ui::{Btn, Ctx, R};
-use ui_theme::{c, TEXT, MUTED};
+use ui_theme::c;
+const TEXT: u32 = ui_theme::LIGHT.text;
+const MUTED: u32 = ui_theme::LIGHT.muted;
 
 fn fresh() -> App {
     let mut a = App::new(Pixmap::new(1280, 900).unwrap(), 1280, 900);
@@ -74,7 +76,7 @@ fn scene(fonts: &Fonts, dark: bool) -> Pixmap {
     let ink = c(if dark { 0xE6F1E7 } else { TEXT });
     fonts.draw(&mut pm, "课堂练习", 380.0, 240.0, 42.0, ink, Transform::identity());
     fonts.draw(&mut pm, "观察图形，想一想还可以怎样解答？", 380.0, 294.0, 25.0, ink, Transform::identity());
-    let mut ctx = Ctx { pm: &mut pm, tr: Transform::identity() };
+    let mut ctx = Ctx { palette: &ui_theme::LIGHT, pm: &mut pm, tr: Transform::identity() };
     ctx.stroke_line((460.0, 565.0), (740.0, 565.0), ink, 2.2);
     ctx.stroke_line((460.0, 565.0), (600.0, 355.0), ink, 2.2);
     ctx.stroke_line((600.0, 355.0), (740.0, 565.0), ink, 2.2);
@@ -104,7 +106,7 @@ fn main() {
         let start = std::time::Instant::now();
         let mut intro = launch::Launch::begin("GNOME 原生 Wayland · 1280 × 900".into(), true, true, start);
         intro.report_link(state, start);
-        let card = splash_paint::draw(&fonts, intro_icon.as_ref(), &intro, 560, 448);
+        let card = splash_paint::draw(&fonts, intro_icon.as_ref(), &intro, 560, 448, &ui_theme::LIGHT);
         let (x, y) = (20.0 + (index % 2) as f32 * 600.0, 48.0 + (index / 2) as f32 * 518.0);
         label(&mut startup_states, &fonts, state.label(), x + 6.0, y - 16.0, 20.0);
         paste(&mut startup_states, &card, x, y, 1.0);
@@ -337,7 +339,7 @@ fn main() {
     let start = std::time::Instant::now();
     let mut intro = launch::Launch::begin("GNOME 原生 Wayland · 1280 × 900".into(), true, true, start);
     intro.report_link(launch::LinkState::Waiting, start);
-    paste(&mut board, &splash_paint::draw(&fonts, large_icon.as_ref(), &intro, 560, 448), 990.0, 882.0, 0.46);
+    paste(&mut board, &splash_paint::draw(&fonts, large_icon.as_ref(), &intro, 560, 448, &ui_theme::LIGHT), 990.0, 882.0, 0.46);
     board.save_png(out.join("classroom-overview.png")).unwrap();
 
     for dark in [false, true] {

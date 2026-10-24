@@ -87,6 +87,26 @@ mod tests {
         desktop.synchronize("laptop");
         assert!(desktop.outputs.values().all(|o| o.app.mode == 0 && !o.app.drawing_tools.expanded()));
     }
+
+    #[test]
+    fn theme_changes_synchronize_without_changing_each_displays_ink() {
+        let mut desktop = fixture();
+        let output = desktop.outputs.get_mut("projector").unwrap();
+        crate::paint::stroke_tapered(&mut output.app, (20, 20), (80, 20), 6, 6);
+        let ink = output.app.canvas.data().to_vec();
+        output.app.apply_theme(crate::ui_theme::Theme {
+            preference: crate::ui_theme::Preference::Dark, system_dark: false,
+        });
+        desktop.synchronize("projector");
+        assert!(desktop.outputs.values().all(|o| o.app.theme.dark()));
+        assert_eq!(desktop.outputs["projector"].app.canvas.data(), ink);
+        assert!(desktop.outputs["laptop"].app.canvas.data().iter().all(|&b| b == 0));
+        // A new output takes the saved preference through the same apply path.
+        let (rt, app, _) = crate::navigation_tests::fixture(true);
+        let mut output = Output { rt, app, ip: Ip::default(), timers: Timers::new(), launch_pending: false };
+        desktop.controls.apply(&mut output);
+        assert!(output.app.theme.dark());
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -96,6 +116,7 @@ struct Controls {
     page: i32, color: usize, pen: usize, eraser: usize, wps: bool, linked_show: bool,
     alpha: u8, scale: f64, right_click: bool, fingers: bool,
     threshold: f64, erase_scale: i32,
+    theme: crate::ui_theme::Theme,
 }
 impl Controls {
     fn read(app: &App) -> Self {
@@ -106,6 +127,7 @@ impl Controls {
             wps: app.wps_debug, alpha: app.sidebar_alpha, scale: app.sb_scale,
             linked_show: app.wps_debug && app.wps_connected && app.wps_real_pos > 0,
             right_click: app.right_click_cursor_on, fingers: app.erase_by_finger,
+            theme: app.theme,
             threshold: app.large_touch_threshold, erase_scale: app.large_erase_scale10 }
     }
     fn apply(&self, output: &mut Output) {
@@ -125,6 +147,7 @@ impl Controls {
         a.saved_drawing_tools = self.saved_drawing_tools;
         a.mode = mode; a.saved_mode = self.saved_mode;
         a.whiteboard_bg_index = self.whiteboard_bg;
+        a.apply_theme(self.theme);
         a.cur_color = self.color; a.cur_pen = self.pen; a.cur_eraser = self.eraser;
         a.wps_debug = self.wps; a.sidebar_alpha = self.alpha; a.sb_scale = self.scale;
         a.right_click_cursor_on = self.right_click; a.erase_by_finger = self.fingers;
@@ -150,6 +173,7 @@ impl Desktop {
     pub fn new(fonts: Fonts, icon: Option<Pixmap>, icon_big: Option<Pixmap>, single: Option<UnixListener>) -> Self {
         let mut app = App::new(Pixmap::new(1, 1).unwrap(), 1920, 1080);
         app::load_settings(&mut app);
+        app.update_system_theme(crate::system_theme::dark());
         if let Ok(value) = std::env::var("WPS_API_DEBUG") { app.wps_debug = value == "1"; }
         Self { outputs: BTreeMap::new(), wps: None, controls: Controls::read(&app),
             detached: VecDeque::new(), fonts, icon, icon_big, single, starting: true }
@@ -157,6 +181,7 @@ impl Desktop {
 
     pub fn add(&mut self, id: String, backend: Box<dyn Backend>) {
         if self.outputs.contains_key(&id) || self.outputs.len() >= 16 { return; }
+        self.controls.theme.system_dark = crate::system_theme::dark();
         let saved = self.detached.iter().position(|(key, _)| key == &id)
             .and_then(|index| self.detached.remove(index)).map(|(_, app)| app);
         let app = saved.unwrap_or_else(|| App::new(Pixmap::new(1, 1).unwrap(), 1920, 1080));

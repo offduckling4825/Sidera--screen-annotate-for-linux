@@ -57,6 +57,7 @@ pub enum MoreHit {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SetHit {
+    Theme(theme::Preference),
     ResetSlider(SliderId),
     Autostart,
     WpsDebug,
@@ -198,6 +199,7 @@ pub fn control_rect(app: &App, control: Control) -> Option<R> {
 }
 
 fn draw_press_feedback(app: &App, ctx: &mut Ctx) {
+    let palette = ctx.palette;
     let Some(press) = app.press.filter(|p| p.active && !p.expired()) else { return };
     if !control_enabled(app, press.control) { return; }
     if sidebar_animating(app) && matches!(press.control, Control::Sidebar(_, _)) { return; }
@@ -209,10 +211,13 @@ fn draw_press_feedback(app: &App, ctx: &mut Ctx) {
         _ => 9.0,
     };
     let inset = R { x: r.x + 2, y: r.y + 2, w: r.w - 4, h: r.h - 4 };
-    let feedback = if matches!(press.control, Control::Sidebar(button, _) if sidebar_button_selected(app, button)) {
-        theme::WHITE
+    let filled_action = matches!(press.control, Control::Setting(SetHit::Done)
+        | Control::DiagClose | Control::PagePicker(PagePickerHit::Jump))
+        || matches!(press.control, Control::Setting(SetHit::Theme(p)) if p == app.theme.preference);
+    let feedback = if filled_action || matches!(press.control, Control::Sidebar(button, _) if sidebar_button_selected(app, button)) {
+        palette.on_accent
     } else {
-        theme::ACCENT
+        palette.accent
     };
     ctx.fill_round(inset, radius, alpha(feedback, 32));
     ctx.stroke_round(inset, radius, c(feedback), 2.0);
@@ -280,6 +285,7 @@ fn rounded_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Pat
 pub struct Ctx<'a> {
     pub pm: &'a mut Pixmap,
     pub tr: Transform,
+    pub palette: &'static theme::Palette,
 }
 
 impl<'a> Ctx<'a> {
@@ -355,13 +361,15 @@ fn surface(ctx: &mut Ctx, r: R, radius: f32, fill: Color, border: Color) {
 }
 
 fn panel(ctx: &mut Ctx, r: R, radius: f32, opacity: f32) {
+    let palette = ctx.palette;
     let a = (255.0 * opacity.clamp(0.0, 1.0)) as u8;
-    surface(ctx, r, radius, alpha(theme::PAPER, a), alpha(theme::BORDER, a));
+    surface(ctx, r, radius, alpha(palette.paper, a), alpha(palette.border, a));
 }
 
 fn choice(ctx: &mut Ctx, r: R, selected: bool) {
-    surface(ctx, r, 10.0, c(if selected { theme::ACCENT_LIGHT } else { theme::SURFACE }),
-        c(if selected { theme::ACCENT } else { theme::BORDER }));
+    let palette = ctx.palette;
+    surface(ctx, r, 10.0, c(if selected { palette.accent_light } else { palette.surface }),
+        c(if selected { palette.accent } else { palette.border }));
 }
 
 // ---------------- 几何 ----------------
@@ -748,6 +756,11 @@ pub fn settings_controls(app: &App) -> Vec<(SetHit, R)> {
         (SetHit::Quit, full(a + 2)),
         (SetHit::Done, full(a + 3)),
     ];
+    // Reuse the header subtitle area; existing rows and panel bounds stay put.
+    for (preference, offset, width) in [(theme::Preference::Light, 0, 84),
+        (theme::Preference::Dark, 90, 84), (theme::Preference::System, 180, 126)] {
+        controls.push((SetHit::Theme(preference), R { x: p.x + 84 + offset, y: p.y + 46, w: width, h: 32 }));
+    }
     controls.extend(settings_sliders(app).into_iter().map(|s| (SetHit::ResetSlider(s.id), s.reset)));
     controls
 }
@@ -798,6 +811,7 @@ pub fn confirm_hit(app: &App, x: i32, y: i32) -> Option<ConfirmHit> {
 }
 
 pub fn draw_confirm(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
+    let palette = ctx.palette;
     let p = confirm_rect(app);
     panel(ctx, p, 16.0, 1.0);
     ctx.text_center(
@@ -805,15 +819,15 @@ pub fn draw_confirm(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
         R { x: p.x, y: p.y + 24, w: p.w, h: 40 },
         "确定要退出 Sidera 吗？",
         20.0,
-        c(theme::TEXT),
+        c(palette.text),
     );
     let half = (p.w - 60) / 2;
     let no = R { x: p.x + 20, y: p.y + 92, w: half, h: 40 };
     let yes = R { x: p.x + 20 + half + 20, y: p.y + 92, w: half, h: 40 };
-    surface(ctx, no, 10.0, c(theme::SURFACE), c(theme::BORDER));
-    ctx.text_center(fonts, no, "取消", 19.0, c(theme::TEXT));
-    surface(ctx, yes, 10.0, c(theme::DANGER_LIGHT), alpha(theme::DANGER, 85));
-    ctx.text_center(fonts, yes, "确定退出", 19.0, c(theme::DANGER));
+    surface(ctx, no, 10.0, c(palette.surface), c(palette.border));
+    ctx.text_center(fonts, no, "取消", 19.0, c(palette.text));
+    surface(ctx, yes, 10.0, c(palette.danger_light), alpha(palette.danger, 85));
+    ctx.text_center(fonts, yes, "确定退出", 19.0, c(palette.danger));
 }
 
 pub fn diag_rect(app: &App) -> R {
@@ -834,6 +848,7 @@ pub fn diag_close_hit(app: &App, x: i32, y: i32) -> bool {
 }
 
 pub fn draw_diag(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
+    let palette = ctx.palette;
     let p = diag_rect(app);
     panel(ctx, p, 16.0, 1.0);
     ctx.text_center(
@@ -841,7 +856,7 @@ pub fn draw_diag(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
         R { x: p.x, y: p.y + 12, w: p.w, h: 30 },
         "系统诊断信息",
         18.0,
-        c(theme::TEXT),
+        c(palette.text),
     );
     let mut yy = p.y + 52;
     for line in app.diag_text.split('\n') {
@@ -855,12 +870,12 @@ pub fn draw_diag(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
             }
             visible.push('…');
         }
-        ctx.text(fonts, &visible, (p.x + 20) as f32, yy as f32, 13.0, c(theme::MUTED));
+        ctx.text(fonts, &visible, (p.x + 20) as f32, yy as f32, 13.0, c(palette.muted));
         yy += 17;
     }
     let close = R { x: p.x + 20, y: p.y + p.h - 52, w: p.w - 40, h: 38 };
-    surface(ctx, close, 10.0, c(theme::ACCENT), c(theme::ACCENT));
-    ctx.text_center(fonts, close, "关闭", 19.0, c(theme::WHITE));
+    surface(ctx, close, 10.0, c(palette.accent), c(palette.accent));
+    ctx.text_center(fonts, close, "关闭", 19.0, c(palette.on_accent));
 }
 
 
@@ -900,6 +915,7 @@ pub fn render_region(
     w: i32,
     h: i32,
 ) -> Option<Pixmap> {
+    let palette = app.theme.palette();
     let x = x.max(0);
     let y = y.max(0);
     let x2 = (x + w).min(app.screen_w);
@@ -932,7 +948,7 @@ pub fn render_region(
     );
 
     if app.launch.active() {
-        let mut ctx = Ctx { pm: &mut pm, tr };
+        let mut ctx = Ctx { palette: app.theme.palette(), pm: &mut pm, tr };
         for right in [false, true] { draw_launch_sidebar(app, fonts, &mut ctx, right); }
         let r = launch_rect(app);
         if app.launch.panel_alpha() > 0.0 && x < r.x + r.w && x2 > r.x && y < r.y + r.h && y2 > r.y {
@@ -940,7 +956,7 @@ pub fn render_region(
                 ((r.h as f32) * sc).round().max(1.0) as u32);
             let mut cache = app.launch.card.borrow_mut();
             if cache.as_ref().is_none_or(|pm| pm.width() != cw || pm.height() != ch) {
-                *cache = Some(crate::splash_paint::draw(fonts, icon, &app.launch, cw, ch));
+                *cache = Some(crate::splash_paint::draw(fonts, icon, &app.launch, cw, ch, palette));
             }
             if let Some(card) = cache.as_ref() {
                 ctx.pm.draw_pixmap(0, 0, card.as_ref(), &tiny_skia::PixmapPaint {
@@ -953,6 +969,7 @@ pub fn render_region(
 
     {
         let mut ctx = Ctx {
+            palette,
             pm: &mut pm,
             tr,
         };
@@ -965,7 +982,7 @@ pub fn render_region(
                 app.palm_erase_w
             } as f32;
             for &(cx, cy) in &app.palm_erase_preview {
-                ctx.fill_circle(cx as f32, cy as f32, ew / 2.0, alpha(theme::ACCENT, 28));
+                ctx.fill_circle(cx as f32, cy as f32, ew / 2.0, alpha(palette.accent, 28));
                 let half = (ew / 2.0) as i32;
                 ctx.stroke_round(
                     R {
@@ -975,7 +992,7 @@ pub fn render_region(
                         h: half * 2,
                     },
                     ew / 2.0,
-                    c(theme::ACCENT_LINE),
+                    c(palette.accent_line),
                     2.0,
                 );
             }
@@ -984,7 +1001,8 @@ pub fn render_region(
         // 白板页码
         if app.whiteboard {
             let s = format!("第 {} 页 / {}", app.current_slide, crate::app::CACHE_BOARD);
-            let page_ink = c(if app.whiteboard_bg_index == 0 { theme::ACCENT_LIGHT } else { theme::MUTED });
+            let mut page_ink = theme::on_color(app.whiteboard_bg_color());
+            page_ink.set_alpha(0.70);
             ctx.text(
                 fonts,
                 &s,
@@ -1051,24 +1069,25 @@ fn draw_launch_piece(app: &App, ctx: &mut Ctx, target: R, visible: R, r: R,
     let scale = app.scale as f32;
     let Some(mut tile) = Pixmap::new((r.w as f32 * scale).ceil() as u32,
         (r.h as f32 * scale).ceil() as u32) else { return; };
-    draw(&mut Ctx { pm: &mut tile,
+    draw(&mut Ctx { palette: app.theme.palette(), pm: &mut tile,
         tr: Transform::from_scale(scale, scale).pre_translate(-r.x as f32, -r.y as f32) });
     ctx.pm.draw_pixmap(0, 0, tile.as_ref(), &tiny_skia::PixmapPaint { opacity, ..Default::default() },
         ctx.tr.pre_translate(r.x as f32, r.y as f32).pre_scale(1.0 / scale, 1.0 / scale), None);
 }
 
 fn draw_launch_sidebar(app: &App, fonts: &Fonts, ctx: &mut Ctx, right: bool) {
+    let palette = ctx.palette;
     let p = app.launch.reveal();
     if p <= 0.0 { return; }
     if p >= 1.0 { draw_sidebar(app, fonts, ctx, right, app.sidebar_retract()); return; }
     let target = sidebar_rect(app, right);
     let visible = sidebar_launch_rect(app, right);
     let radius = (visible.w as f32 * 0.30).min(20.0).min(visible.h as f32 / 2.0);
-    surface(ctx, visible, radius, alpha(theme::SURFACE, app.sidebar_alpha), alpha(theme::BORDER, 225));
+    surface(ctx, visible, radius, alpha(palette.surface, app.sidebar_alpha), alpha(palette.border, 225));
     let cx = visible.x as f32 + visible.w as f32 / 2.0;
     let grip = app.sb_dot() as f32 * 0.25;
     for y in [visible.y + 6, visible.y + visible.h - 5] {
-        ctx.stroke_line((cx - grip, y as f32), (cx + grip, y as f32), c(theme::MUTED), 1.8);
+        ctx.stroke_line((cx - grip, y as f32), (cx + grip, y as f32), c(palette.muted), 1.8);
     }
     if app.collapsed { return; }
     for (button, r) in expanded_sidebar_buttons(app, right) {
@@ -1081,30 +1100,31 @@ fn draw_launch_sidebar(app: &App, fonts: &Fonts, ctx: &mut Ctx, right: bool) {
 }
 
 fn draw_sidebar(app: &App, fonts: &Fonts, ctx: &mut Ctx, right: bool, progress: f32) {
+    let palette = ctx.palette;
     let drag = app.sidebar_drag.filter(|drag| drag.right == right);
     let held = drag.is_some();
     let stroke_width = 2.0;
     if progress < 1.0 {
         let sb = expanded_sidebar_rect(app, right);
         let dx = (sb.w + 4) as f32 * progress * if right { 1.0 } else { -1.0 };
-        let mut moving = Ctx { pm: &mut *ctx.pm, tr: ctx.tr.pre_translate(dx, 0.0) };
+        let mut moving = Ctx { palette: app.theme.palette(), pm: &mut *ctx.pm, tr: ctx.tr.pre_translate(dx, 0.0) };
         let radius = (sb.w as f32 * 0.30).min(20.0);
-        let fill = if held { alpha(theme::ACCENT_LIGHT, app.sidebar_alpha.max(200)) }
-            else { alpha(theme::SURFACE, app.sidebar_alpha) };
-        surface(&mut moving, sb, radius, fill, if held { c(theme::ACCENT) } else { alpha(theme::BORDER, 225) });
+        let fill = if held { alpha(palette.accent_light, app.sidebar_alpha.max(200)) }
+            else { alpha(palette.surface, app.sidebar_alpha) };
+        surface(&mut moving, sb, radius, fill, if held { c(palette.accent) } else { alpha(palette.border, 225) });
         if held {
             moving.stroke_round(R { x: sb.x + 2, y: sb.y + 2, w: sb.w - 4, h: sb.h - 4 },
-                (radius - 2.0).max(1.0), c(theme::ACCENT), stroke_width);
+                (radius - 2.0).max(1.0), c(palette.accent), stroke_width);
         }
         let cx = sb.x as f32 + sb.w as f32 / 2.0;
         let grip = app.sb_dot() as f32 * 0.25;
         for y in [sb.y + 6, sb.y + sb.h - 5] {
             if held {
                 let w = (app.sb_dot() + 6).clamp(20, sb.w - 6);
-                moving.fill_round(R { x: sb.x + (sb.w - w) / 2, y: y - 4, w, h: 8 }, 4.0, c(theme::ACCENT));
+                moving.fill_round(R { x: sb.x + (sb.w - w) / 2, y: y - 4, w, h: 8 }, 4.0, c(palette.accent));
             }
             moving.stroke_line((cx - grip, y as f32), (cx + grip, y as f32),
-                c(if held { theme::WHITE } else { theme::MUTED }), if held { 2.2 } else { 1.8 });
+                c(if held { palette.on_accent } else { palette.muted }), if held { 2.2 } else { 1.8 });
         }
         for (k, r) in expanded_sidebar_buttons(app, right) { draw_btn(app, fonts, &mut moving, k, r); }
         draw_opening_tools(app, fonts, &mut moving, right);
@@ -1113,20 +1133,20 @@ fn draw_sidebar(app: &App, fonts: &Fonts, ctx: &mut Ctx, right: bool, progress: 
     if progress > 0.0 {
         let tab = sidebar_tab_rect(app, right);
         let dx = tab.w as f32 * (1.0 - progress) * if right { 1.0 } else { -1.0 };
-        let mut moving = Ctx { pm: &mut *ctx.pm, tr: ctx.tr.pre_translate(dx, 0.0) };
+        let mut moving = Ctx { palette: app.theme.palette(), pm: &mut *ctx.pm, tr: ctx.tr.pre_translate(dx, 0.0) };
         // Extend under the screen edge so only the inward corners are rounded.
         let outline = R { x: tab.x - if right { 0 } else { 12 }, w: tab.w + 12, ..tab };
-        surface(&mut moving, outline, 12.0, c(if held { theme::ACCENT_LIGHT } else { theme::PAPER }),
-            c(if held { theme::ACCENT } else { theme::ACCENT_LINE }));
+        surface(&mut moving, outline, 12.0, c(if held { palette.accent_light } else { palette.paper }),
+            c(if held { palette.accent } else { palette.accent_line }));
         if held {
             moving.stroke_round(R { x: outline.x + 2, y: outline.y + 2, w: outline.w - 4, h: outline.h - 4 },
-                10.0, c(theme::ACCENT), stroke_width);
+                10.0, c(palette.accent), stroke_width);
         }
         let cx = tab.x as f32 + tab.w as f32 / 2.0;
         let cy = tab.y as f32 + tab.h as f32 / 2.0;
         let direction = if right { -1.0 } else { 1.0 };
-        moving.stroke_line((cx - direction * 3.0, cy - 6.0), (cx + direction * 3.0, cy), c(theme::ACCENT), 2.4);
-        moving.stroke_line((cx + direction * 3.0, cy), (cx - direction * 3.0, cy + 6.0), c(theme::ACCENT), 2.4);
+        moving.stroke_line((cx - direction * 3.0, cy - 6.0), (cx + direction * 3.0, cy), c(palette.accent), 2.4);
+        moving.stroke_line((cx + direction * 3.0, cy), (cx - direction * 3.0, cy + 6.0), c(palette.accent), 2.4);
     }
 }
 
@@ -1145,7 +1165,7 @@ fn draw_opening_tools(app: &App, fonts: &Fonts, ctx: &mut Ctx, right: bool) {
         if opacity <= 0.0 { continue; }
         let Some(mut tile) = Pixmap::new((r.w as f32 * scale).ceil() as u32,
             (r.h as f32 * scale).ceil() as u32) else { continue };
-        let mut local = Ctx { pm: &mut tile,
+        let mut local = Ctx { palette: app.theme.palette(), pm: &mut tile,
             tr: Transform::from_scale(scale, scale).pre_translate(-r.x as f32, -r.y as f32) };
         draw_btn(app, fonts, &mut local, button, r);
         ctx.pm.draw_pixmap(0, 0, tile.as_ref(), &tiny_skia::PixmapPaint {
@@ -1155,19 +1175,20 @@ fn draw_opening_tools(app: &App, fonts: &Fonts, ctx: &mut Ctx, right: bool) {
 }
 
 fn draw_sidebar_pages(app: &App, fonts: &Fonts, ctx: &mut Ctx, right: bool) {
+    let palette = ctx.palette;
     if !app.sidebar_page_visible() { return; }
     let r = sidebar_page_rect(app, right);
     let (page, total) = sidebar_page_values(app);
     let text = format!("{page} / {total}");
     let available_picker = app.page_picker_context().is_some();
     let opened = app.page_picker.is_some() && app.popup_on_right == right;
-    surface(ctx, r, 6.0, c(if opened { theme::ACCENT_LIGHT } else { theme::SURFACE }),
-        c(if available_picker { theme::ACCENT_LINE } else { theme::BORDER }));
+    surface(ctx, r, 6.0, c(if opened { palette.accent_light } else { palette.surface }),
+        c(if available_picker { palette.accent_line } else { palette.border }));
     let available = (r.w - 6).max(1) as f32;
     let nominal = (13.0 * app.sb_scale as f32).clamp(11.0, 16.0);
     let fit = |text: &str, size: f32| size * (available / fonts.text_width(text, size).max(1.0)).min(1.0);
     let size = fit(&text, nominal);
-    let ink = c(if page == "—" { theme::MUTED } else { theme::TEXT });
+    let ink = c(if page == "—" { palette.muted } else { palette.text });
     if size >= 10.5 {
         ctx.text_center(fonts, r, &text, size, ink);
     } else {
@@ -1177,11 +1198,12 @@ fn draw_sidebar_pages(app: &App, fonts: &Fonts, ctx: &mut Ctx, right: bool) {
         let total = format!("/ {total}");
         let size = nominal.min(top.h as f32 - 1.0);
         ctx.text_center(fonts, top, &page, fit(&page, size), ink);
-        ctx.text_center(fonts, bottom, &total, fit(&total, size), c(theme::MUTED));
+        ctx.text_center(fonts, bottom, &total, fit(&total, size), c(palette.muted));
     }
 }
 
 fn draw_btn(app: &App, fonts: &Fonts, ctx: &mut Ctx, k: Btn, r: R) {
+    let palette = ctx.palette;
     let btn = app.sb_btn() as f32;
     let radius = (r.w as f32 * 0.24).min(10.0);
     if k == Btn::Exit && !app.whiteboard {
@@ -1189,25 +1211,25 @@ fn draw_btn(app: &App, fonts: &Fonts, ctx: &mut Ctx, k: Btn, r: R) {
         return;
     }
     let selected = sidebar_button_selected(app, k);
-    let mut fill = c(if selected { theme::ACCENT } else { theme::PAPER });
-    let mut edge = c(if selected { theme::TEXT } else { theme::BORDER });
-    let mut ink = c(if selected { theme::WHITE } else { theme::TEXT });
+    let mut fill = c(if selected { palette.accent } else { palette.paper });
+    let mut edge = c(if selected { palette.text } else { palette.border });
+    let mut ink = c(if selected { palette.on_accent } else { palette.text });
     if !control_enabled(app, Control::Sidebar(k, false)) {
-        fill = c(theme::DISABLED_SURFACE);
-        edge = c(theme::DISABLED_BORDER);
-        ink = c(theme::DISABLED_INK);
+        fill = c(palette.disabled_surface);
+        edge = c(palette.disabled_border);
+        ink = c(palette.disabled_ink);
     }
     if matches!(k, Btn::Prev | Btn::Next) && !app.whiteboard && !app.wps_navigation_ready {
-        fill = c(theme::WARNING_LIGHT); edge = c(theme::WARNING); ink = c(theme::WARNING);
+        fill = c(palette.warning_light); edge = c(palette.warning); ink = c(palette.warning);
     }
     if k == Btn::Exit {
         fill = app.whiteboard_bg_color();
-        ink = if app.whiteboard_bg_index == 0 { c(theme::WHITE) } else { c(theme::TEXT) };
+        ink = theme::on_color(fill);
     }
     surface(ctx, r, radius, fill, edge);
     match k {
         Btn::Collapse => {
-            ctx.text_multiline_center(fonts, r, "收起", (btn * 0.49).max(11.0), c(theme::MUTED));
+            ctx.text_multiline_center(fonts, r, "收起", (btn * 0.49).max(11.0), c(palette.muted));
         }
         Btn::Cursor | Btn::Pen | Btn::Eraser | Btn::Prev | Btn::Next | Btn::More => {
             let glyph = match k {
@@ -1220,12 +1242,14 @@ fn draw_btn(app: &App, fonts: &Fonts, ctx: &mut Ctx, k: Btn, r: R) {
             let size = (app.sb_icon() as f32 * factor).min(r.w.min(r.h) as f32 * 0.82);
             let x = r.x as f32 + (r.w as f32 - size) / 2.0;
             let y = r.y as f32 + (r.h as f32 - size) / 2.0;
-            // These tools have light-filled bodies. Keep their dark details
-            // readable on the selected background and preserve the ink tip.
-            let glyph_ink = if selected { c(theme::TEXT) } else { ink };
+            // Filled stationery keeps its own outline, while plain arrows/dots
+            // use the label contrast of the selected button.
+            let glyph_ink = if selected && matches!(k, Btn::Cursor | Btn::Pen | Btn::Eraser) {
+                c(palette.text)
+            } else { ink };
             icons::draw(ctx, glyph, x, y, size, glyph_ink, app.pen_color());
         }
-        Btn::Clear => ctx.text_center(fonts, r, "清除", (btn * 0.49).max(11.0), c(theme::DANGER)),
+        Btn::Clear => ctx.text_center(fonts, r, "清除", (btn * 0.49).max(11.0), c(palette.danger)),
         Btn::Undo => ctx.text_center(fonts, r, "撤回", (btn * 0.49).max(11.0), ink),
         Btn::Whiteboard => ctx.text_center(fonts, r, "白板", (btn * 0.49).max(11.0), ink),
         Btn::Exit => {
@@ -1235,6 +1259,7 @@ fn draw_btn(app: &App, fonts: &Fonts, ctx: &mut Ctx, k: Btn, r: R) {
 }
 
 fn draw_presentation_button(app: &App, fonts: &Fonts, ctx: &mut Ctx, r: R, radius: f32) {
+    let palette = ctx.palette;
     let weights = app.presentation_transition.weights();
     let blend = |colors: [u32; 3]| {
         let channel = |shift: u32| -> u8 {
@@ -1244,15 +1269,15 @@ fn draw_presentation_button(app: &App, fonts: &Fonts, ctx: &mut Ctx, r: R, radiu
         Color::from_rgba8(channel(16), channel(8), channel(0), 255)
     };
     surface(ctx, r, radius,
-        blend([theme::PAPER, theme::SUCCESS, theme::DANGER_LIGHT]),
-        blend([theme::BORDER, theme::SUCCESS, theme::DANGER]));
+        blend([palette.paper, palette.success, palette.danger_light]),
+        blend([palette.border, palette.success, palette.danger]));
     // Fade through: only one label is visible, so Esc and the two-line Chinese
     // captions never overlap. Deriving opacity from the same sampled weights
     // also keeps interrupted transitions continuous, on both sidebars.
     for (index, (label, ink, factor)) in [
-        ("Esc", theme::TEXT, 0.50),
-        ("开始\n放映", theme::WHITE, 0.42),
-        ("结束\n放映", theme::DANGER, 0.42),
+        ("Esc", palette.text, 0.50),
+        ("开始\n放映", palette.on_success, 0.42),
+        ("结束\n放映", palette.danger, 0.42),
     ].into_iter().enumerate() {
         let opacity = (2.0 * weights[index] - 1.0).clamp(0.0, 1.0);
         if opacity <= 0.0 { continue; }
@@ -1269,7 +1294,7 @@ fn draw_page_picker(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
     let scale = app.scale as f32;
     let Some(mut tile) = Pixmap::new((p.w as f32 * scale).ceil() as u32,
         (p.h as f32 * scale).ceil() as u32) else { return };
-    let mut local = Ctx { pm: &mut tile,
+    let mut local = Ctx { palette: app.theme.palette(), pm: &mut tile,
         tr: Transform::from_scale(scale, scale).pre_translate(-p.x as f32, -p.y as f32) };
     draw_page_picker_content(app, fonts, &mut local);
     ctx.pm.draw_pixmap(0, 0, tile.as_ref(), &tiny_skia::PixmapPaint { opacity, ..Default::default() },
@@ -1277,27 +1302,30 @@ fn draw_page_picker(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
 }
 
 fn draw_page_picker_content(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
+    let palette = ctx.palette;
     let Some(picker) = &app.page_picker else { return };
     let p = page_picker_rect(app);
     panel(ctx, p, 16.0, 1.0);
-    ctx.text(fonts, "跳转页面", (p.x + 18) as f32, (p.y + 32) as f32, 23.0, c(theme::TEXT));
+    ctx.text(fonts, "跳转页面", (p.x + 18) as f32, (p.y + 32) as f32, 23.0, c(palette.text));
     let hint = format!("共 {} 页 · 上下拨动选页", picker.total);
     let hint_size = 16.0 * ((p.w - 36) as f32 / fonts.text_width(&hint, 16.0).max(1.0)).min(1.0);
-    ctx.text(fonts, &hint, (p.x + 18) as f32, (p.y + 56) as f32, hint_size, c(theme::MUTED));
+    ctx.text(fonts, &hint, (p.x + 18) as f32, (p.y + 56) as f32, hint_size, c(palette.muted));
     let wheel = page_picker_control_rect(app, PagePickerHit::Wheel);
-    surface(ctx, wheel, 12.0, c(theme::SURFACE), c(theme::BORDER));
+    surface(ctx, wheel, 12.0, c(palette.surface), c(palette.border));
     let center = wheel.y as f64 + wheel.h as f64 / 2.0;
     let band = R { x: wheel.x + 8, y: center as i32 - 22, w: wheel.w - 16, h: 44 };
-    surface(ctx, band, 9.0, c(theme::ACCENT_LIGHT), c(theme::ACCENT_LINE));
-    if picker.dragging() { ctx.stroke_round(band, 9.0, c(theme::ACCENT), 2.0); }
+    surface(ctx, band, 9.0, c(palette.accent_light), c(palette.accent_line));
+    if picker.dragging() { ctx.stroke_round(band, 9.0, c(palette.accent), 2.0); }
     let nearest = picker.position.round() as i32;
     // Only five nearby rows are painted, independent of the deck's page count.
     for page in nearest.saturating_sub(3).max(1)..=nearest.saturating_add(3).min(picker.total) {
         let distance = page as f64 - picker.position;
         if distance.abs() > 2.2 { continue; }
         let size = (30.0 - 7.0 * distance.abs()).max(17.0) as f32;
-        let opacity = (1.0 - distance.abs() / 2.7).clamp(0.16, 1.0) as f32;
-        let ink = if distance.abs() < 0.5 { theme::ACCENT } else { theme::MUTED };
+        // Size and the selection band supply depth; keep neighbouring page
+        // numbers readable in a classroom instead of fading them almost away.
+        let opacity = (1.0 - distance.abs() / 10.0).clamp(0.80, 1.0) as f32;
+        let ink = if distance.abs() < 0.5 { palette.accent } else { palette.text };
         let text = page.to_string();
         let fit = size * ((wheel.w - 36) as f32 / fonts.text_width(&text, size).max(1.0)).min(1.0);
         let x = wheel.x as f32 + (wheel.w as f32 - fonts.text_width(&text, fit)) / 2.0;
@@ -1309,19 +1337,20 @@ fn draw_page_picker_content(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
         (PagePickerHit::Jump, format!("跳至第 {} 页", picker.selected()), true),
     ] {
         let r = page_picker_control_rect(app, hit);
-        surface(ctx, r, 10.0, c(if selected { theme::ACCENT } else { theme::PAPER }), c(theme::ACCENT_LINE));
+        surface(ctx, r, 10.0, c(if selected { palette.accent } else { palette.paper }), c(palette.accent_line));
         let size = 18.0 * ((r.w - 12) as f32 / fonts.text_width(&title, 18.0).max(1.0)).min(1.0);
-        ctx.text_center(fonts, r, &title, size, c(if selected { theme::WHITE } else { theme::TEXT }));
+        ctx.text_center(fonts, r, &title, size, c(if selected { palette.on_accent } else { palette.text }));
     }
 }
 
 fn draw_pen_popup(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
+    let palette = ctx.palette;
     let p = pen_popup_rect(app);
     let t = anim_t(app);
     panel(ctx, p, 16.0, t);
     if t < 0.02 { return; }
-    ctx.text(fonts, "画笔颜色", (p.x + 16) as f32, (p.y + 32) as f32, 21.0, c(theme::TEXT));
-    icons::draw(ctx, Glyph::Pen, (p.x + p.w - 42) as f32, (p.y + 12) as f32, 24.0, c(theme::TEXT), app.pen_color());
+    ctx.text(fonts, "画笔颜色", (p.x + 16) as f32, (p.y + 32) as f32, 21.0, c(palette.text));
+    icons::draw(ctx, Glyph::Pen, (p.x + p.w - 42) as f32, (p.y + 12) as f32, 24.0, c(palette.text), app.pen_color());
     let start_y = p.y + 46;
     for i in 0..10usize {
         let (r, g, b) = crate::app::COLORS[i];
@@ -1329,71 +1358,73 @@ fn draw_pen_popup(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
         let cy = (start_y + (i / 4) as i32 * 48 + 19) as f32;
         ctx.fill_circle(cx, cy, 16.0, color(r, g, b, 255));
         ctx.stroke_round(R { x: cx as i32 - 16, y: cy as i32 - 16, w: 32, h: 32 },
-            16.0, alpha(theme::TEXT, 55), 1.0);
+            16.0, alpha(palette.text, 55), 1.0);
         if i == app.cur_color {
             ctx.stroke_round(R { x: cx as i32 - 19, y: cy as i32 - 19, w: 38, h: 38 },
-                19.0, c(theme::ACCENT), 2.0);
-            let light = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32;
-            let check = c(if light > 160.0 { theme::TEXT } else { theme::WHITE });
+                19.0, c(palette.accent), 2.0);
+            let check = theme::on_color(color(r, g, b, 255));
             icons::draw(ctx, Glyph::Check, cx - 10.0, cy - 10.0, 20.0, check, check);
         }
     }
     let names = ["红色", "蓝色", "绿色", "黄色", "白色", "青色", "紫色", "黄绿", "橙色", "棕色"];
-    ctx.text(fonts, "当前颜色", (p.x + 124) as f32, (p.y + 156) as f32, 15.0, c(theme::MUTED));
-    ctx.text(fonts, names[app.cur_color.min(9)], (p.x + 124) as f32, (p.y + 177) as f32, 20.0, c(theme::TEXT));
+    ctx.text(fonts, "当前颜色", (p.x + 124) as f32, (p.y + 156) as f32, 15.0, c(palette.muted));
+    ctx.text(fonts, names[app.cur_color.min(9)], (p.x + 124) as f32, (p.y + 177) as f32, 20.0, c(palette.text));
     let sy = p.y + 214;
-    ctx.text(fonts, "画笔粗细", (p.x + 16) as f32, (sy - 14) as f32, 19.0, c(theme::MUTED));
+    ctx.text(fonts, "画笔粗细", (p.x + 16) as f32, (sy - 14) as f32, 19.0, c(palette.muted));
     let bw = (p.w - 52) / 3;
     for (i, label) in ["细 3", "中 5", "粗 10"].iter().enumerate() {
         let r = R { x: p.x + 16 + i as i32 * (bw + 10), y: sy, w: bw, h: 48 };
         choice(ctx, r, i == app.cur_pen);
-        ctx.text_center(fonts, R { h: 28, ..r }, label, 18.0, c(theme::TEXT));
+        ctx.text_center(fonts, R { h: 28, ..r }, label, 18.0, c(palette.text));
         let a = ((r.x + r.w / 2 - 12) as f32, (r.y + 36) as f32);
         let b = ((r.x + r.w / 2 + 12) as f32, (r.y + 36) as f32);
         let width = crate::app::PEN_SIZES[i] as f32;
-        if app.cur_color == 4 { ctx.stroke_line(a, b, c(theme::BORDER), width + 2.0); }
+        if app.cur_color == 4 { ctx.stroke_line(a, b, c(palette.border), width + 2.0); }
         ctx.stroke_line(a, b, app.pen_color(), width);
     }
 }
 
 fn draw_eraser_popup(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
+    let palette = ctx.palette;
     let p = eraser_popup_rect(app);
     let t = anim_t(app);
     panel(ctx, p, 16.0, t);
     if t < 0.02 { return; }
-    ctx.text(fonts, "橡皮大小", (p.x + 16) as f32, (p.y + 32) as f32, 21.0, c(theme::TEXT));
+    ctx.text(fonts, "橡皮大小", (p.x + 16) as f32, (p.y + 32) as f32, 21.0, c(palette.text));
     let size = [21.0, 24.0, 27.0][app.cur_eraser.min(2)];
     icons::draw(ctx, Glyph::Eraser, p.x as f32 + p.w as f32 - 30.0 - size / 2.0,
-        p.y as f32 + 24.0 - size / 2.0, size, c(theme::TEXT), c(theme::ERASER));
+        p.y as f32 + 24.0 - size / 2.0, size, c(palette.text), c(palette.eraser));
     let bw = (p.w - 52) / 3;
     for (i, label) in ["小 12", "中 24", "大 48"].iter().enumerate() {
         let r = R { x: p.x + 16 + i as i32 * (bw + 10), y: p.y + 46, w: bw, h: 48 };
         choice(ctx, r, i == app.cur_eraser);
         let size = [18.0, 21.0, 24.0][i];
         icons::draw(ctx, Glyph::Eraser, r.x as f32 + 19.0 - size / 2.0, r.y as f32 + 24.0 - size / 2.0,
-            size, c(theme::TEXT), c(theme::ERASER));
-        ctx.text_center(fonts, R { x: r.x + 33, w: r.w - 37, ..r }, label, 18.0, c(theme::TEXT));
+            size, c(palette.text), c(palette.eraser));
+        ctx.text_center(fonts, R { x: r.x + 33, w: r.w - 37, ..r }, label, 18.0, c(palette.text));
     }
     let r = R { x: p.x + 16, y: p.y + 110, w: p.w - 32, h: 48 };
-    surface(ctx, r, 10.0, c(theme::DANGER_LIGHT), alpha(theme::DANGER, 75));
-    ctx.text_center(fonts, r, "清空当前页", 20.0, c(theme::DANGER));
+    surface(ctx, r, 10.0, c(palette.danger_light), alpha(palette.danger, 75));
+    ctx.text_center(fonts, r, "清空当前页", 20.0, c(palette.danger));
 }
 
 fn draw_more_menu(fonts: &Fonts, ctx: &mut Ctx, app: &App) {
+    let palette = ctx.palette;
     let m = more_menu_rect(app);
     let t = anim_t(app);
     panel(ctx, m, 14.0, t);
     if t < 0.02 { return; }
     ctx.stroke_line(((m.x + 14) as f32, (m.y + 48) as f32),
-        ((m.x + m.w - 14) as f32, (m.y + 48) as f32), c(theme::BORDER), 1.0);
+        ((m.x + m.w - 14) as f32, (m.y + 48) as f32), c(palette.border), 1.0);
     for (row, glyph, label) in [(0, Glyph::Camera, "截图"), (1, Glyph::Settings, "设置")] {
         let y = m.y + row * 48;
-        icons::draw(ctx, glyph, (m.x + 18) as f32, (y + 12) as f32, 24.0, c(theme::ACCENT), c(theme::ACCENT));
-        ctx.text(fonts, label, (m.x + 58) as f32, (y + 31) as f32, 21.0, c(theme::TEXT));
+        icons::draw(ctx, glyph, (m.x + 18) as f32, (y + 12) as f32, 24.0, c(palette.accent), c(palette.accent));
+        ctx.text(fonts, label, (m.x + 58) as f32, (y + 31) as f32, 21.0, c(palette.text));
     }
 }
 
 fn draw_settings(app: &App, fonts: &Fonts, ctx: &mut Ctx, icon: Option<&Pixmap>) {
+    let palette = ctx.palette;
     let p = settings_rect(app);
     panel(ctx, p, 18.0, 1.0);
     if let Some(ico) = icon {
@@ -1403,20 +1434,19 @@ fn draw_settings(app: &App, fonts: &Fonts, ctx: &mut Ctx, icon: Option<&Pixmap>)
             quality: tiny_skia::FilterQuality::Bicubic, ..Default::default()
         }, ctx.tr, None);
     }
-    ctx.text(fonts, "Sidera 设置", (p.x + 84) as f32, (p.y + 42) as f32, 29.0, c(theme::TEXT));
-    ctx.text(fonts, "外观与课堂操作", (p.x + 85) as f32, (p.y + 65) as f32, 17.0, c(theme::MUTED));
+    ctx.text(fonts, "Sidera 设置", (p.x + 84) as f32, (p.y + 36) as f32, 27.0, c(palette.text));
     ctx.stroke_line(((p.x + 24) as f32, (p.y + 82) as f32),
-        ((p.x + p.w - 24) as f32, (p.y + 82) as f32), c(theme::BORDER), 1.0);
+        ((p.x + p.w - 24) as f32, (p.y + 82) as f32), c(palette.border), 1.0);
 
     // Group related rows without changing their positions or touch targets.
     for (first, count) in [(2, 4), (settings_action_start(app), 2)] {
         let group = R { x: p.x + 18, y: settings_row_y(app, first) - 3,
             w: p.w - 36, h: (count - 1) * 48 + 44 };
-        surface(ctx, group, 13.0, c(theme::SURFACE), c(theme::BORDER));
+        surface(ctx, group, 13.0, c(palette.surface), c(palette.border));
         for row in first..first + count - 1 {
             let y = (settings_row_y(app, row) + 43) as f32;
             ctx.stroke_line(((group.x + 14) as f32, y), ((group.x + group.w - 14) as f32, y),
-                alpha(theme::BORDER, 180), 1.0);
+                alpha(palette.border, 180), 1.0);
         }
     }
 
@@ -1425,18 +1455,18 @@ fn draw_settings(app: &App, fonts: &Fonts, ctx: &mut Ctx, icon: Option<&Pixmap>)
         let label = match s.id {
             SliderId::Alpha => "工具栏不透明度", SliderId::Scale => "工具栏大小", _ => s.label,
         };
-        ctx.text(fonts, label, (p.x + 26) as f32, (ry + 27) as f32, 22.0, c(theme::TEXT));
+        ctx.text(fonts, label, (p.x + 26) as f32, (ry + 27) as f32, 22.0, c(palette.text));
         let track = s.track;
         let cy = track.y + track.h / 2;
         let rail = R { x: track.x, y: cy - 3, w: track.w, h: 6 };
-        ctx.fill_round(rail, 3.0, c(theme::BORDER));
+        ctx.fill_round(rail, 3.0, c(palette.border));
         let fw = (track.w as f32 * s.t()) as i32;
-        if fw > 1 { ctx.fill_round(R { w: fw, ..rail }, 3.0, c(theme::ACCENT)); }
+        if fw > 1 { ctx.fill_round(R { w: fw, ..rail }, 3.0, c(palette.accent)); }
         let hx = track.x + fw;
         let pressed = app.press.is_some_and(|p| p.active && !p.expired() && p.control == Control::Slider(s.id));
-        if pressed { ctx.fill_circle(hx as f32, cy as f32, 17.0, alpha(theme::ACCENT, 45)); }
-        ctx.fill_circle(hx as f32, cy as f32, 11.0, c(theme::WHITE));
-        ctx.stroke_round(R { x: hx - 11, y: cy - 11, w: 22, h: 22 }, 11.0, c(theme::ACCENT), 2.0);
+        if pressed { ctx.fill_circle(hx as f32, cy as f32, 17.0, alpha(palette.accent, 45)); }
+        ctx.fill_circle(hx as f32, cy as f32, 11.0, c(palette.paper));
+        ctx.stroke_round(R { x: hx - 11, y: cy - 11, w: 22, h: 22 }, 11.0, c(palette.accent), 2.0);
         let value = match s.id {
             SliderId::Alpha => format!("{:.0}%", s.value / 255.0 * 100.0),
             SliderId::Scale => format!("{:.0}%", s.value * 100.0),
@@ -1445,16 +1475,23 @@ fn draw_settings(app: &App, fonts: &Fonts, ctx: &mut Ctx, icon: Option<&Pixmap>)
                 if s.id == SliderId::EraseScale { format!("{number}×") } else { number }
             }
         };
-        ctx.fill_round(s.badge, 8.0, c(theme::SURFACE));
-        ctx.text_center(fonts, s.badge, &value, 20.0, c(theme::ACCENT));
+        ctx.fill_round(s.badge, 8.0, c(palette.surface));
+        ctx.text_center(fonts, s.badge, &value, 20.0, c(palette.accent));
     }
 
     let controls = settings_controls(app);
     for (hit, r) in controls {
         match hit {
+            SetHit::Theme(preference) => {
+                let selected = app.theme.preference == preference;
+                surface(ctx, r, 8.0, c(if selected { palette.accent } else { palette.surface }),
+                    c(if selected { palette.accent } else { palette.border }));
+                ctx.text_center(fonts, r, preference.label(), 17.0,
+                    c(if selected { palette.on_accent } else { palette.muted }));
+            }
             SetHit::ResetSlider(_) => {
-                surface(ctx, r, 8.0, c(theme::WHITE), c(theme::ACCENT_LINE));
-                ctx.text_center(fonts, r, "默认", 18.0, c(theme::ACCENT));
+                surface(ctx, r, 8.0, c(palette.paper), c(palette.accent_line));
+                ctx.text_center(fonts, r, "默认", 18.0, c(palette.accent));
             }
             SetHit::Autostart | SetHit::WpsDebug | SetHit::RightClick => {
                 let (label, on) = match hit {
@@ -1462,47 +1499,47 @@ fn draw_settings(app: &App, fonts: &Fonts, ctx: &mut Ctx, icon: Option<&Pixmap>)
                     SetHit::WpsDebug => ("WPS 联动", app.wps_debug),
                     _ => ("右键切回光标", app.right_click_cursor_on),
                 };
-                ctx.text(fonts, label, (r.x + 14) as f32, (r.y + 27) as f32, 22.0, c(theme::TEXT));
+                ctx.text(fonts, label, (r.x + 14) as f32, (r.y + 27) as f32, 22.0, c(palette.text));
                 let toggle = R { x: r.x + r.w - 58, y: r.y + 8, w: 44, h: 22 };
-                ctx.fill_round(toggle, 11.0, c(if on { theme::ACCENT } else { theme::MUTED }));
+                ctx.fill_round(toggle, 11.0, c(if on { palette.accent } else { palette.muted }));
                 let cx = toggle.x + if on { 33 } else { 11 };
-                ctx.fill_circle(cx as f32, (toggle.y + 11) as f32, 8.0, c(theme::WHITE));
+                ctx.fill_circle(cx as f32, (toggle.y + 11) as f32, 8.0, c(palette.on_accent));
                 ctx.text_center(fonts, R { x: toggle.x - 50, y: r.y, w: 42, h: r.h },
-                    if on { "开启" } else { "关闭" }, 17.0, c(theme::MUTED));
+                    if on { "开启" } else { "关闭" }, 17.0, c(palette.muted));
             }
             SetHit::EraseTrig => {
-                ctx.text(fonts, "橡皮触发方式", (r.x + 14) as f32, (r.y + 27) as f32, 22.0, c(theme::TEXT));
+                ctx.text(fonts, "橡皮触发方式", (r.x + 14) as f32, (r.y + 27) as f32, 22.0, c(palette.text));
                 let badge = R { x: r.x + r.w - 88, y: r.y + 5, w: 74, h: 28 };
-                ctx.fill_round(badge, 8.0, c(theme::ACCENT_LIGHT));
-                ctx.text_center(fonts, badge, if app.erase_by_finger { "多指" } else { "手背" }, 18.0, c(theme::ACCENT));
+                ctx.fill_round(badge, 8.0, c(palette.accent_light));
+                ctx.text_center(fonts, badge, if app.erase_by_finger { "多指" } else { "手背" }, 18.0, c(palette.accent));
             }
             SetHit::ClearLog | SetHit::SysInfo => {
                 let label = if hit == SetHit::SysInfo { "系统诊断信息" }
                     else if crate::app::now_ms() < app.log_cleared_until { "日志已清空" } else { "清空调试日志" };
                 let glyph = if hit == SetHit::SysInfo { Glyph::Info } else { Glyph::Document };
-                icons::draw(ctx, glyph, (r.x + 13) as f32, (r.y + 8) as f32, 22.0, c(theme::MUTED), c(theme::MUTED));
-                ctx.text(fonts, label, (r.x + 47) as f32, (r.y + 27) as f32, 21.0, c(theme::TEXT));
+                icons::draw(ctx, glyph, (r.x + 13) as f32, (r.y + 8) as f32, 22.0, c(palette.muted), c(palette.muted));
+                ctx.text(fonts, label, (r.x + 47) as f32, (r.y + 27) as f32, 21.0, c(palette.text));
                 if hit == SetHit::SysInfo {
                     icons::draw(ctx, Glyph::Right, (r.x + r.w - 32) as f32, (r.y + 10) as f32,
-                        18.0, c(theme::MUTED), c(theme::MUTED));
+                        18.0, c(palette.muted), c(palette.muted));
                 }
             }
             SetHit::Quit => {
-                surface(ctx, r, 10.0, c(theme::DANGER_LIGHT), alpha(theme::DANGER, 65));
-                ctx.text_center(fonts, r, "退出软件", 22.0, c(theme::DANGER));
+                surface(ctx, r, 10.0, c(palette.danger_light), alpha(palette.danger, 65));
+                ctx.text_center(fonts, r, "退出软件", 22.0, c(palette.danger));
             }
             SetHit::Done => {
-                surface(ctx, r, 10.0, c(theme::ACCENT), c(theme::ACCENT));
-                ctx.text_center(fonts, r, "完成", 24.0, c(theme::WHITE));
+                surface(ctx, r, 10.0, c(palette.accent), c(palette.accent));
+                ctx.text_center(fonts, r, "完成", 24.0, c(palette.on_accent));
                 icons::draw(ctx, Glyph::Check, r.x as f32 + r.w as f32 / 2.0 - 44.0,
-                    (r.y + 10) as f32, 18.0, c(theme::WHITE), c(theme::WHITE));
+                    (r.y + 10) as f32, 18.0, c(palette.on_accent), c(palette.on_accent));
             }
         }
     }
     ctx.text_center(fonts, R { x: p.x, y: p.y + p.h - 40, w: p.w, h: 20 },
-        &format!("Sidera {}  © 2026 Carl_Jin  GNU GPL v3", crate::app::VERSION), 11.0, c(theme::MUTED));
+        &format!("Sidera {}  © 2026 Carl_Jin  GNU GPL v3", crate::app::VERSION), 11.0, c(palette.muted));
     ctx.text_center(fonts, R { x: p.x, y: p.y + p.h - 24, w: p.w, h: 18 },
-        "定制与改进：shizhelei · Gary_6Stones", 10.0, alpha(theme::MUTED, 200));
+        "定制与改进：shizhelei · Gary_6Stones", 10.0, alpha(palette.muted, 200));
 }
 
 #[cfg(test)]
@@ -1522,6 +1559,10 @@ mod tests {
         for fingers in [false, true] {
             app.erase_by_finger = fingers;
             for (hit, r) in settings_controls(&app) {
+                if matches!(hit, SetHit::Theme(_)) {
+                    assert!(r.h >= 32 && r.w >= 80);
+                    assert!(settings_rect(&app).contains(r.x + r.w - 1, r.y + r.h - 1));
+                }
                 let (x, y) = (r.x + r.w / 2, r.y + r.h / 2);
                 assert_eq!(settings_hit(&app, x, y), Some(hit), "控件 {:?} 矩形 {:?} 命中失败", hit, r);
                 assert_eq!(control_at(&app, x, y), Some(Control::Setting(hit)),
@@ -1572,6 +1613,48 @@ mod tests {
             more_menu_hit(&app, m.x + m.w / 2, m.y + 54),
             Some(MoreHit::Settings)
         );
+    }
+
+    #[test]
+    fn themes_cover_every_panel_and_startup_cache_at_multiple_scales() {
+        let fonts = Fonts::load();
+        for scale in [1.0, 1.5, 2.0] {
+            let mut a = App::new(Pixmap::new(1280, 900).unwrap(), 1280, 900);
+            a.set_scale(scale);
+            for preference in [theme::Preference::Light, theme::Preference::Dark] {
+                a.apply_theme(theme::Theme { preference, system_dark: false });
+                for panel in 0..7 {
+                    a.settings_open = panel == 0;
+                    a.pen_popup_visible = panel == 1;
+                    a.eraser_popup_visible = panel == 2;
+                    a.more_menu_open = panel == 3;
+                    a.confirm_quit = panel == 4;
+                    a.show_diag = panel == 5;
+                    a.page_picker = (panel == 6).then(|| crate::page_picker::PagePicker::new(
+                        6, 24, crate::page_picker::Source::Wps(1)));
+                    let r = match panel {
+                        0 => settings_rect(&a), 1 => pen_popup_rect(&a), 2 => eraser_popup_rect(&a),
+                        3 => more_menu_rect(&a), 4 => confirm_rect(&a), 5 => diag_rect(&a),
+                        _ => page_picker_rect(&a),
+                    };
+                    let pixels = render_region(&a, &fonts, None, r.x, r.y, r.w, r.h).unwrap();
+                    assert_eq!(pixels.pixel((4.0 * scale) as u32, pixels.height() / 2).unwrap(),
+                        c(a.theme.palette().paper).to_color_u8().premultiply(),
+                        "panel {panel} / {preference:?} / {scale}");
+                    assert!(a.canvas.data().iter().all(|&b| b == 0));
+                }
+            }
+            // Render the real cached startup, then change theme while it is visible.
+            a.launch = crate::launch::Launch::begin("isolated".into(), true, true, std::time::Instant::now());
+            for preference in [theme::Preference::Light, theme::Preference::Dark, theme::Preference::Light] {
+                a.apply_theme(theme::Theme { preference, system_dark: false });
+                let r = launch_rect(&a);
+                let pixels = render_region(&a, &fonts, None, r.x, r.y, r.w, r.h).unwrap();
+                assert_eq!(pixels.pixel((4.0 * scale) as u32, pixels.height() / 2).unwrap(),
+                    c(a.theme.palette().paper).to_color_u8().premultiply());
+                assert!(a.launch.card.borrow().is_some());
+            }
+        }
     }
 }
 
