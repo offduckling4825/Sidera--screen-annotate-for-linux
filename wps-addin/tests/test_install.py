@@ -42,8 +42,11 @@ class InstallTests(unittest.TestCase):
         self.script.write_text((ADDIN / "install.sh").read_text(encoding="utf-8"), encoding="utf-8")
         self.template = (ADDIN / "publish.xml").read_bytes()
         (self.source / "publish.xml").write_bytes(self.template)
-        self.fallback = self.scratch / "system-addin"
-        self.fallback.mkdir()
+        # Supply the complete mount subtree. A clean host has no /usr/share/sidera
+        # and bwrap cannot create that parent below the read-only system root.
+        self.system_share = self.scratch / "system-share"
+        self.fallback = self.system_share / "sidera/wps-addin"
+        self.fallback.mkdir(parents=True)
 
     def existing(self, contents):
         self.target.parent.mkdir(parents=True, exist_ok=True)
@@ -54,7 +57,7 @@ class InstallTests(unittest.TestCase):
             "bwrap", "--die-with-parent", "--ro-bind", "/", "/",
             "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
             "--bind", str(self.home), str(Path.home()),
-            "--ro-bind", str(self.fallback), "/usr/share/sidera/wps-addin",
+            "--ro-bind", str(self.system_share), "/usr/share",
             "--unshare-net", "--chdir", str(self.source),
         ]
         if readonly:

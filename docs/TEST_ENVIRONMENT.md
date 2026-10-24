@@ -57,7 +57,7 @@ python3 tools/check_markdown.py
 | 入口 | 检查内容 | 限制 |
 | --- | --- | --- |
 | Node 测试 | 实际 JS、可控 Application/API/请求/定时器；GNOME 模块适配 | 不启动真实 WPS 或 Shell |
-| test_install.py | 真实登记脚本、XML 合并、权限/异常/备份/失败保留 | 临时家目录与网络 |
+| test_install.py | 真实登记脚本、XML 合并、权限/异常/备份/失败保留 | 临时家目录、私有网络与独立 `/usr/share`；无需预装 Sidera |
 | test_build_deb.py | 本机真实 ELF 打包、架构/格式拒绝、旧产物保留 | 不安装包，不证明 ARM64 运行 |
 | test_bridge_api.py / test_bridge_lifecycle.py | 同一真实 C++ 桥的 8 项检查，包含 100 次启停 | 两入口等效，不重复计数；不再连接现有 16666 |
 | test_rust.py | 构建 locked 测试后在隔离环境执行普通用例 | 需要图形协议的 13 项在这一步明确跳过 |

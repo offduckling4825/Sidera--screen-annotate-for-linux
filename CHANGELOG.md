@@ -6,6 +6,7 @@
 
 - 修复 GitHub Ubuntu 24.04 runner 拒绝隔离网络，导致 Rust、C++ 和 WPS 登记检查一起失败的问题；仅为临时 runner 的 bubblewrap 加载所需 AppArmor 配置。
 - 固定 CI 系统版本，提前验证私有回环和嵌套隔离；保留全部测试及隔离要求。
+- WPS 登记测试使用完整的临时系统目录，不再依赖开发机已安装 Sidera 才能运行。
 
 ## 未发布 · 旧问题复查
 
