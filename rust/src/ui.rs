@@ -1253,7 +1253,10 @@ fn draw_btn(app: &App, fonts: &Fonts, ctx: &mut Ctx, k: Btn, r: R) {
         Btn::Undo => ctx.text_center(fonts, r, "撤回", (btn * 0.49).max(11.0), ink),
         Btn::Whiteboard => ctx.text_center(fonts, r, "白板", (btn * 0.49).max(11.0), ink),
         Btn::Exit => {
-            ctx.text_multiline_center(fonts, r, "背景\n颜色", (btn * 0.42).max(10.0), ink);
+            let label = match app.whiteboard_bg_index {
+                0 => "绿板\n底色", 1 => "白纸\n底色", _ => "主题\n底色",
+            };
+            ctx.text_multiline_center(fonts, r, label, (btn * 0.42).max(10.0), ink);
         }
     }
 }
