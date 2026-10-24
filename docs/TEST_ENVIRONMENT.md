@@ -101,6 +101,8 @@ dpkg-deb -f ../sidera_3.0-Electro-testing+local1_amd64.deb Architecture Depends
 
 外部 `amd64-sysroot/`、`aarch64-sysroot/` 不在仓库。现有容器脚本不负责创建它们；缺少来源、版本和校验和时不能声称可复现。ARM64 另需匹配工具链与 QEMU/binfmt 或原生构建机；低 ABI 必须在相应库环境构建，再到目标机验收，不能仅降低 control 中的 libc 要求。
 
+已有 Release 的 [ARM64 补充构建](releases/ARM64.md) 使用可选 Ubuntu 22.04 / 24.04 的原生 ARM64 runner，分别记录应用 tag 与打包工具提交，并运行隔离启动检查。每次结果以其构建日志和 `BUILDINFO-arm64.md` 为准，不能继承 amd64 的桌面验收结论。
+
 ## 人工验收矩阵
 
 所有真实桌面操作先保存用户文档。当前由用户执行，不自动注销、重启或关闭应用。

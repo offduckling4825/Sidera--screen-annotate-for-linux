@@ -76,7 +76,7 @@ The original amd64 asset and its BUILDINFO.md remain unchanged.
 
 ## Rebuild
 
-Use an ARM64 Ubuntu 22.04 build environment with Rust 1.93.1 and the dependencies
+Use the ARM64 Ubuntu build environment recorded above with Rust 1.93.1 and the dependencies
 listed in the workflow. Check out the application source commit above; the
 existing release source-with-dependencies archive contains the same Rust sources
 and locked dependency sources. Run `cargo +1.93.1 build --release --locked` in

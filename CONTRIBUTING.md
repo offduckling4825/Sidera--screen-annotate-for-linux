@@ -55,6 +55,8 @@ cargo check --tests --examples --locked
 
 容器脚本需要仓库外准备的 `amd64-sysroot/` 或 `aarch64-sysroot/`、匹配 Rust 工具链、bubblewrap；ARM64 还需要对应的 QEMU / binfmt 配置。这些材料不包含在 Git 仓库。更低系统库构建和 ARM64 均需独立验证后才能发布。
 
+为已有 Release 补充 ARM64 时，也可使用[原生 ARM64 发布构建流程](docs/releases/ARM64.md)：应用源码固定到原 tag，在独立 ARM64 构建机编译和检查，不需要本地交叉编译环境。
+
 ## 提交约定
 
 - 一个改动围绕一个明确问题，解释用户可见变化以及原因。

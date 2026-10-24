@@ -9,6 +9,14 @@ on:
         required: true
         default: v3.0-Electro-testing-custom20261024.29
         type: string
+      runner_image:
+        description: Native ARM64 build system (also determines the library baseline)
+        required: true
+        default: ubuntu-22.04-arm
+        type: choice
+        options:
+          - ubuntu-22.04-arm
+          - ubuntu-24.04-arm
 
 # This workflow only builds a downloadable artifact. Publishing stays explicit.
 permissions:
@@ -16,7 +24,7 @@ permissions:
 
 jobs:
   arm64:
-    runs-on: ubuntu-22.04-arm
+    runs-on: ${{ inputs.runner_image }}
     timeout-minutes: 40
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
