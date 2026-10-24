@@ -510,8 +510,7 @@ pub(crate) fn go_next(rt: &Rt, app: &mut App, wps: Option<&WpsBridge>) {
 
 pub(crate) fn exit_presentation(rt: &Rt, app: &mut App, wps: Option<&WpsBridge>) {
     if app.whiteboard {
-        app.whiteboard_bg_index = (app.whiteboard_bg_index + 1) % app::WHITEBOARD_BACKGROUND_COUNT;
-        app::save_settings(app);
+        app.whiteboard_bg_index = (app.whiteboard_bg_index + 1) % app::WHITEBOARD_COLORS.len() as i32;
         rt.redraw_full(app);
         return;
     }

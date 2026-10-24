@@ -141,7 +141,7 @@ fn main() {
         add("actions", "放映状态 · 切换分帧", actions, 24, 822);
         sheet.save_png(out.join(format!("{}-panels.png", preference.key()))).unwrap();
 
-        for (background, name) in [(app::WHITEBOARD_THEME, "theme"), (0, "green"), (1, "white")] {
+        for (background, name) in [(0, "green"), (1, "white")] {
             let mut a = fresh(preference);
             a.whiteboard = true;
             a.whiteboard_bg_index = background;

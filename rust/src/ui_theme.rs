@@ -1,4 +1,4 @@
-//! Semantic UI colours. Actual annotation ink and explicitly chosen board
+//! Semantic UI colours. Actual annotation ink and whiteboard
 //! backgrounds never change when the interface theme changes.
 use tiny_skia::Color;
 
@@ -38,7 +38,7 @@ pub struct Palette {
     pub accent: u32, pub accent_light: u32, pub accent_line: u32, pub on_accent: u32,
     pub success: u32, pub on_success: u32,
     pub danger: u32, pub danger_light: u32, pub warning: u32, pub warning_light: u32,
-    pub eraser: u32, pub splash_header: u32, pub board: u32,
+    pub eraser: u32, pub splash_header: u32,
 }
 
 pub const LIGHT: Palette = Palette {
@@ -48,7 +48,7 @@ pub const LIGHT: Palette = Palette {
     accent: 0x216F62, accent_light: 0xDCEEE5, accent_line: 0x8DB5A3, on_accent: 0xFFFFFF,
     success: 0x2F774C, on_success: 0xFFFFFF,
     danger: 0xA44234, danger_light: 0xF8E9E3, warning: 0x906017, warning_light: 0xFFF0D7,
-    eraser: 0xD5E5EB, splash_header: 0xEDF4EE, board: 0xFFFFFF,
+    eraser: 0xD5E5EB, splash_header: 0xEDF4EE,
 };
 
 pub const DARK: Palette = Palette {
@@ -58,7 +58,7 @@ pub const DARK: Palette = Palette {
     accent: 0x8CD6B5, accent_light: 0x294D40, accent_line: 0x5E9C82, on_accent: 0x102D22,
     success: 0x8CD0A0, on_success: 0x142F20,
     danger: 0xFFAB98, danger_light: 0x4B2D29, warning: 0xF0C784, warning_light: 0x473A25,
-    eraser: 0x476578, splash_header: 0x253D32, board: 0x111D19,
+    eraser: 0x476578, splash_header: 0x253D32,
 };
 
 pub fn alpha(rgb: u32, a: u8) -> Color {

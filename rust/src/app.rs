@@ -28,8 +28,6 @@ pub const STROKE_RAMP_MS: i64 = 600;
 pub const STROKE_MIN_SCALE: f64 = 0.85;
 
 pub const WHITEBOARD_COLORS: [(u8, u8, u8); 2] = [(0x0F, 0x3D, 0x2E), (255, 255, 255)];
-pub const WHITEBOARD_THEME: i32 = 2;
-pub const WHITEBOARD_BACKGROUND_COUNT: i32 = 3;
 
 pub const COLORS: [(u8, u8, u8); 10] = [
     (255, 40, 40),
@@ -222,7 +220,7 @@ impl App {
             show_diag: false,
             diag_text: String::new(),
             whiteboard: false,
-            whiteboard_bg_index: WHITEBOARD_THEME,
+            whiteboard_bg_index: 1,
             saved_mode: 0,
             launch: crate::launch::Launch::default(),
             collapsed: false,
@@ -395,8 +393,7 @@ impl App {
         ERASER_SIZES[self.cur_eraser]
     }
     pub fn whiteboard_bg_color(&self) -> Color {
-        if self.whiteboard_bg_index == WHITEBOARD_THEME { crate::ui_theme::c(self.theme.palette().board) }
-        else { whiteboard_bg(self.whiteboard_bg_index) }
+        whiteboard_bg(self.whiteboard_bg_index)
     }
 
     /// A theme switch only invalidates UI artwork, never canvas/undo/page caches.
@@ -700,12 +697,6 @@ fn parse_settings(app: &mut App, content: &str) {
                     app.apply_theme(crate::ui_theme::Theme { preference, ..app.theme });
                 }
             }
-            "whiteboardBackground" => match v {
-                "green" => app.whiteboard_bg_index = 0,
-                "white" => app.whiteboard_bg_index = 1,
-                "theme" => app.whiteboard_bg_index = WHITEBOARD_THEME,
-                _ => {}
-            },
             "wpsDebug" => app.wps_debug = v == "1",
             "sbScale" => {
                 if let Ok(f) = v.parse::<f64>() {
@@ -743,7 +734,7 @@ pub fn save_settings(app: &App) {
 
 fn serialize_settings(app: &App) -> String {
     format!(
-        "wpsDebug={}\nsbScale={:.2}\nsidebarAlpha={}\nrightClickCursor={}\neraseByFinger={}\nlargeTouchThreshold={}\nlargeEraseScale10={}\ntheme={}\nwhiteboardBackground={}\n",
+        "wpsDebug={}\nsbScale={:.2}\nsidebarAlpha={}\nrightClickCursor={}\neraseByFinger={}\nlargeTouchThreshold={}\nlargeEraseScale10={}\ntheme={}\n",
         if app.wps_debug { 1 } else { 0 },
         app.sb_scale,
         app.sidebar_alpha,
@@ -752,7 +743,6 @@ fn serialize_settings(app: &App) -> String {
         app.large_touch_threshold as i32,
         app.large_erase_scale10,
         app.theme.preference.key(),
-        match app.whiteboard_bg_index { 0 => "green", 1 => "white", _ => "theme" },
     )
 }
 
@@ -994,14 +984,14 @@ mod theme_tests {
     use crate::ui_theme::{Preference, Theme};
 
     #[test]
-    fn preferences_and_explicit_board_background_round_trip_without_persisting_system_state() {
+    fn preferences_round_trip_without_persisting_system_or_board_state() {
         let make = || App::new(Pixmap::new(120, 100).unwrap(), 120, 100);
         let mut legacy = make();
         parse_settings(&mut legacy, "sbScale=1.13\nsidebarAlpha=99\n");
         assert_eq!(legacy.theme.preference, Preference::Light);
-        assert_eq!(legacy.whiteboard_bg_index, WHITEBOARD_THEME);
+        assert_eq!(legacy.whiteboard_bg_index, 1);
         for preference in [Preference::Light, Preference::Dark, Preference::System] {
-            for background in 0..WHITEBOARD_BACKGROUND_COUNT {
+            for background in 0..WHITEBOARD_COLORS.len() as i32 {
                 let mut source = make();
                 source.theme = Theme { preference, system_dark: true };
                 source.whiteboard_bg_index = background;
@@ -1010,11 +1000,16 @@ mod theme_tests {
                 parse_settings(&mut loaded, &serialize_settings(&source));
                 assert_eq!(loaded.theme.preference, preference);
                 assert!(!loaded.theme.system_dark);
-                assert_eq!(loaded.whiteboard_bg_index, background);
+                assert_eq!(loaded.whiteboard_bg_index, 1);
                 assert_eq!(loaded.sb_scale, source.sb_scale);
-                parse_settings(&mut loaded, "theme=unknown\nwhiteboardBackground=999\n");
-                assert_eq!(loaded.theme.preference, preference);
-                assert_eq!(loaded.whiteboard_bg_index, background);
+                assert!(!serialize_settings(&source).contains("whiteboardBackground"));
+                // Ignore the withdrawn .32 option, including files saved by it.
+                loaded.whiteboard_bg_index = background;
+                for old_option in ["theme", "white", "green", "999"] {
+                    parse_settings(&mut loaded, &format!("theme=unknown\nwhiteboardBackground={old_option}\n"));
+                    assert_eq!(loaded.theme.preference, preference);
+                    assert_eq!(loaded.whiteboard_bg_index, background);
+                }
             }
         }
     }
@@ -1030,7 +1025,7 @@ mod theme_tests {
         app.launch.card.get_mut().replace(Pixmap::new(8, 8).unwrap());
         assert!(app.apply_theme(Theme { preference: Preference::Dark, system_dark: false }));
         assert!(app.launch.card.borrow().is_none());
-        assert_ne!(app.whiteboard_bg_color(), light_board);
+        assert_eq!(app.whiteboard_bg_color(), light_board);
         assert_eq!(app.canvas.data(), ink);
         assert_eq!(app.slide_cache.get(&1).unwrap().data(), ink);
         assert_eq!(app.undo.len(), 1);
