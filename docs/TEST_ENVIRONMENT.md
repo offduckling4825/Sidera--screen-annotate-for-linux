@@ -9,11 +9,15 @@
 | 本地 WSL Ubuntu 26.04 amd64 | Rust/Cargo 1.93.1、GCC 15.2、Qt 5.15.18、Python 3.14、bubblewrap、Xvfb、Sway 1.11/wlroots 0.19.2 | 编译、接口及私有图形协议检查；不等于真实桌面体验 |
 | Windows / NAS 工作区 | PowerShell、Node 24.19；custom 分支 | 编辑、Node 模拟测试；Linux 构建使用本地文件系统副本 |
 | VMware Ubuntu 26.04.1 amd64 | GNOME 50.1 Wayland、glibc 2.43；已覆盖安装带主题功能且保留白板底色的 custom.33，扩展文件版本 6 | 37 个安装文件校验通过、原有配置保留；真实桌面与 WPS 验收由用户进行 |
-| GitHub 原生 Ubuntu 22.04 amd64 / ARM64 | custom.34 发布构建基线；Rust 1.93.1 | 发布工作流分别编译、检查主题与私有协议，再验证包内程序；实际结果见 Release 的 BUILDINFO |
-| 学校银河麒麟 V10 SP1 | Phytium D2000/8 E8C、ARM64、UKUI 原生 X11、glibc 2.31、Qt 5.12；报告已装上游 2.6 | 环境报告，不是新 Rust 包验收；有图形窗口不代表 Wayland |
+| GitHub 原生 Ubuntu 22.04 amd64 / ARM64 | custom.35 发布构建基线；Rust 1.93.1 | 发布工作流分别编译、检查主题与私有协议，再验证包内程序；实际结果见 Release 的 BUILDINFO |
+| 学校银河麒麟 V10 SP1 | Phytium D2000/8 E8C、ARM64、UKUI 原生 X11、glibc 2.31、Qt 5.12；报告已装上游 2.6 | U 盘另备 custom.34 低 ABI 构建；QEMU + glibc 2.31 下 103 项普通 Rust、16 项启动检查通过，不是学校硬件验收；有图形窗口不代表 Wayland |
 | Ubuntu 24.04 / GNOME 46–49 / KDE / 原生 ARM64 | 缺少完整当前版本验收 | 不预填为已支持或已通过 |
 
-历史 VM 的 XWayland 穿透/不闪和 custom.4 WPS 联动曾得到用户确认；后续功能及本轮修改不能继承为“全部通过”。当前发行记录见 [custom.34](releases/2026-10-25-custom34.md)，历史 [custom.29](releases/2026-10-24-custom29.md) 另行保留。
+历史 VM 的 XWayland 穿透/不闪和 custom.4 WPS 联动曾得到用户确认；后续功能及本轮修改不能继承为“全部通过”。当前发行记录见 [custom.35](releases/2026-10-25-custom35.md)，历史 [custom.29](releases/2026-10-24-custom29.md) 另行保留。
+
+## 小屏幕设置回归
+
+custom.35 新增完整设置可达性、点击区域无重叠、页码边界与原生像素绘制检查。覆盖 320×240 至 1920×1080 的八组逻辑分辨率，两种橡皮触发方式、深浅主题，以及 100% / 150% / 200% 缩放。底部完成按钮始终可见；小屏幕通过上下按钮或滚轮换页。实际触摸仍由用户验收。
 
 ## 准备独立开发环境
 

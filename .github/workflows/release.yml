@@ -9,7 +9,7 @@ on:
       release_tag:
         description: Existing custom release tag
         required: true
-        default: v3.0-Electro-testing-custom20261025.34
+        default: v3.0-Electro-testing-custom20261025.35
         type: string
 
 permissions:

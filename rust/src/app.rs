@@ -80,6 +80,7 @@ pub struct App {
     pub more_menu_open: bool,
     pub page_picker: Option<crate::page_picker::PagePicker>,
     pub settings_open: bool,
+    pub settings_page: usize,
     pub popup_on_right: bool,
 
     // 触屏按下反馈 / 弹窗淡入动画 / 设置里的确认与诊断
@@ -213,6 +214,7 @@ impl App {
             more_menu_open: false,
             page_picker: None,
             settings_open: false,
+            settings_page: 0,
             popup_on_right: false,
             press: None,
             open_anim: 0,

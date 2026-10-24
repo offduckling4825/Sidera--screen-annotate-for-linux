@@ -479,8 +479,15 @@ fn commit_page_picker(rt: &Rt, app: &mut App, wps: Option<&WpsBridge>) {
 }
 
 pub(crate) fn on_scroll(rt: &Rt, app: &mut App, ip: &Ip, x: i32, y: i32, pages: f64) {
-    if app.settings_open || app.confirm_quit || app.show_diag || ip.pending_ui.is_some()
+    if app.confirm_quit || app.show_diag || ip.pending_ui.is_some()
         || ip.slider.is_some() || ip.dragging { return; }
+    if app.settings_open {
+        if pages.is_finite() && pages != 0.0 && ui::settings_rect(app).contains(x, y)
+            && ui::settings_change_page(app, if pages > 0.0 { 1 } else { -1 }) {
+            rt.redraw(app, ui::settings_rect(app));
+        }
+        return;
+    }
     if app.page_picker.is_none() || !ui::page_picker_control_rect(app, ui::PagePickerHit::Wheel).contains(x, y) { return; }
     if let Some(picker) = app.page_picker.as_mut() { picker.scroll(pages, Instant::now()); }
     rt.redraw(app, ui::page_picker_rect(app));
@@ -614,6 +621,7 @@ pub(crate) fn collect_system_info(rt: &Rt, app: &App) -> String {
 pub(crate) fn open_settings(rt: &Rt, app: &mut App) {
     if std::env::var("SIDERA_TRACE").is_ok() { log::info!("[SETTINGS] 打开"); }
     app.settings_open = true;
+    app.settings_page = 0;
     app.open_anim = now_ms();
     close_all_popups(rt, app);
     apply_input_shape(rt, app);
@@ -660,6 +668,7 @@ pub(crate) fn handle_settings_hit(rt: &Rt, app: &mut App, hit: SetHit) {
         }
         SetHit::EraseTrig => {
             app.erase_by_finger = !app.erase_by_finger;
+            app.settings_page = ui::settings_layout(app).page;
             app::save_settings(app);
         }
         SetHit::ClearLog => {
@@ -682,6 +691,7 @@ pub(crate) fn handle_settings_hit(rt: &Rt, app: &mut App, hit: SetHit) {
             app.show_diag = false;
             apply_input_shape(rt, app);
         }
+        SetHit::SettingsPage(delta) => { ui::settings_change_page(app, delta); }
     }
     apply_input_shape(rt, app);
     rt.redraw_full(app);

@@ -67,6 +67,7 @@ pub enum SetHit {
     SysInfo,
     Quit,
     Done,
+    SettingsPage(i32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -101,6 +102,10 @@ pub enum Control {
 }
 
 pub fn control_enabled(app: &App, control: Control) -> bool {
+    if let Control::Setting(SetHit::SettingsPage(delta)) = control {
+        let l = settings_layout(app);
+        return (delta < 0 && l.page > 0) || (delta > 0 && l.page + 1 < l.pages);
+    }
     if matches!(control, Control::PageCount(_)) { return app.page_picker_context().is_some(); }
     !(app.whiteboard && matches!(control, Control::Sidebar(Btn::Cursor, _)))
 }
@@ -657,23 +662,47 @@ pub fn more_menu_hit(app: &App, x: i32, y: i32) -> Option<MoreHit> {
 }
 
 pub fn settings_rect(app: &App) -> R {
-    let w = 460;
-    // 手背模式多两行（大触点阈值/倍率）
-    let max_row = if app.erase_by_finger { 9 } else { 11 };
-    let content_h = 92 + (max_row + 1) * 48 + 12;
-    // Append a secondary credit below the existing copyright. Preserve the
-    // controls' positions unless a short screen needs the panel shifted to fit.
-    let h = content_h + 14;
-    R {
-        x: (app.screen_w - w) / 2,
-        y: ((app.screen_h - content_h) / 2).max(8).min((app.screen_h - h - 8).max(8)),
-        w,
-        h,
-    }
+    let w = 460.min((app.screen_w - 16).max(1));
+    let stride = if w < 420 { 72 } else { 48 };
+    let h = (152 + settings_row_count(app) as i32 * stride).min((app.screen_h - 16).max(1));
+    R { x: (app.screen_w - w) / 2, y: (app.screen_h - h) / 2, w, h }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SettingsLayout {
+    pub rows: usize,
+    pub page: usize,
+    pub pages: usize,
+    pub stride: i32,
+}
+
+fn settings_row_count(app: &App) -> usize { (settings_action_start(app) + 3) as usize }
+
+pub fn settings_layout(app: &App) -> SettingsLayout {
+    let p = settings_rect(app);
+    let stride = if p.w < 420 { 72 } else { 48 };
+    let rows = ((p.h - 152) / stride).max(1) as usize;
+    let pages = settings_row_count(app).div_ceil(rows);
+    SettingsLayout { rows, page: app.settings_page.min(pages - 1), pages, stride }
+}
+
+pub fn settings_change_page(app: &mut App, delta: i32) -> bool {
+    let l = settings_layout(app);
+    let next = (l.page as i64 + i64::from(delta)).clamp(0, l.pages as i64 - 1) as usize;
+    app.settings_page = next;
+    if next == l.page { return false; }
+    app.press = None;
+    true
+}
+
+fn settings_row_visible(app: &App, row: i32) -> bool {
+    let l = settings_layout(app);
+    (l.page * l.rows..(l.page + 1) * l.rows).contains(&(row as usize))
 }
 
 fn settings_row_y(app: &App, row: i32) -> i32 {
-    settings_rect(app).y + 92 + row * 48
+    let l = settings_layout(app);
+    settings_rect(app).y + 84 + (row - (l.page * l.rows) as i32) * l.stride
 }
 
 /// 大触点相关行起始（手背模式才有阈值/倍率，动作键随之移位）
@@ -695,21 +724,23 @@ pub fn settings_sliders(app: &App) -> Vec<SliderDef> {
               step: f32,
               label: &'static str,
               signed: bool| {
-        let ry = settings_row_y(app, row);
+        let narrow = p.w < 420;
+        let ry = settings_row_y(app, row) + if narrow { 28 } else { 0 };
         let reset = R { x: p.x + p.w - 80, y: ry, w: 58, h: 38 };
         let badge = R { x: reset.x - 72, y: ry + 4, w: 62, h: 30 };
+        let tx = p.x + if narrow { 30 } else { 190 };
         SliderDef {
             id,
             track: R {
-                x: p.x + 190,
+                x: tx,
                 y: ry + 10,
-                w: badge.x - 18 - (p.x + 190),
+                w: (badge.x - 18 - tx).max(1),
                 h: 18,
             },
             hit: R {
-                x: p.x + 180,
+                x: tx - 10,
                 y: ry,
-                w: badge.x - 8 - (p.x + 180),
+                w: (badge.x - 8 - (tx - 10)).max(1),
                 h: 42,
             },
             badge,
@@ -730,6 +761,10 @@ pub fn settings_sliders(app: &App) -> Vec<SliderDef> {
         v.push(mk(SliderId::Threshold, 6, 20.0, 260.0, app.large_touch_threshold as f32, 10.0, "大触点阈值", false));
         v.push(mk(SliderId::EraseScale, 7, 0.8, 2.5, app.large_erase_scale10 as f32 / 10.0, 0.1, "大触点橡皮倍率", true));
     }
+    v.retain(|s| settings_row_visible(app, match s.id {
+        SliderId::Alpha => 0, SliderId::Scale => 1,
+        SliderId::Threshold => 6, SliderId::EraseScale => 7,
+    }));
     v
 }
 
@@ -754,12 +789,27 @@ pub fn settings_controls(app: &App) -> Vec<(SetHit, R)> {
         (SetHit::ClearLog, full(a)),
         (SetHit::SysInfo, full(a + 1)),
         (SetHit::Quit, full(a + 2)),
-        (SetHit::Done, full(a + 3)),
     ];
-    // Reuse the header subtitle area; existing rows and panel bounds stay put.
-    for (preference, offset, width) in [(theme::Preference::Light, 0, 84),
-        (theme::Preference::Dark, 90, 84), (theme::Preference::System, 180, 126)] {
-        controls.push((SetHit::Theme(preference), R { x: p.x + 84 + offset, y: p.y + 46, w: width, h: 32 }));
+    controls.retain(|(hit, _)| settings_row_visible(app, match hit {
+        SetHit::Autostart => 2, SetHit::WpsDebug => 3, SetHit::RightClick => 4,
+        SetHit::EraseTrig => 5, SetHit::ClearLog => a, SetHit::SysInfo => a + 1,
+        SetHit::Quit => a + 2, _ => unreachable!(),
+    }));
+    let theme_x = p.x + if p.w < 420 { 18 } else { 84 };
+    let available = p.x + p.w - 24 - theme_x;
+    let unit = (available - 12) / 7;
+    for (preference, offset, width) in [(theme::Preference::Light, 0, unit * 2),
+        (theme::Preference::Dark, unit * 2 + 6, unit * 2),
+        (theme::Preference::System, unit * 4 + 12, available - unit * 4 - 12)] {
+        controls.push((SetHit::Theme(preference), R { x: theme_x + offset, y: p.y + 46, w: width, h: 32 }));
+    }
+    let l = settings_layout(app);
+    let footer = p.y + p.h - 68;
+    controls.push((SetHit::Done, R { x: p.x + p.w - 118, y: footer, w: 100, h: 38 }));
+    if l.pages > 1 {
+        for (delta, offset) in [(-1, 0), (1, 52)] {
+            controls.push((SetHit::SettingsPage(delta), R { x: p.x + 18 + offset, y: footer, w: 44, h: 38 }));
+        }
     }
     controls.extend(settings_sliders(app).into_iter().map(|s| (SetHit::ResetSlider(s.id), s.reset)));
     controls
@@ -785,7 +835,7 @@ pub enum ConfirmHit {
 }
 
 pub fn confirm_rect(app: &App) -> R {
-    let w = 380;
+    let w = 380.min((app.screen_w - 16).max(1));
     let h = 150;
     R {
         x: (app.screen_w - w) / 2,
@@ -831,8 +881,8 @@ pub fn draw_confirm(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
 }
 
 pub fn diag_rect(app: &App) -> R {
-    let w = 520;
-    let h = 420;
+    let w = 520.min((app.screen_w - 16).max(1));
+    let h = 420.min((app.screen_h - 16).max(1));
     R {
         x: (app.screen_w - w) / 2,
         y: ((app.screen_h - h) / 2).max(8),
@@ -1429,24 +1479,24 @@ fn draw_settings(app: &App, fonts: &Fonts, ctx: &mut Ctx, icon: Option<&Pixmap>)
     panel(ctx, p, 18.0, 1.0);
     if let Some(ico) = icon {
         let ix = p.x + 24;
-        let iy = p.y + 20;
-        ctx.pm.draw_pixmap(ix, iy, ico.as_ref(), &tiny_skia::PixmapPaint {
+        let iy = p.y + if p.w < 420 { 8 } else { 20 };
+        let size = if p.w < 420 { 32.0 } else { 44.0 };
+        ctx.pm.draw_pixmap(0, 0, ico.as_ref(), &tiny_skia::PixmapPaint {
             quality: tiny_skia::FilterQuality::Bicubic, ..Default::default()
-        }, ctx.tr, None);
+        }, ctx.tr.pre_translate(ix as f32, iy as f32)
+            .pre_scale(size / ico.width() as f32, size / ico.height() as f32), None);
     }
     ctx.text(fonts, "Sidera 设置", (p.x + 84) as f32, (p.y + 36) as f32, 27.0, c(palette.text));
     ctx.stroke_line(((p.x + 24) as f32, (p.y + 82) as f32),
         ((p.x + p.w - 24) as f32, (p.y + 82) as f32), c(palette.border), 1.0);
 
-    // Group related rows without changing their positions or touch targets.
+    // Paint only complete rows on this page, without scaling down text or
+    // rasterizing a tall panel and stretching it into the available space.
     for (first, count) in [(2, 4), (settings_action_start(app), 2)] {
-        let group = R { x: p.x + 18, y: settings_row_y(app, first) - 3,
-            w: p.w - 36, h: (count - 1) * 48 + 44 };
-        surface(ctx, group, 13.0, c(palette.surface), c(palette.border));
-        for row in first..first + count - 1 {
-            let y = (settings_row_y(app, row) + 43) as f32;
-            ctx.stroke_line(((group.x + 14) as f32, y), ((group.x + group.w - 14) as f32, y),
-                alpha(palette.border, 180), 1.0);
+        for row in first..first + count {
+            if !settings_row_visible(app, row) { continue; }
+            let group = R { x: p.x + 18, y: settings_row_y(app, row), w: p.w - 36, h: 40 };
+            surface(ctx, group, 10.0, c(palette.surface), c(palette.border));
         }
     }
 
@@ -1455,7 +1505,8 @@ fn draw_settings(app: &App, fonts: &Fonts, ctx: &mut Ctx, icon: Option<&Pixmap>)
         let label = match s.id {
             SliderId::Alpha => "工具栏不透明度", SliderId::Scale => "工具栏大小", _ => s.label,
         };
-        ctx.text(fonts, label, (p.x + 26) as f32, (ry + 27) as f32, 22.0, c(palette.text));
+        let baseline = ry + if p.w < 420 { -4 } else { 27 };
+        ctx.text(fonts, label, (p.x + 26) as f32, baseline as f32, 22.0, c(palette.text));
         let track = s.track;
         let cy = track.y + track.h / 2;
         let rail = R { x: track.x, y: cy - 3, w: track.w, h: 6 };
@@ -1534,11 +1585,23 @@ fn draw_settings(app: &App, fonts: &Fonts, ctx: &mut Ctx, icon: Option<&Pixmap>)
                 icons::draw(ctx, Glyph::Check, r.x as f32 + r.w as f32 / 2.0 - 44.0,
                     (r.y + 10) as f32, 18.0, c(palette.on_accent), c(palette.on_accent));
             }
+            SetHit::SettingsPage(delta) => {
+                let enabled = control_enabled(app, Control::Setting(hit));
+                surface(ctx, r, 9.0, c(palette.surface), c(palette.border));
+                let ink = if enabled { c(palette.accent) } else { alpha(palette.muted, 85) };
+                icons::draw(ctx, if delta < 0 { Glyph::Up } else { Glyph::Down },
+                    (r.x + 12) as f32, (r.y + 9) as f32, 20.0, ink, ink);
+            }
         }
     }
-    ctx.text_center(fonts, R { x: p.x, y: p.y + p.h - 40, w: p.w, h: 20 },
+    let l = settings_layout(app);
+    if l.pages > 1 {
+        ctx.text_center(fonts, R { x: p.x + 116, y: p.y + p.h - 68, w: p.w - 240, h: 38 },
+            &format!("{} / {}", l.page + 1, l.pages), 18.0, c(palette.muted));
+    }
+    ctx.text_center(fonts, R { x: p.x, y: p.y + p.h - 30, w: p.w, h: 16 },
         &format!("Sidera {}  © 2026 Carl_Jin  GNU GPL v3", crate::app::VERSION), 11.0, c(palette.muted));
-    ctx.text_center(fonts, R { x: p.x, y: p.y + p.h - 24, w: p.w, h: 18 },
+    ctx.text_center(fonts, R { x: p.x, y: p.y + p.h - 16, w: p.w, h: 14 },
         "定制与改进：shizhelei · Gary_6Stones", 10.0, alpha(palette.muted, 200));
 }
 
@@ -1550,6 +1613,90 @@ mod tests {
         let mut pm = Pixmap::new(2560, 1600).unwrap();
         pm.fill(Color::TRANSPARENT);
         App::new(pm, 2560, 1600)
+    }
+
+    #[test]
+    fn small_settings_reach_every_control_without_overlap_or_offscreen_targets() {
+        for (w, h) in [(320, 240), (360, 640), (480, 270), (640, 360), (980, 512),
+            (1024, 600), (1280, 720), (1920, 1080)] {
+            for fingers in [false, true] {
+                let mut a = App::new(Pixmap::new(w, h).unwrap(), w as i32, h as i32);
+                a.settings_open = true;
+                a.erase_by_finger = fingers;
+                let mut reached = Vec::new();
+                let mut sliders = Vec::new();
+                let panel = settings_rect(&a);
+                assert!(panel.x >= 0 && panel.y >= 0 && panel.x + panel.w <= w as i32 && panel.y + panel.h <= h as i32);
+                let pages = settings_layout(&a).pages;
+                for page in 0..pages {
+                    a.settings_page = page;
+                    let controls = settings_controls(&a);
+                    for (index, (hit, r)) in controls.iter().enumerate() {
+                        assert!(panel.contains(r.x, r.y) && panel.contains(r.x + r.w - 1, r.y + r.h - 1), "{w}x{h} {hit:?} {r:?}");
+                        assert_eq!(control_at(&a, r.x + r.w / 2, r.y + r.h / 2), Some(Control::Setting(*hit)));
+                        for (_, other) in &controls[index + 1..] {
+                            assert!(r.x + r.w <= other.x || other.x + other.w <= r.x || r.y + r.h <= other.y || other.y + other.h <= r.y,
+                                "overlapping controls: {w}x{h} {r:?} {other:?}");
+                        }
+                        if !reached.contains(hit) { reached.push(*hit); }
+                    }
+                    assert!(controls.iter().any(|(hit, _)| *hit == SetHit::Done));
+                    for s in settings_sliders(&a) {
+                        assert!(s.track.w >= 60, "unusable slider at {w}x{h}");
+                        assert!(panel.contains(s.hit.x, s.hit.y) && panel.contains(s.hit.x + s.hit.w - 1, s.hit.y + s.hit.h - 1));
+                        assert_eq!(control_at(&a, s.track.x, s.track.y + 9), Some(Control::Slider(s.id)));
+                        if !sliders.contains(&s.id) { sliders.push(s.id); }
+                    }
+                }
+                for expected in [SetHit::Autostart, SetHit::WpsDebug, SetHit::RightClick, SetHit::EraseTrig,
+                    SetHit::ClearLog, SetHit::SysInfo, SetHit::Quit, SetHit::Done] {
+                    assert!(reached.contains(&expected), "unreachable {expected:?} at {w}x{h}");
+                }
+                assert_eq!(sliders.len(), if fingers { 2 } else { 4 });
+                for id in sliders { assert!(reached.contains(&SetHit::ResetSlider(id))); }
+                assert!(!settings_change_page(&mut a, i32::MAX));
+                settings_change_page(&mut a, i32::MIN);
+                assert_eq!(settings_layout(&a).page, 0);
+                assert!(!control_enabled(&a, Control::Setting(SetHit::SettingsPage(-1))));
+            }
+        }
+    }
+
+    #[test]
+    fn settings_page_clamps_after_resize_or_removing_touch_rows() {
+        let mut a = App::new(Pixmap::new(640, 360).unwrap(), 640, 360);
+        a.settings_page = usize::MAX;
+        a.erase_by_finger = true;
+        assert!(settings_layout(&a).page < settings_layout(&a).pages);
+        assert!(settings_controls(&a).iter().any(|(hit, _)| *hit == SetHit::Quit));
+        a.screen_h = 1080;
+        assert_eq!(settings_layout(&a).page, 0);
+        assert_eq!(settings_layout(&a).pages, 1);
+    }
+
+    #[test]
+    fn small_settings_render_at_native_pixel_density_in_both_themes() {
+        let fonts = Fonts::load();
+        for scale in [1.0, 1.5, 2.0] {
+            let mut a = App::new(Pixmap::new(640, 360).unwrap(), 640, 360);
+            a.set_scale(scale);
+            a.settings_open = true;
+            for preference in [theme::Preference::Light, theme::Preference::Dark] {
+                a.apply_theme(theme::Theme { preference, system_dark: false });
+                for page in 0..settings_layout(&a).pages {
+                    a.settings_page = page;
+                    let r = settings_rect(&a);
+                    let pm = render_region(&a, &fonts, None, r.x, r.y, r.w, r.h).unwrap();
+                    assert_eq!(pm.width(), (r.w as f64 * scale).round() as u32);
+                    assert_eq!(pm.height(), (r.h as f64 * scale).round() as u32);
+                    let done = settings_controls(&a).into_iter().find(|(h, _)| *h == SetHit::Done).unwrap().1;
+                    assert_eq!(pm.pixel(((done.x - r.x + 6) as f64 * scale) as u32,
+                        ((done.y - r.y + 19) as f64 * scale) as u32).unwrap(),
+                        c(a.theme.palette().accent).to_color_u8().premultiply());
+                    assert!(a.canvas.data().iter().all(|&b| b == 0));
+                }
+            }
+        }
     }
 
     #[test]

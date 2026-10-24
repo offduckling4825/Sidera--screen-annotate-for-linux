@@ -27,6 +27,38 @@ pub(crate) fn fixture(direct_keys: bool) -> (Rt, App, Rc<Cell<usize>>) {
 }
 
 #[test]
+fn small_settings_page_buttons_wheel_and_done_use_the_real_input_path() {
+    let (rt, mut app, keys) = fixture(false);
+    app.configure_geometry(640, 360, 1.0);
+    app.mode = 1;
+    let mut ip = Ip::default();
+    open_settings(&rt, &mut app);
+    let panel = ui::settings_rect(&app);
+    let next = ui::settings_controls(&app).into_iter()
+        .find(|(h, _)| *h == SetHit::SettingsPage(1)).unwrap().1;
+    let (x, y) = (next.x + next.w / 2, next.y + next.h / 2);
+    on_press(&rt, &mut app, &mut ip, None, x, y, 1);
+    assert_eq!(app.settings_page, 0, "activate only after release");
+    on_scroll(&rt, &mut app, &ip, x, y, 1.0);
+    assert_eq!(app.settings_page, 0, "do not move a pressed target");
+    on_release(&rt, &mut app, &mut ip, None, x, y, 1);
+    assert_eq!(app.settings_page, 1);
+    on_scroll(&rt, &mut app, &ip, 0, 0, 1.0);
+    on_scroll(&rt, &mut app, &ip, x, y, f64::NAN);
+    assert_eq!(app.settings_page, 1);
+    on_press(&rt, &mut app, &mut ip, None, panel.x + 40, panel.y + 30, 4);
+    assert_eq!(app.settings_page, 0);
+    let done = ui::settings_controls(&app).into_iter().find(|(h, _)| *h == SetHit::Done).unwrap().1;
+    let (x, y) = (done.x + done.w / 2, done.y + done.h / 2);
+    on_press(&rt, &mut app, &mut ip, None, x, y, 1);
+    on_release(&rt, &mut app, &mut ip, None, x, y, 1);
+    assert!(!app.settings_open);
+    assert!(!app.is_drawing && !app.page_has_ink);
+    assert!(ip.pending_ui.is_none() && ip.slider.is_none());
+    assert_eq!(keys.get(), 0);
+}
+
+#[test]
 fn disconnected_link_uses_available_direct_keyboard() {
     for direct_keys in [false, true] {
         let (rt, mut app, keys) = fixture(direct_keys);

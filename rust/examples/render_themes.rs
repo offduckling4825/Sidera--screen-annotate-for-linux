@@ -60,6 +60,22 @@ fn main() {
     let icon = resize_icon(44);
     let intro_icon = resize_icon(84);
 
+    if std::env::args().nth(2).as_deref() == Some("--settings") {
+        for preference in [Preference::Light, Preference::Dark] {
+            for (w, h) in [(980, 512), (640, 360), (320, 240), (1280, 900)] {
+                let mut a = app::App::new(Pixmap::new(w, h).unwrap(), w as i32, h as i32);
+                a.apply_theme(Theme { preference, system_dark: false });
+                a.settings_open = true;
+                for page in 0..ui::settings_layout(&a).pages {
+                    a.settings_page = page;
+                    capture(&a, &fonts, icon.as_ref(), ui::settings_rect(&a))
+                        .save_png(out.join(format!("{}-{w}x{h}-{}.png", preference.key(), page + 1))).unwrap();
+                }
+            }
+        }
+        return;
+    }
+
     for preference in [Preference::Light, Preference::Dark] {
         let theme = Theme { preference, system_dark: false };
         let palette = theme.palette();

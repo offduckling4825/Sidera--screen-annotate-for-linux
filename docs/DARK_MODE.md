@@ -1,6 +1,6 @@
 # 浅色、深色与跟随系统
 
-更新：2026-10-25，`custom` 分支。适用于当前 **Rust 3.0** 界面；仓库保留的上游 C++ / Qt5 2.6 不包含这套主题功能。主题功能随 [custom.34 双架构 Release](releases/2026-10-25-custom34.md) 提供；历史 custom.29 安装包不包含本功能。
+更新：2026-10-25，`custom` 分支。适用于当前 **Rust 3.0** 界面；仓库保留的上游 C++ / Qt5 2.6 不包含这套主题功能。主题功能从 custom.34 起提供，当前 [custom.35 Release](releases/2026-10-25-custom35.md) 另修复小屏幕设置；历史 custom.29 安装包不包含本功能。
 
 ## 使用
 
@@ -55,7 +55,7 @@ python3 tools/test_rust.py --wayland
 
 ## 公开包与本地测试包
 
-`custom.34` 的 amd64 和 ARM64 包都包含本页主题功能，并保持白板原有底色。两种架构以 Ubuntu 22.04 分别原生构建，实际系统库依赖与检查结果见 Release 中对应架构的 `BUILDINFO`；不要将下面旧 `.33` 本地包的 glibc 要求套用到新公开包。
+`custom.35` 的 amd64 和 ARM64 包都包含本页主题功能，并保持白板原有底色。两种架构以 Ubuntu 22.04 分别原生构建，实际系统库依赖与检查结果见 Release 中对应架构的 `BUILDINFO`；不要将下面旧 `.33` 本地包的 glibc 要求套用到新公开包。
 
 2026-10-25 已从源码 `31ef325a473c46bbe379b404efc7ce43f181ff6a` 编译并覆盖安装 **3.0-Electro-testing+custom20261025.33** 到 VMware Ubuntu 26.04.1 amd64。此版保留原来的白板底色；包要求 libc6 ≥ 2.43，不能作为 Ubuntu 24.04 或麒麟 ARM64 的安装包。
 
