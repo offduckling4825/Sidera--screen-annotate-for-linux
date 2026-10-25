@@ -1,27 +1,34 @@
 <div align="center">
 
-<img src="sidera.png" width="88" height="88" alt="Sidera 原有标志的课堂配色版本">
+<img src="sidera.png" width="88" height="88" alt="Sidera 标志">
 
 # Sidera · 星罗
 
 **Linux 课堂批注 · 白板书写 · WPS 演示联动**
 
-浅色与深色课堂界面，清晰工具，把注意力留给课堂。
+轻量、免费、开源：把注意力留给课堂。
 
-[![分支](https://img.shields.io/badge/branch-custom-246f64?style=flat-square)](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/tree/custom)
-[![阶段](https://img.shields.io/badge/3.0-Electro_testing-b98237?style=flat-square)](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/releases)
+[![CI](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml/badge.svg)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml)
+[![阶段](https://img.shields.io/badge/3.0-Electro_testing-b98237?style=flat-square)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux)
 [![平台](https://img.shields.io/badge/platform-Linux-5a6f69?style=flat-square)](#桌面与安装包兼容性)
 [![许可](https://img.shields.io/badge/license-GPL_v3-5a6f69?style=flat-square)](LICENSE)
 
-[下载测试版](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/releases) · [界面预览](#界面预览) · [安装指南](#安装与开始使用) · [更新记录](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md) · [安全政策](SECURITY.md) · [许可证](LICENSES.md)
+[界面预览](#界面预览) · [安装与开始使用](#安装与开始使用) · [从源码构建](#从源码构建) · [更新记录](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md) · [安全政策](SECURITY.md) · [许可证](LICENSES.md)
 
 </div>
 
-> **这是基于原项目的定制分支，并非原创项目。**
->
-> Sidera 原项目来自 [offduckling4825/Sidera--screen-annotate-for-linux](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux)，保留原作者 **Carl_Jin / jinyicheng** 的署名和授权声明。本分支由 **shizhelei · Gary_6Stones** 进行课堂体验与兼容性改进，不代表上游官方发行版。
+> **Sidera（星罗）** 由 **Carl_Jin / jinyicheng** 发起（第一次 vibecoding）。本 `main` 分支已合并 **shizhelei · Gary_6Stones** 在 [定制分支 `custom`](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/tree/custom) 上的课堂体验与兼容性改进（浅色/深色主题、GNOME 扩展、原生 Wayland、USB 离线部署套件、测试与文档等），保留原作者署名。定制分支不代表上游官方发行版。
 
-当前开发集中在 **Rust 3.0 的 `custom` 分支**；仓库也保留上游 C++ / Qt5 2.6 实现。下面介绍的是本分支 Rust 版，不表示 C++ 版已同步这些改动。当前发行：[2026.10.25 · custom.35 · 小屏幕设置修复](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/releases/tag/v3.0-Electro-testing-custom20261025.35)。
+## 两套并行实现
+
+本仓库包含两套实现，共用同一份 WPS 加载项（`wps-addin/`）与本地 HTTP 桥协议（`127.0.0.1:16666`），可平滑切换：
+
+| 版本 | 技术栈 | 版本号 | 建议场景 |
+| --- | --- | --- | --- |
+| **Rust 版（主推，active）** | 纯 Rust，**不依赖 Qt / libX11**，tiny-skia 软件渲染 | `3.0-Electro-testing` | X11 与 Wayland 通吃；老机器、国产化教室机；追求轻量与无重量级依赖 |
+| **C++ / Qt5 版（legacy）** | C++17 + Qt5 | `2.6-Geo-stable` | 经典实现；长期在 X11 教室环境验证 |
+
+> Rust 运行时只依赖 `libc6` 与 `libgcc-s1`。C++ 与 Rust 包使用相同的 `sidera` 包名，安装会替换已有版本，**二选一安装**。
 
 ## 界面预览
 
@@ -32,7 +39,7 @@
 <p align="center"><sub>生产绘制代码生成的静态预览；课堂背景与页码为演示数据，不是桌面实测截图。</sub></p>
 
 <details>
-<summary>查看深色课堂界面（custom.35，amd64 / ARM64）</summary>
+<summary>查看深色课堂界面</summary>
 
 ![深色课堂界面：深灰绿面板、薄荷绿选中态、保留原色的画笔](docs/assets/preview/classroom-dark.png)
 
@@ -66,7 +73,18 @@
 
 </details>
 
-## 为课堂准备的操作
+## 核心特性
+
+- 🖊️ **轻量流畅的屏幕批注**：自由画笔、橡皮擦、白板与 10 色色盘；笔迹随落笔时长由细到粗。
+- 🖱️ **智能点击穿透**：光标模式下只响应工具栏与弹窗交互，全屏透明区域完全穿透，不影响底层桌面与课件操作。
+- 🧑‍🏫 **白板模式**：一键把透明批注层变为不透明白板（背景可切换墨绿/白），翻页与笔迹完全本地、与外部放映隔离。
+- ✋ **手掌/大触点橡皮**：多点或大面积触点（如手背）自动临时当大号橡皮，单点恢复画笔；阈值与倍率可调。
+- ↩️ **撤回**：一键撤回最近一笔（最多 12 步）。
+- 📸 **截图**：抓屏保存 PNG 到图片目录并复制到剪贴板（后端能力允许时）。
+- 📊 **WPS 演示深度联动**：本地 HTTP 桥 + JS 加载项；侧边栏直接翻页；**仅在真实换页时切换批注缓存**，页内动画不丢笔迹。
+- 🖥️ **跨架构**：原生支持 x86_64 (amd64) 与 aarch64 (arm64)，适配国产化 Linux 教室机。
+
+### 为课堂准备的操作
 
 | 功能 | 当前行为 |
 | --- | --- |
@@ -80,7 +98,7 @@
 | 未接入 WPS | 上下键与 Esc 回退到桌面支持的直接按键模拟，页码区域隐藏；不因翻页发起共享桌面授权。 |
 | 启动与外观 | 浅色、深色或跟随系统，保留课堂配色与触摸反馈；启动页显示实际准备信息，两侧工具栏从中间向上下展开。工具栏大小以 1% 步长调节。 |
 
-放映按钮、页码及翻页不可用时的具体表现见 [WPS 按钮与页码状态](wps-addin/README.md#按钮与页码状态)。截图、原生剪贴板、多屏画布和触摸处理的能力随桌面后端不同；请结合下面的兼容性范围使用。
+放映按钮、页码及翻页不可用时的具体表现见 [WPS 按钮与页码状态](wps-addin/README.md#按钮与页码状态)。
 
 ## 桌面与安装包兼容性
 
@@ -92,55 +110,48 @@
 | GNOME Wayland | 配套 GNOME Shell 原生扩展 | 需要按用户安装扩展；元数据列出 GNOME 46–50，不代表这些版本已逐一实测。 |
 | GNOME 兼容入口 | XWayland | 保留兼容路径；特定 Mutter / Xwayland 组合存在系统侧限制，见[兼容性记录](docs/audit/COMPATIBILITY_2026-10-24.md)。 |
 | 支持 layer-shell 的 Wayland 桌面 | 原生 Wayland | 输入模拟、截图、剪贴板按合成器协议能力工作；缺少协议时功能可能不可用。 |
-| amd64 / ARM64 | Release 提供两种原生构建的 DEB | custom.35 均以 Ubuntu 22.04 为构建基线；实际依赖见 DEB 的 Depends 和各自 BUILDINFO，真实桌面仍需验收。 |
-| 麒麟等发行版 | 需要匹配系统库与桌面环境 | 分别核对架构、glibc 及桌面版本，不能只看处理器名称；学校 ARM64 / glibc 2.31 环境仍不在当前构建基线内。 |
+| amd64 / ARM64 | 提供两种原生构建的 DEB | 实际依赖见 DEB 的 Depends 和各自 BUILDINFO，真实桌面仍需验收。 |
+| 麒麟等发行版 | 需要匹配系统库与桌面环境 | 分别核对架构、glibc 及桌面版本，不能只看处理器名称。 |
 
-### 本次 release 的范围
-
-`3.0-Electro-testing+custom20261025.35` 是 **预发布测试版**，提供相同应用源码版本的 **amd64 与 ARM64 DEB**，包含浅色／深色／跟随系统、保持原样的白板底色，以及 `.29` 之后的状态、WPS 桥和兼容性修复。
-
-| 安装包架构 | 构建基线 | 来源与检查 |
-| --- | --- | --- |
-| amd64 | 原生 Ubuntu 22.04 x86_64 | `BUILDINFO-amd64.md` 记录实际依赖、源码、工具链、哈希与隔离测试结果。 |
-| arm64 | 原生 Ubuntu 22.04 AArch64 | `BUILDINFO-arm64.md` 记录实际依赖、源码、工具链、哈希与隔离测试结果。 |
-
-两种包均需要 Python 3，动态库依赖从实际 ELF 生成；不能沿用旧 `.29` amd64 包的 libc6 ≥ 2.43 结论。详见[更新记录](CHANGELOG.md)、[custom.35 发布记录](docs/releases/2026-10-25-custom35.md)和 Release 内的构建记录。旧版本仍保留在历史 Release 中。
-
-custom.35 针对小屏幕设置增加自适应分页，完成按钮固定可见；两种架构各通过 136 项隔离检查，附件校验记录见 Release 的 BUILDINFO。2026-10-25，用户确认当前 VMware 环境中的绘图与穿透、WPS 放映控制、白板与设置等三组功能没有问题；详细范围见[测试环境与验证边界](docs/TEST_ENVIRONMENT.md)。学校实机、安装恢复和长时间稳定性仍待验收，当前保留预发布标记。
+### 触摸（X11）
+- 优先使用 **XInput 2.2 触摸**（需驱动/服务器暴露触摸类；程序启动时会协商 `XIQueryVersion(2,2)`）。
+- 服务器不暴露触摸类时，退回**直接读取内核 evdev**：支持 MT 协议 A/B、接触面积，并自动排除触摸板。
+- evdev 需要读取 `/dev/input`（DEB/Arch 包会安装 `uaccess` udev 规则；源码运行时可用设置里的“加入 input 组”授权）。
+- 接触面积（手背橡皮）取决于设备是否上报尺寸轴；读不到时按多指路径工作。
 
 ## 安装与开始使用
 
-### 1. 核对系统并安装
+### 1. 安装 DEB
 
-从 [custom.35 Release](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/releases/tag/v3.0-Electro-testing-custom20261025.35) 下载对应架构的 DEB 与 `SHA256SUMS`。先核对：
+从 Releases 下载对应架构的 DEB 与 `SHA256SUMS`，先核对：
 
 ```sh
 dpkg --print-architecture
 getconf GNU_LIBC_VERSION
 ```
 
-对于匹配条件的 amd64 系统，在下载目录执行：
+Rust 版（主推）：
 
 ```sh
-sha256sum --check SHA256SUMS --ignore-missing
-dpkg-deb -f ./sidera_3.0-Electro-testing+custom20261025.35_amd64.deb Architecture Depends
-sudo apt install ./sidera_3.0-Electro-testing+custom20261025.35_amd64.deb
+sudo apt install ./sidera_3.0-Electro-testing_amd64.deb   # amd64
+sudo apt install ./sidera_3.0-Electro-testing_arm64.deb   # arm64
 ```
 
-对于匹配条件的 ARM64 系统：
+C++ / Qt5 版（legacy）：
 
 ```sh
-sha256sum --check SHA256SUMS --ignore-missing
-dpkg-deb -f ./sidera_3.0-Electro-testing+custom20261025.35_arm64.deb Architecture Depends
-sudo apt install ./sidera_3.0-Electro-testing+custom20261025.35_arm64.deb
+sudo apt install ./sidera_2.6-Geo-stable_amd64.deb        # amd64
+sudo apt install ./sidera_2.6-Geo-stable_arm64.deb        # arm64
 ```
 
-不要跳过依赖检查或替换系统 libc。C++ 与 Rust 包使用相同的 `sidera` 包名，安装会替换已有版本。安装包不包含 WPS，也不自动替换系统图形服务器。
+> 也可以直接用 `dpkg -i`，但推荐 `apt install ./xxx.deb` 以自动补齐依赖。不要跳过依赖检查或替换系统 libc。
+
+RPM / Arch 包可由源码构建（见下），分别产出 `sidera-3.0-1.<arch>.rpm` 与 `sidera-3.0-1-<arch>.pkg.tar.zst`。
 
 ### 2. 选择桌面入口
 
 - **普通 Sidera**：自动选择可用后端。
-- **Sidera（GNOME 原生）**：使用配套扩展。安装后，在桌面普通用户终端执行 `sidera-gnome-install`，首次安装或更新已加载扩展后保存工作、注销再登录。
+- **Sidera（GNOME 原生）**：使用配套扩展。安装后以普通用户执行 `sidera-gnome-install`，首次安装或更新已加载扩展后保存工作、注销再登录。
 - **Sidera（兼容模式）**：使用 X11 / XWayland。
 
 切换入口前退出已有 Sidera。更多说明见 [GNOME 扩展](compat/gnome-extension/README.md)；独立的 [Wayland 测试桌面](compat/wayland-lab/README.md) 可用于隔离验证。
@@ -153,25 +164,75 @@ sudo apt install ./sidera_3.0-Electro-testing+custom20261025.35_arm64.deb
 sidera-wps-addin-install
 ```
 
-随后先打开 Sidera，在设置中开启“WPS 联动”，再打开 WPS 演示。首次登记或更新加载项后需要重新打开 WPS；使用是否可用取决于 WPS 版本提供的加载项 API。详见 [WPS 加载项说明](wps-addin/README.md) 与[教室部署指南](README.classroom.md)。
+随后**先打开 Sidera**，在设置中开启“WPS 联动”，再打开 WPS 演示。首次登记或更新加载项后需要重新打开 WPS；可用性取决于 WPS 版本提供的加载项 API。详见 [WPS 加载项说明](wps-addin/README.md) 与 [教室部署指南](README.classroom.md)。
 
 启动失败时查看 `${XDG_STATE_HOME:-$HOME/.local/state}/sidera/startup-error.log`。提交日志前请移除用户名、课件路径及个人信息。
 
 ## 从源码构建
 
-在 Linux 上准备 Rust / Cargo、C 编译器和 Git；工具链固定为 1.93.1。打包还需要 `dpkg-dev`（含 dpkg-shlibdeps）、`dpkg-deb`、`readelf` 与 Python 3。
+### Rust 版
+
+工具链固定为 **1.93.1**（见 `rust/rust-toolchain.toml`）。运行时只依赖 `libc6` 与 `libgcc-s1`，无需 Qt、无需 `libX11`。
 
 ```sh
-git clone --branch custom https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux.git
-cd Sidera--screen-annotate-for-linux/rust
-cargo build --release --locked
+cd rust
+cargo build --release --locked     # 产物: rust/target/release/sidera
+cargo test --locked
 ```
 
-这会生成 `rust/target/release/sidera`。本机编译会继承本机系统库要求；当前打包脚本检查真实 ELF 并自动生成动态依赖，不再使用固定的最低 libc 声明。ARM64 或低版本系统需要在对应构建环境打包并验收。
+**容器编译 + 主机打包（推荐用于发布）**：采用「**2 个编译容器 + 主机打包**」——编译统一在仓库内 sysroot 容器（`amd64-sysroot` / `aarch64-sysroot`，bwrap，低 glibc），三种包从同一二进制产出：
 
-custom.35 包含此前复查与主题修改，旧 custom.29 保留独立历史记录。本轮旧问题复查、隔离测试和剩余限制见 [复查报告](docs/audit/REVIEW_2026-10-24.md)；测试命令见 [测试环境](docs/TEST_ENVIRONMENT.md)。
+```sh
+cd rust
+./build_amd64.sh        # 容器编译 + 打包 deb/rpm/arch（amd64）
+./build_aarch64.sh      # 同上（aarch64，需 qemu-aarch64-static）
+./build_amd64.sh --no-pkg   # 只编译，不打包
+```
 
-`build_amd64.sh` / `build_aarch64.sh` 保留容器构建入口，但需要自行准备脚本要求的 sysroot、Rust 工具链及必要的跨架构工具；sysroot **不在仓库中**。详细构建与发布核对见 [CONTRIBUTING.md](CONTRIBUTING.md)。C++ 旧实现及其构建脚本在 [cpp/](cpp/)。
+- 打包工具：`dpkg-deb`（deb）、`rpmbuild`（rpm，支持 `--target aarch64`）、`bsdtar`+`zstd`+`fakeroot`（Arch）。
+- 底层脚本：`build_container.sh <arch>`（编译）、`build_deb.sh` / `build_rpm.sh` / `build_arch.sh <arch>`（打包）。
+- sysroot **不在仓库中**（体积大、已 gitignore），需自行准备；若本机装了 rustup，`build_container.sh` 会使用固定的 1.93.1 工具链（可用 `SIDERA_RUST_TOOLCHAIN` 覆盖）。
+- Arch 源码包配方见 `rust/arch/PKGBUILD`（供 AUR 用户 `makepkg`）。
+
+### C++ / Qt5 版
+
+```sh
+# Ubuntu / Debian / Deepin / UOS
+sudo apt install -y build-essential pkg-config \
+  qtbase5-dev libqt5widgets5 libqt5network5 \
+  libx11-dev libxcb1-dev libxext-dev libxtst-dev
+
+cd cpp
+make -j$(nproc)            # 本机编译 → cpp/annotate_amd64
+./annotate_amd64
+```
+
+或用仓库内容器脚本：`cpp/build_amd64.sh` / `cpp/build_aarch64.sh`（容器编译 + 打 DEB）。
+
+## 项目结构
+
+```
+.
+├── rust/         # Rust 版（主推）：Cargo 工程 + 构建/打包脚本 + 新增现代 UI/主题/Wayland 模块
+├── cpp/          # C++ / Qt5 版（legacy）：Makefile、src/、打包脚本
+├── protocols/    # Wayland 协议 XML（两版共用）
+├── wps-addin/    # WPS JS 加载项（两版共用）
+├── compat/       # GNOME 扩展、独立 Wayland 测试桌面、特定环境修补
+├── tools/        # 测试/发布辅助（隔离运行、DEB 依赖、USB 离线套件等）
+├── docs/         # 预览、审计、测试与设计文档
+└── README.md / LICENSE / LICENSES.md / NOTICE.md
+```
+
+Rust 源码要点（`rust/src/`）：`main.rs`（入口/事件/触摸路由）、`app.rs`（状态/配置/分页缓存）、`ui.rs` 与 `ui_theme.rs`/`ui_icons.rs`（手绘 UI 与主题）、`paint.rs`（tiny-skia 笔迹）、`gesture.rs`（手背/多指 FSM）、`x11.rs`（覆盖层/XShape/XTest/触摸）、`wayland*.rs`（layer-shell/原生 Wayland）、`wps.rs`（本地 HTTP 桥）、`touch_evdev.rs`（evdev 触摸）、`uinput.rs`（内核虚拟键盘）等。
+
+## 路线规划与 Wayland 适配
+
+- **Rust 版原生支持 Wayland**：通过 `wlr-layer-shell`（niri/sway/hyprland 等）实现 Overlay 层置顶与 `wl_surface` 输入区域；无 `zwp_virtual_keyboard` 的合成器回退到 `uinput`。
+- **X11 兼容**：`x11rb` 直连（ARGB 覆盖层 + XShape 穿透 + XTest 注入），不依赖 `libX11`/`libXtst`。
+- **触摸**：优先 XInput 2.2；无触摸类时用 evdev。
+- **截图**：X11 直接抓屏；Wayland 无 `wlr-screencopy` 时走 `xdg-desktop-portal`。
+- **WPS 联动解耦**：持续将按键模拟/窗口轮询迁移为加载项双向 HTTP/WebSocket 事件通知。
+- **全局快捷键迁移**：接入现代 Linux `org.freedesktop.portal.GlobalShortcuts` 协议。
 
 ## 项目导航
 
@@ -180,16 +241,18 @@ custom.35 包含此前复查与主题修改，旧 custom.29 保留独立历史�
 | [更新记录](CHANGELOG.md) | 面向使用者的版本变化与已知限制 |
 | [贡献指南](CONTRIBUTING.md) | 分支约定、构建、反馈与提交方式 |
 | [安全政策](SECURITY.md) | 私密漏洞报告、权限范围与维护边界 |
-| [许可证说明](LICENSES.md) · [GPL 原文](LICENSE) | 上游授权、MIT 等第三方许可的关系 |
+| [许可证说明](LICENSES.md) · [GPL 原文](LICENSE) | 上游授权与第三方许可的关系 |
 | [作者与致谢](NOTICE.md) | 原作者与本分支贡献归属 |
 | [项目分析](docs/PROJECT_ANALYSIS.md) · [问题清单](docs/ISSUES.md) | 架构评审与尚待解决的问题 |
 | [重构计划](docs/REFACTOR_PLAN.md) · [测试环境](docs/TEST_ENVIRONMENT.md) | 后续改进顺序与验证记录 |
 | [功能待办](TODO.md) | 留待后续实现的应用避让、常驻音频按钮与播放/静音提示 |
 
-`rust/` 是当前定制实现，`wps-addin/` 是 WPS 加载项，`compat/` 存放 GNOME 扩展、独立测试桌面及特定环境的修补材料。修补材料有各自适用范围，不是通用系统更新。
-
 ## 贡献 · 许可证 · 安全
 
-欢迎通过 [Issue](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/issues) 反馈可复现的问题，或向 `custom` 提交改进。请先阅读 [贡献指南](CONTRIBUTING.md)。安全问题请使用 [私密漏洞报告](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/security/advisories/new)，不要在公开 Issue 附带敏感信息。
+- C++ 版提交前请确保 `make clean && make` 通过。
+- Rust 版提交前请确保 `cd rust && cargo test --locked && cargo clippy --all-targets` 通过。
+- 建议保持轻量、无冗余依赖的设计理念。
 
-**本项目沿用 GNU GPL v3，并非 MIT 项目。** 原作者版权与许可原文保留在 [LICENSE](LICENSE)；第三方组件若采用 MIT 等许可，仍遵循各自的声明，详见 [许可证说明](LICENSES.md)。感谢上游 Sidera 及所有依赖项目。
+欢迎通过 [Issue](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/issues) 反馈可复现的问题。安全问题请使用私密漏洞报告，不要在公开 Issue 附带敏感信息。
+
+**本项目沿用 GNU GPL v3，并非 MIT 项目。** 原作者版权与许可原文保留在 [LICENSE](LICENSE)；第三方组件若采用 MIT 等许可，仍遵循各自的声明，详见 [许可证说明](LICENSES.md)。感谢上游 Sidera、`custom` 分支贡献者及所有依赖项目。
