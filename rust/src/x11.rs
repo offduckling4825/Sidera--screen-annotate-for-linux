@@ -301,6 +301,39 @@ impl X11 {
         check().unwrap_or(false)
     }
 
+    /// 协商 XInput 2.2，返回 (major, minor)。
+    /// 必须在选择触摸事件前调用：客户端不声明 2.2，服务器按 2.0 处理，不会投递触摸事件。
+    pub fn negotiate_xi(&self) -> XResult<(u16, u16)> {
+        let v = xinput::xi_query_version(&self.conn, 2, 2)?.reply()?;
+        self.conn.flush()?;
+        Ok((v.major_version, v.minor_version))
+    }
+
+    /// 枚举支持触摸的设备（建议先 negotiate_xi）
+    pub fn touch_device_ids(&self) -> Vec<u16> {
+        let mut ids = Vec::new();
+        if let Some(reply) = xinput::xi_query_device(&self.conn, 0u16)
+            .ok()
+            .and_then(|c| c.reply().ok())
+        {
+            for info in &reply.infos {
+                if info
+                    .classes
+                    .iter()
+                    .any(|c| matches!(c.data, DeviceClassData::Touch(_)))
+                {
+                    log::info!(
+                        "[TOUCH] 设备 {} '{}' 支持触摸",
+                        info.deviceid,
+                        String::from_utf8_lossy(&info.name)
+                    );
+                    ids.push(info.deviceid);
+                }
+            }
+        }
+        ids
+    }
+
     /// 接受触摸所有权（XIAllowEvents + ACCEPT_TOUCH）。
     /// 不接受的话，多数驱动/服务器只会投递第一个触点，后续手指/手背收不到事件。
     pub fn allow_touch(&self, deviceid: u16, touchid: u32, window: Window) {

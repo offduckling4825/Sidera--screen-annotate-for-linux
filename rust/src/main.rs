@@ -1956,21 +1956,47 @@ fn run_application() -> Result<(), Box<dyn std::error::Error>> {
 
     let (win, gc) = x11.create_overlay().map_err(|e| format!("创建 X11 覆盖层失败：{e}"))?;
 
-    // 触摸输入：优先直接读内核 evdev（绕开 X 服务器是否暴露 Touch 类）；
-    // 没有可读的 evdev 触摸设备时，退回 XInput2 触摸。
-    let evdev_touch = touch_evdev::spawn(logical_w, logical_h);
-    if evdev_touch.is_some() {
-        log::info!("[TOUCH] 使用 evdev 内核触摸输入");
-    } else if let Err(e) = x11.select_touch_events(win) {
-        log::warn!("[WARN] XInput2 触摸选择失败（触摸可能不可用）: {}", e);
+    // 触摸输入：先协商 XInput 2.2 并优先用 XInput2 触摸；不可用再退回 evdev。
+    // 关键：不调用 XIQueryVersion(2,2) 时服务器按 2.0 处理，不会投递触摸事件。
+    let (xi_major, xi_minor) = match x11.negotiate_xi() {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("[WARN] XIQueryVersion 失败: {}", e);
+            (0, 0)
+        }
+    };
+    let xi22 = xi_major > 2 || (xi_major == 2 && xi_minor >= 2);
+    let touch_ids = if xi22 { x11.touch_device_ids() } else { Vec::new() };
+    log::info!(
+        "[TOUCH] XInput {}.{}，触摸设备 {} 个",
+        xi_major,
+        xi_minor,
+        touch_ids.len()
+    );
+    let mut evdev_touch = None;
+    let mut xi_touch = false;
+    if !touch_ids.is_empty() {
+        match x11.select_touch_events(win) {
+            Ok(()) => {
+                xi_touch = true;
+                log::info!("[TOUCH] 使用 XInput2 触摸");
+            }
+            Err(e) => log::warn!("[WARN] XInput2 触摸选择失败: {}", e),
+        }
     }
-
+    if !xi_touch {
+        evdev_touch = touch_evdev::spawn(logical_w, logical_h);
+        if evdev_touch.is_some() {
+            log::info!("[TOUCH] 使用 evdev 内核触摸输入");
+        }
+    }
 
     let has_node = touch_evdev::has_touch_node();
     let in_group = touch_evdev::in_input_group();
-    let need_input_group = evdev_touch.is_none() && has_node && !in_group;
+    let need_input_group = !xi_touch && evdev_touch.is_none() && has_node && !in_group;
     log::info!(
-        "[PERM] evdev_started={} has_touch_node={} in_input_group={} -> prompt={}",
+        "[PERM] xi_touch={} evdev_started={} has_touch_node={} in_input_group={} -> prompt={}",
+        xi_touch,
         evdev_touch.is_some(),
         has_node,
         in_group,
