@@ -67,7 +67,11 @@ if ! LC_ALL=C awk -v expected="$ELF_MACHINE" '
   exit 1
 fi
 
-DEPENDS="$(python3 "$REPO/tools/deb_dependencies.py" "$BIN" "$DEB_ARCH")"
+if ! DEPENDS="$(python3 "$REPO/tools/deb_dependencies.py" "$BIN" "$DEB_ARCH" 2>/dev/null)"; then
+  # 主机上没有目标架构的 dpkg 库信息时（例如容器编译 + 主机打包），回退为固定依赖
+  DEPENDS="libc6 (>= 2.30), libgcc-s1"
+  echo "警告: 无法自动计算 DEB 依赖，回退为: $DEPENDS" >&2
+fi
 OUTPUT="$REPO/${PKG_NAME}_${VERSION}_${DEB_ARCH}.deb"
 PKG_DIR="$(mktemp -d "$REPO/.sidera-package.XXXXXXXX")"
 trap 'rm -rf -- "$PKG_DIR"; rm -f -- "$PKG_DIR.deb"' EXIT
@@ -121,6 +125,10 @@ cat > "$PKG_DIR/lib/udev/rules.d/70-sidera-uinput.rules" << 'EOF'
 # Sidera: 允许当前登录用户访问 /dev/uinput（用于注入翻页/退出按键）
 KERNEL=="uinput", TAG+="uaccess", OPTIONS+="static_node=uinput"
 EOF
+cat > "$PKG_DIR/lib/udev/rules.d/70-sidera-input.rules" << 'EOF'
+# Sidera: 允许当前登录用户读取输入设备（手背橡皮/多点触摸需要读 evdev）
+KERNEL=="event*", SUBSYSTEM=="input", TAG+="uaccess"
+EOF
 echo "uinput" > "$PKG_DIR/etc/modules-load.d/sidera-uinput.conf"
 
 cat > "$PKG_DIR/DEBIAN/postinst" << 'EOF'
@@ -129,6 +137,7 @@ set -e
 modprobe uinput 2>/dev/null || true
 udevadm control --reload-rules 2>/dev/null || true
 udevadm trigger --name-match=uinput 2>/dev/null || true
+udevadm trigger --subsystem-match=input 2>/dev/null || true
 exit 0
 EOF
 chmod 755 "$PKG_DIR/DEBIAN/postinst"

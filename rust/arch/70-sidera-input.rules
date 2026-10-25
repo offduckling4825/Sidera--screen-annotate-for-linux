@@ -1,0 +1,2 @@
+# Sidera: 允许当前登录会话用户读取输入设备（手背橡皮/多点触摸需要读 evdev）
+KERNEL=="event*", SUBSYSTEM=="input", TAG+="uaccess"

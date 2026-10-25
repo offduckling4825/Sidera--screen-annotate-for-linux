@@ -1,0 +1,77 @@
+# Maintainer: Carl_Jin <user@localhost>
+# Arch Linux / Arch Linux ARM 打包配方（Rust 版 Sidera）
+#
+# 用法（在含本 PKGBUILD 的目录内）：
+#   makepkg -si
+# 如需固定版本，把 source 的 #branch=main 换成 #tag=<你的 tag> 或某次 commit 的 sha。
+#
+# 说明：本包用系统 rust 原生编译，产物依赖 Arch 的 glibc，仅在较新的 Arch 上运行。
+#       若要部署到较老的发行版（如 Ubuntu 20.04），仍请用 rust/build_*.sh 的容器交叉构建。
+
+pkgname=sidera
+pkgver=3.0
+pkgrel=1
+pkgdesc="Linux 屏幕批注与教学演示工具（Rust，X11/Wayland，WPS 联动）"
+arch=('x86_64' 'aarch64')
+url="https://github.com/offduckling4825/Sidera--screen-annotate-for-linux"
+license=('GPL-3.0-only')
+depends=('gcc-libs')
+makedepends=('rust')
+install="${pkgname}.install"
+# 默认从 GitHub 拉；容器构建时会设 SIDERA_SRC=file:///src 用本地仓库
+: "${SIDERA_SRC:=${url}.git}"
+: "${SIDERA_BRANCH:=main}"
+source=("${pkgname}::git+${SIDERA_SRC}#branch=${SIDERA_BRANCH}"
+        "70-sidera-uinput.rules"
+        "70-sidera-input.rules")
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP')
+
+build() {
+  cd "${pkgname}/rust"
+  cargo build --release --locked
+}
+
+package() {
+  cd "${pkgname}"
+
+  install -Dm755 rust/target/release/sidera "${pkgdir}/usr/bin/sidera"
+
+  # WPS 加载项
+  install -d "${pkgdir}/usr/share/sidera/wps-addin"
+  cp -r wps-addin/. "${pkgdir}/usr/share/sidera/wps-addin/"
+  install -Dm755 wps-addin/install.sh "${pkgdir}/usr/bin/sidera-wps-addin-install"
+
+  # 文档 / 许可
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/sidera/LICENSE"
+  install -Dm644 README.classroom.md "${pkgdir}/usr/share/doc/sidera/README.classroom.md"
+
+  # 图标
+  install -Dm644 sidera.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/sidera.svg"
+  install -Dm644 sidera.svg "${pkgdir}/usr/share/pixmaps/sidera.svg"
+  install -Dm644 sidera.png "${pkgdir}/usr/share/icons/hicolor/256x256/apps/sidera.png"
+
+  # desktop 入口
+  install -d "${pkgdir}/usr/share/applications"
+  cat > "${pkgdir}/usr/share/applications/sidera.desktop" << 'EOF'
+[Desktop Entry]
+Type=Application
+Name=Sidera
+Comment=Sidera 屏幕批注
+Exec=sidera
+Icon=/usr/share/pixmaps/sidera.svg
+Categories=Graphics;Utility;
+Terminal=false
+EOF
+
+  # udev 规则：uinput（按键注入）+ input（触屏读取）
+  install -Dm644 "${srcdir}/70-sidera-uinput.rules" \
+    "${pkgdir}/usr/lib/udev/rules.d/70-sidera-uinput.rules"
+  install -Dm644 "${srcdir}/70-sidera-input.rules" \
+    "${pkgdir}/usr/lib/udev/rules.d/70-sidera-input.rules"
+
+  # 开机加载 uinput 模块
+  install -d "${pkgdir}/etc/modules-load.d"
+  echo "uinput" > "${pkgdir}/etc/modules-load.d/sidera-uinput.conf"
+}

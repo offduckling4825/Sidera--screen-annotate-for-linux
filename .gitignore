@@ -25,8 +25,11 @@ rust/target/
 *-client-protocol.h
 *-protocol.c
 
-# ===== deb 打包产物与临时目录 =====
+# ===== 打包产物与临时目录（deb / rpm / arch）=====
 *.deb
+*.rpm
+*.pkg.tar.zst
+rust/dist/
 screen-annotate_*/
 sidera_*/
 

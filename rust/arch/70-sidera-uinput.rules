@@ -1,0 +1,2 @@
+# Sidera: 允许当前登录会话用户访问 /dev/uinput（注入翻页/退出按键）
+KERNEL=="uinput", TAG+="uaccess", OPTIONS+="static_node=uinput"

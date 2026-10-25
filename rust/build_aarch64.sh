@@ -2,8 +2,8 @@
 # ============================================================
 # Rust 版 Sidera — aarch64 (arm64) 编译 / 打包脚本
 #
-#   ./build_aarch64.sh            编译 + 打包 DEB
-#   ./build_aarch64.sh --no-deb   只编译，不打包
+#   ./build_aarch64.sh            编译 + 打包 DEB/RPM/Arch
+#   ./build_aarch64.sh --no-pkg   只编译，不打包
 #
 # 编译方式：复用 build_container.sh，在仓库内 aarch64-sysroot 容器里
 #          以 qemu-aarch64-static 运行，产物仅需较低 glibc，可跑在老机器。
@@ -24,9 +24,9 @@ set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
 
-NO_DEB=0
-if [ "$1" = "--no-deb" ]; then
-  NO_DEB=1
+NO_PKG=0
+if [ "$1" = "--no-pkg" ] || [ "$1" = "--no-deb" ]; then
+  NO_PKG=1
 fi
 
 # ---------- 依赖检查 ----------
@@ -51,12 +51,16 @@ fi
 echo "==> 编译 aarch64（容器方式）..."
 ./build_container.sh aarch64
 
-# ---------- 打包 ----------
-if [ "$NO_DEB" -eq 0 ]; then
-  echo "==> 打包 arm64 DEB..."
+# ---------- 打包（从容器编译好的二进制，主机打包）----------
+if [ "$NO_PKG" -eq 0 ]; then
+  echo "==> 打包 arm64：DEB..."
   ./build_deb.sh aarch64
+  echo "==> 打包 arm64：RPM..."
+  ./build_rpm.sh aarch64
+  echo "==> 打包 arm64：Arch..."
+  ./build_arch.sh aarch64
 else
-  echo "==> 已跳过 DEB 打包（--no-deb）"
+  echo "==> 已跳过打包（--no-pkg）"
 fi
 
 echo "==> 完成。"
