@@ -17,7 +17,9 @@
 
 </div>
 
-> **Sidera（星罗）** 由 **Carl_Jin / jinyicheng** 发起（第一次 vibecoding）。本 `main` 分支已合并 **shizhelei · Gary_6Stones** 在 [定制分支 `custom`](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/tree/custom) 上的课堂体验与兼容性改进（浅色/深色主题、GNOME 扩展、原生 Wayland、USB 离线部署套件、测试与文档等），保留原作者署名。定制分支不代表上游官方发行版。
+> **Sidera（星罗）** 原作者为 **Carl_Jin（jinyicheng，第一次 vibecoding）**；本仓库 `offduckling4825/Sidera--screen-annotate-for-linux` 是上游主仓库。
+>
+> 贡献者 **shizhelei · Gary_6Stones** 在个人 fork 的 [`custom` 分支](https://github.com/shi-zhe-lei/Sidera--screen-annotate-for-linux/tree/custom) 上完成了课堂体验与兼容性改进（浅色/深色主题、GNOME 扩展、原生 Wayland、USB 离线部署套件、测试与文档等）。这些改进现已合并进本仓库的 `main` 分支；其 fork 与 `custom` 分支发布的版本属于第三方构建，**不是上游官方发行版**。原作者版权与署名保持不变。
 
 ## 两套并行实现
 
