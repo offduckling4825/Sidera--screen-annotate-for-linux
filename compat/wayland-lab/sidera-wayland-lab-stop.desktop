@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=关闭 Wayland 测试桌面
+Comment=只关闭 Sidera 的独立测试桌面
+Exec=/usr/local/bin/sidera-wayland-lab --stop
+Icon=window-close
+Terminal=false
+Categories=Development;

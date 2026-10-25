@@ -57,6 +57,9 @@
 #include <QMessageBox>
 #include <QMenu>
 #include <QClipboard>
+#include "page_cache.h"
+#include "clock.h"
+#include "wps_bridge.h"
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -156,8 +159,9 @@ struct AppState {
   QPushButton* nextBtn = nullptr;
 
   // 多页缓存
-  QMap<int, QPixmap*> slideCache;  // 页码 → 笔迹（普通/放映模式）
-  QMap<int, QPixmap*> whiteboardCache; // 页码 → 笔迹（白板模式，与上面独立）
+  PageCache slideCache;
+  PageCache whiteboardCache;
+  int whiteboardSlide = 1;
   int currentSlide  = 1;           // 当前页码（普通/放映；白板模式下即白板页码）
   int savedSlide    = 1;           // 进入白板前记住的普通模式页码
   bool pageHasInk   = false;       // 当前页是否有过笔迹（无笔迹页不入缓存）
@@ -166,11 +170,7 @@ struct AppState {
   // WPS 接口调试模式（教室默认开）：翻页走本地 HTTP 16666，WPS 加载项回传真实页号/事件
   bool         wpsDebug         = true;
   bool         wpsConnected     = false;
-  QTcpServer*  wpsServer        = nullptr;
-  QTcpSocket*  wpsSock          = nullptr;   // 单个请求连接（HTTP 场景下基本不用）
-  QTimer*      wpsPingTimer     = nullptr;   // 3s 无请求判离线
-  quint64      wpsLastSeen      = 0;
-  QQueue<QString> wpsCmdQueue;               // 待加载项取走的 NEXT/PREV
+  WpsBridge*   wpsBridge        = nullptr;
   int          wpsRealPos       = -1;   // 加载项上报的真实页号（1 起）
 
   // 手掌/大触点橡皮（正式功能）：多点或大触点→橡皮；擦除直径按大触点尺寸缩放
@@ -227,7 +227,7 @@ inline QColor whiteboardBgColor() {
 }
 
 // 当前生效的笔迹缓存：白板模式与普通/放映模式各自独立
-QMap<int, QPixmap*>& activeCache();
+PageCache& activeCache();
 
 // ---------------- 图标 / 绘制 / 撤回 ----------------
 QPixmap makeCursorIcon(int s);

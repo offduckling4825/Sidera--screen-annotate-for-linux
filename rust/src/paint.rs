@@ -158,15 +158,20 @@ fn scale_tf(app: &App) -> Transform {
     Transform::from_scale(app.scale as f32, app.scale as f32)
 }
 
-pub fn stroke_segment(app: &mut App, a: (i32, i32), b: (i32, i32), erase: bool, width: i32) {
-    // 绘制前保存覆盖到的瓦片（撤回用）
-    let pad = width.max(1);
+fn save_stroke_undo(app: &mut App, a: (i32, i32), b: (i32, i32), width: i32) {
+    let radius = f64::from(width.max(1)) / 2.0;
+    // 与绘图 transform 使用相同缩放；转换后向外取整，额外保留 1 个物理像素的抗锯齿边缘。
+    let scale = f64::from(app.scale as f32);
     app.save_undo_rect(
-        a.0.min(b.0) - pad,
-        a.1.min(b.1) - pad,
-        a.0.max(b.0) + pad,
-        a.1.max(b.1) + pad,
+        ((f64::from(a.0.min(b.0)) - radius) * scale - 1.0).floor() as i32,
+        ((f64::from(a.1.min(b.1)) - radius) * scale - 1.0).floor() as i32,
+        ((f64::from(a.0.max(b.0)) + radius) * scale + 1.0).ceil() as i32,
+        ((f64::from(a.1.max(b.1)) + radius) * scale + 1.0).ceil() as i32,
     );
+}
+
+pub fn stroke_segment(app: &mut App, a: (i32, i32), b: (i32, i32), erase: bool, width: i32) {
+    save_stroke_undo(app, a, b, width);
     let tf = scale_tf(app);
     if erase {
         erase_segment(&mut app.canvas, a, b, width, tf);
@@ -178,18 +183,116 @@ pub fn stroke_segment(app: &mut App, a: (i32, i32), b: (i32, i32), erase: bool, 
 }
 
 pub fn stroke_tapered(app: &mut App, a: (i32, i32), b: (i32, i32), w0: i32, w1: i32) {
-    // 绘制前保存覆盖到的瓦片（撤回用）
-    let pad = w0.max(w1).max(1);
-    app.save_undo_rect(
-        a.0.min(b.0) - pad,
-        a.1.min(b.1) - pad,
-        a.0.max(b.0) + pad,
-        a.1.max(b.1) + pad,
-    );
+    save_stroke_undo(app, a, b, w0.max(w1));
     app.page_has_ink = true;
     let c = app.pen_color();
     let tf = scale_tf(app);
     pen_tapered(&mut app.canvas, c, a, b, w0, w1, tf);
+}
+
+#[cfg(test)]
+mod undo_tests {
+    use super::*;
+
+    fn patterned_app(scale: f64) -> App {
+        let mut app = App::new(Pixmap::new(641, 479).unwrap(), 641, 479);
+        app.set_scale(scale);
+        // 非均匀底图用于检查撤回是否逐像素恢复，而非只把画布清空。
+        let width = app.canvas.width() as usize;
+        for (i, pixel) in app.canvas.data_mut().chunks_exact_mut(4).enumerate() {
+            let x = i % width;
+            let y = i / width;
+            pixel.copy_from_slice(&[(x % 251) as u8, (y % 239) as u8, 127, 255]);
+        }
+        app.page_has_ink = true;
+        app
+    }
+
+    fn assert_restored(app: &mut App, before: &[u8], context: &str) {
+        assert!(app.canvas.data() != before, "操作必须实际改变像素: {context}");
+        app.undo_last();
+        assert!(app.canvas.data() == before, "撤回必须恢复全部像素: {context}");
+    }
+
+    #[test]
+    fn scaled_tapered_pen_undo_restores_pixels() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for (a, b, w0, w1) in [
+                ((207, 157), (207, 157), 3, 3),
+                ((510, 350), (630, 470), 5, 19),
+                ((-5, 2), (4, 100), 5, 17),
+                ((635, 477), (647, 489), 3, 11),
+                ((430, 300), (175, 185), 19, 3),
+            ] {
+                let mut app = patterned_app(scale);
+                let before = app.canvas.data().to_vec();
+                app.begin_undo();
+                stroke_tapered(&mut app, a, b, w0, w1);
+                assert_restored(&mut app, &before, &format!("scale={scale}, {a:?}->{b:?}"));
+            }
+        }
+    }
+
+    #[test]
+    fn scaled_pen_and_eraser_segments_undo_restore_pixels() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for erase in [false, true] {
+                for (a, b, width) in [
+                    ((205, 205), (205, 205), 3),
+                    ((205, 205), (420, 350), 7),
+                    ((610, 450), (638, 476), 64),
+                    ((-12, -12), (150, 90), 128),
+                ] {
+                    let mut app = patterned_app(scale);
+                    let before = app.canvas.data().to_vec();
+                    app.begin_undo();
+                    stroke_segment(&mut app, a, b, erase, width);
+                    assert_restored(
+                        &mut app, &before,
+                        &format!("scale={scale}, erase={erase}, width={width}, {a:?}->{b:?}"),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scaled_overlapping_curve_undo_keeps_original_tile_contents() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let mut app = patterned_app(scale);
+            let before = app.canvas.data().to_vec();
+            app.begin_undo();
+            let mut prev = (210, 220);
+            for i in 1..=48 {
+                let angle = i as f64 * std::f64::consts::TAU / 24.0;
+                let next = (
+                    310 + (angle.cos() * 100.0) as i32,
+                    220 + (angle.sin() * 90.0) as i32,
+                );
+                stroke_tapered(&mut app, prev, next, 3 + i % 11, 5 + i % 17);
+                prev = next;
+            }
+            assert_restored(&mut app, &before, &format!("重叠曲线 scale={scale}"));
+        }
+    }
+
+    #[test]
+    fn scaled_pen_and_eraser_undo_in_reverse_order() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let mut app = patterned_app(scale);
+            let before_pen = app.canvas.data().to_vec();
+            app.begin_undo();
+            stroke_tapered(&mut app, (190, 210), (420, 350), 3, 19);
+            let before_eraser = app.canvas.data().to_vec();
+            assert!(before_eraser != before_pen);
+            app.begin_undo();
+            stroke_segment(&mut app, (220, 220), (400, 330), true, 64);
+
+            assert_restored(&mut app, &before_eraser, &format!("撤回橡皮 scale={scale}"));
+            assert_restored(&mut app, &before_pen, &format!("撤回画笔 scale={scale}"));
+            assert!(app.undo.is_empty());
+        }
+    }
 }
 
 #[cfg(test)]

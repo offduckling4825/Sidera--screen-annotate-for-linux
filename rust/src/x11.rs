@@ -27,6 +27,7 @@ pub struct X11 {
     pub conn: RustConnection,
     #[allow(dead_code)]
     pub screen_num: usize,
+    pub is_xwayland: bool,
     pub root: Window,
     pub width: i32,
     pub height: i32,
@@ -48,6 +49,12 @@ pub struct X11 {
 impl X11 {
     pub fn connect() -> XResult<Self> {
         let (conn, screen_num) = x11rb::connect(None)?;
+        let is_xwayland = xproto::query_extension(&conn, b"XWAYLAND")?.reply()?.present;
+        crate::startup::validate_x11_server(
+            is_xwayland,
+            conn.setup().release_number,
+            &conn.setup().vendor,
+        )?;
         let screen = &conn.setup().roots[screen_num];
         let root = screen.root;
 
@@ -86,6 +93,7 @@ impl X11 {
         let mut x = X11 {
             conn,
             screen_num,
+            is_xwayland,
             root,
             width,
             height,
@@ -138,6 +146,10 @@ impl X11 {
     }
 
     pub fn create_window(&self, x: i32, y: i32, w: i32, h: i32) -> XResult<(Window, Gcontext)> {
+        self.create_window_with_input(x, y, w, h, true)
+    }
+
+    fn create_window_with_input(&self, x: i32, y: i32, w: i32, h: i32, input: bool) -> XResult<(Window, Gcontext)> {
         let win = self.conn.generate_id()?;
         let event_mask = EventMask::EXPOSURE
             | EventMask::BUTTON_PRESS
@@ -168,6 +180,11 @@ impl X11 {
             self.argb_visual,
             &aux,
         )?;
+        // The persistent visual surface must never acquire pointer focus, even
+        // briefly during its first map, or Mutter can cache it as an input target.
+        if !input {
+            self.set_input_shape(win, &[], false)?;
+        }
         let gc = self.conn.generate_id()?;
         xproto::create_gc(&self.conn, gc, win, &CreateGCAux::new().graphics_exposures(0u32))?;
         xproto::map_window(&self.conn, win)?;
@@ -178,6 +195,15 @@ impl X11 {
         )?;
         self.conn.flush()?;
         Ok((win, gc))
+    }
+
+    fn label_overlay(&self, win: Window, role: &[u8]) -> XResult<()> {
+        let atom = xproto::intern_atom(&self.conn, false, b"_SIDERA_OVERLAY_ROLE")?.reply()?.atom;
+        xproto::change_property(
+            &self.conn, xproto::PropMode::REPLACE, win, atom, AtomEnum::STRING,
+            8, role.len() as u32, role,
+        )?.check()?;
+        Ok(())
     }
 
     /// 把整张 pixmap（预乘 RGBA）转成 X11 的 BGRA 并上传到 (x,y)
@@ -219,70 +245,60 @@ impl X11 {
         let _ = self.conn.flush();
     }
 
-    /// 设置输入区域：白=可点击。rects 为空且 full=true 表示恢复整窗可输入。
-    pub fn set_input_shape(&self, win: Window, rects: &[Rectangle], full: bool) -> XResult<()> {
-        if full {
-            shape::mask(&self.conn, SO::SET, SK::INPUT, win, 0, 0, x11rb::NONE)?;
-            self.conn.flush()?;
-            return Ok(());
+    /// XI 2.2 触摸需要先声明客户端版本；原始事件只能订阅在根窗口。
+    /// 普通触摸事件已带尺寸 valuator，覆盖层不需要全局 raw 触摸监听。
+    pub fn select_touch_events(&self, win: Window) -> XResult<()> {
+        let version = xinput::xi_query_version(&self.conn, 2, 2)?.reply()?;
+        if (version.major_version, version.minor_version) < (2, 2) {
+            return Err(format!(
+                "触摸需要 XInput 2.2，当前服务器为 {}.{}",
+                version.major_version, version.minor_version
+            )
+            .into());
         }
-        let mask = self.conn.generate_id()?;
-        xproto::create_pixmap(
+        let mask = xinput::XIEventMask::TOUCH_BEGIN
+            | xinput::XIEventMask::TOUCH_UPDATE
+            | xinput::XIEventMask::TOUCH_END
+            | xinput::XIEventMask::TOUCH_OWNERSHIP;
+        xinput::xi_select_events(
             &self.conn,
-            1,
-            mask,
             win,
-            self.width as u16,
-            self.height as u16,
-        )?;
-        let gc = self.conn.generate_id()?;
-        xproto::create_gc(&self.conn, gc, mask, &CreateGCAux::new().foreground(0u32))?;
-        let all = [Rectangle {
-            x: 0,
-            y: 0,
-            width: self.width as u16,
-            height: self.height as u16,
-        }];
-        xproto::poly_fill_rectangle(&self.conn, mask, gc, &all)?;
-        if !rects.is_empty() {
-            xproto::change_gc(&self.conn, gc, &xproto::ChangeGCAux::new().foreground(1u32))?;
-            xproto::poly_fill_rectangle(&self.conn, mask, gc, rects)?;
-        }
-        shape::mask(&self.conn, SO::SET, SK::INPUT, win, 0, 0, mask)?;
-        xproto::free_gc(&self.conn, gc)?;
-        xproto::free_pixmap(&self.conn, mask)?;
-        self.conn.flush()?;
+            &[xinput::EventMask {
+                deviceid: xinput::Device::ALL.into(),
+                mask: vec![mask],
+            }],
+        )?
+        .check()?;
         Ok(())
     }
 
-    /// 枚举支持触摸的 XInput2 设备（带 Touch 类），返回设备 id
-    pub fn touch_device_ids(&self) -> Vec<u16> {
-        let mut ids = Vec::new();
-        if let Some(reply) = xinput::xi_query_device(&self.conn, 0u16)
-            .ok()
-            .and_then(|c| c.reply().ok())
-        {
-            for info in &reply.infos {
-                let touch = info.classes.iter().find_map(|c| match &c.data {
-                    DeviceClassData::Touch(t) => Some(t),
-                    _ => None,
-                });
-                if let Some(t) = touch {
-                    log::info!(
-                        "[TOUCH] 设备 {} '{}' type={:?} 支持触摸，最多 {} 点",
-                        info.deviceid,
-                        String::from_utf8_lossy(&info.name),
-                        info.type_,
-                        t.num_touches
-                    );
-                    ids.push(info.deviceid);
-                }
-            }
+    /// 设置输入区域：白=可点击。rects 为空且 full=true 表示恢复整窗可输入。
+    pub fn set_input_shape(&self, win: Window, rects: &[Rectangle], full: bool) -> XResult<()> {
+        if full {
+            shape::mask(&self.conn, SO::SET, SK::INPUT, win, 0, 0, x11rb::NONE)?.check()?;
+        } else {
+            shape::rectangles(
+                &self.conn, SO::SET, SK::INPUT, xproto::ClipOrdering::UNSORTED,
+                win, 0, 0, rects,
+            )?.check()?;
         }
-        if ids.is_empty() {
-            log::warn!("[TOUCH] 未发现 XInput2 触摸设备（驱动未暴露 Touch 类？）");
+        Ok(())
+    }
+
+    fn uses_mutter_xwayland(&self) -> bool {
+        if !self.is_xwayland {
+            return false;
         }
-        ids
+        let check = || -> XResult<bool> {
+            let supporting = xproto::intern_atom(&self.conn, true, b"_NET_SUPPORTING_WM_CHECK")?.reply()?.atom;
+            let name = xproto::intern_atom(&self.conn, true, b"_NET_WM_NAME")?.reply()?.atom;
+            if supporting == 0 || name == 0 { return Ok(false); }
+            let prop = xproto::get_property(&self.conn, false, self.root, supporting, AtomEnum::WINDOW, 0, 1)?.reply()?;
+            let Some(wm) = prop.value32().and_then(|mut values| values.next()) else { return Ok(false); };
+            let name = xproto::get_property(&self.conn, false, wm, name, AtomEnum::ANY, 0, 64)?.reply()?;
+            Ok(matches!(name.value.as_slice(), b"GNOME Shell" | b"Mutter"))
+        };
+        check().unwrap_or(false)
     }
 
     /// 接受触摸所有权（XIAllowEvents + ACCEPT_TOUCH）。
@@ -546,13 +562,16 @@ impl X11 {
             "impress",
             "libreoffice",
         ];
-        KEYS.iter().any(|k| name.contains(k))
+        name.split('\0').any(|field| KEYS.iter().any(|key| {
+            if key.len() <= 3 { field == *key } else { field.contains(key) }
+        }))
     }
 
     /// 抓取整个根窗口，返回 RGBA 像素
     pub fn screenshot(&self) -> Option<(Vec<u8>, u32, u32)> {
-        let w = self.width as u16;
-        let h = self.height as u16;
+        let geometry = xproto::get_geometry(&self.conn,self.root).ok()?.reply().ok()?;
+        let (w,h) = (geometry.width,geometry.height);
+        if !crate::app::valid_geometry(w as i32,h as i32,1.0) { return None; }
         let reply = xproto::get_image(
             &self.conn,
             ImageFormat::Z_PIXMAP,
@@ -595,8 +614,15 @@ pub struct X11Plat {
     pub x11: X11,
     pub win: Window,
     pub gc: Gcontext,
+    render_win: Window,
+    render_gc: Gcontext,
     scale: Cell<f64>,
+    physical: Cell<(i32, i32)>,
     touch_axis: RefCell<HashMap<u8, TouchAxis>>,
+    refresh_input_regions: bool,
+    input_region: RefCell<Option<(bool, Vec<Rectangle>)>>,
+    input_refresh_pending: Cell<bool>,
+    key_injector: RefCell<Option<crate::uinput::KeyInjector>>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -609,14 +635,97 @@ struct TouchAxis {
 }
 
 impl X11Plat {
-    pub fn new(x11: X11, win: Window, gc: Gcontext) -> Self {
-        X11Plat {
+    pub fn new(x11: X11, win: Window, gc: Gcontext) -> XResult<Self> {
+        let refresh_input_regions = x11.uses_mutter_xwayland();
+        let (render_win, render_gc) = if refresh_input_regions {
+            if x11.argb_depth != 32 {
+                return Err("GNOME XWayland 兼容模式需要 32 位透明窗口视觉".into());
+            }
+            let visual = x11.create_window_with_input(0, 0, x11.width, x11.height, false)?;
+            x11.label_overlay(win, b"input")?;
+            x11.label_overlay(visual.0, b"visual")?;
+            visual
+        } else {
+            (win, gc)
+        };
+        xproto::change_window_attributes(&x11.conn,x11.root,
+            &xproto::ChangeWindowAttributesAux::new().event_mask(EventMask::STRUCTURE_NOTIFY | EventMask::PROPERTY_CHANGE))?.check()?;
+        let physical = Cell::new((x11.width,x11.height));
+        let key_injector = RefCell::new(if x11.is_xwayland { crate::uinput::KeyInjector::new() } else { None });
+        let plat = X11Plat {
             x11,
             win,
             gc,
+            render_win,
+            render_gc,
             scale: Cell::new(1.0),
+            physical,
             touch_axis: RefCell::new(HashMap::new()),
+            refresh_input_regions,
+            input_region: RefCell::new(None),
+            input_refresh_pending: Cell::new(false),
+            key_injector,
+        };
+        plat.raise_overlays()?;
+        Ok(plat)
+    }
+
+    pub fn sync_geometry(&self) -> XResult<Option<(i32, i32, f64)>> {
+        let geo = xproto::get_geometry(&self.x11.conn,self.x11.root)?.reply()?;
+        let dimensions = (geo.width as i32,geo.height as i32);
+        let scale = self.x11.detect_scale();
+        let (w,h) = ((dimensions.0 as f64/scale).round() as i32,(dimensions.1 as f64/scale).round() as i32);
+        if !crate::app::valid_geometry(w,h,scale) { return Err("X11 显示尺寸或缩放无效".into()); }
+        if dimensions == self.physical.get() && (self.scale.get()-scale).abs() < 1e-3 { return Ok(None); }
+        for window in [self.win,self.render_win] {
+            xproto::configure_window(&self.x11.conn,window,&ConfigureWindowAux::new()
+                .x(0).y(0).width(geo.width as u32).height(geo.height as u32))?.check()?;
         }
+        self.physical.set(dimensions); self.scale.set(scale);
+        self.touch_axis.borrow_mut().clear();
+        self.input_region.borrow_mut().take();
+        Ok(Some((w,h,scale)))
+    }
+
+    /// Keep the input surface above the permanent visual surface. Only the
+    /// transparent input surface is remapped; ink and toolbars stay visible.
+    pub fn raise_overlays(&self) -> XResult<()> {
+        if self.render_win != self.win {
+            xproto::configure_window(
+                &self.x11.conn, self.render_win,
+                &ConfigureWindowAux::new().stack_mode(xproto::StackMode::ABOVE),
+            )?.check()?;
+        }
+        xproto::configure_window(
+            &self.x11.conn, self.win,
+            &ConfigureWindowAux::new().stack_mode(xproto::StackMode::ABOVE),
+        )?.check()?;
+        Ok(())
+    }
+
+    /// Mutter can retain the old pointer target after an XShape change even
+    /// though a fresh actor pick is correct. Remapping invalidates that cache.
+    /// Never unmap during an active press/touch: that would cancel its grab and
+    /// can discard the release. The caller redraws the retained canvas afterward.
+    pub fn refresh_input_window(&self, input_idle: bool) -> XResult<bool> {
+        if !self.input_refresh_pending.get() || !input_idle {
+            return Ok(false);
+        }
+        let pointer = xproto::query_pointer(&self.x11.conn, self.x11.root)?.reply()?;
+        let buttons = xproto::KeyButMask::BUTTON1 | xproto::KeyButMask::BUTTON2
+            | xproto::KeyButMask::BUTTON3 | xproto::KeyButMask::BUTTON4
+            | xproto::KeyButMask::BUTTON5;
+        if u16::from(pointer.mask & buttons) != 0 {
+            return Ok(false);
+        }
+        xproto::unmap_window(&self.x11.conn, self.win)?.check()?;
+        xproto::map_window(&self.x11.conn, self.win)?.check()?;
+        self.raise_overlays()?;
+        if self.render_win != self.win {
+            xproto::clear_area(&self.x11.conn, false, self.win, 0, 0, 0, 0)?.check()?;
+        }
+        self.input_refresh_pending.set(false);
+        Ok(true)
     }
 
     /// 由 XI2 触摸事件的 valuator 计算触点直径（逻辑像素）
@@ -633,7 +742,7 @@ impl X11Plat {
         let Some(mv) = fp_value(mask, values, idx) else {
             return 0.0;
         };
-        let screen = self.x11.width as f64;
+        let screen = self.physical.get().0 as f64;
         // 优先用尺寸轴自身量程归一化到屏幕像素；量程无效(0)时退回位置轴量程
         let physical = if amax > amin {
             (mv - amin) / (amax - amin) * screen
@@ -764,15 +873,15 @@ impl crate::backend::Backend for X11Plat {
     fn screen_size(&self) -> (i32, i32) {
         let sc = self.scale.get().max(0.001);
         (
-            ((self.x11.width as f64) / sc).round() as i32,
-            ((self.x11.height as f64) / sc).round() as i32,
+            ((self.physical.get().0 as f64) / sc).round() as i32,
+            ((self.physical.get().1 as f64) / sc).round() as i32,
         )
     }
     fn present(&self, pm: &tiny_skia::Pixmap, x: i32, y: i32) {
         let sc = self.scale.get();
         let px = ((x as f64) * sc).round() as i32;
         let py = ((y as f64) * sc).round() as i32;
-        let _ = self.x11.put_pixmap(self.win, self.gc, pm, px, py);
+        let _ = self.x11.put_pixmap(self.render_win, self.render_gc, pm, px, py);
     }
     fn set_input_region(&self, rects: &[crate::backend::IRect], full: bool) {
         let sc = self.scale.get();
@@ -785,10 +894,31 @@ impl crate::backend::Backend for X11Plat {
                 height: (((r.h as f64) * sc).round() as i32).max(0) as u16,
             })
             .collect();
-        let _ = self.x11.set_input_shape(self.win, &xr, full);
+        let region = (full, if full { Vec::new() } else { xr });
+        if self.input_region.borrow().as_ref().is_some_and(|old| {
+            old.0 == region.0 && old.1.len() == region.1.len()
+                && old.1.iter().zip(&region.1).all(|(a, b)| {
+                    (a.x, a.y, a.width, a.height) == (b.x, b.y, b.width, b.height)
+                })
+        }) {
+            return;
+        }
+        match self.x11.set_input_shape(self.win, &region.1, full) {
+            Ok(()) => {
+                *self.input_region.borrow_mut() = Some(region);
+                self.input_refresh_pending.set(self.refresh_input_regions);
+            }
+            Err(error) => log::warn!("[WARN] 更新 X11 点击区域失败: {error}"),
+        }
     }
     fn fake_key(&self, key: crate::backend::Key) {
         use crate::backend::Key;
+        if self.x11.is_xwayland {
+            if let Some(injector) = self.key_injector.borrow_mut().as_mut() {
+                injector.key(match key { Key::Up => 103, Key::Down => 108, Key::Escape => 1 });
+            }
+            return;
+        }
         let kc = match key {
             Key::Up => self.x11.key_up,
             Key::Down => self.x11.key_down,
@@ -796,7 +926,13 @@ impl crate::backend::Backend for X11Plat {
         };
         self.x11.fake_key(kc);
     }
+    fn can_inject_keys_without_prompt(&self) -> bool {
+        // Xwayland 的 XTEST 可能经 libei 请求 RemoteDesktop 权限。
+        !self.x11.is_xwayland || self.key_injector.borrow().is_some()
+    }
     fn virtual_right_click(&self, x: i32, y: i32) {
+        // Xwayland XTEST can start a RemoteDesktop authorization request.
+        if self.x11.is_xwayland { return; }
         let sc = self.scale.get();
         self.x11.virtual_right_click(
             ((x as f64) * sc).round() as i32,
@@ -804,7 +940,12 @@ impl crate::backend::Backend for X11Plat {
         );
     }
     fn screenshot(&self) -> Option<(Vec<u8>, u32, u32)> {
-        self.x11.screenshot()
+        // Xwayland's root image omits native Wayland windows. Use Screenshot portal.
+        if self.x11.is_xwayland { None } else { self.x11.screenshot() }
+    }
+    fn can_forward_right_click(&self) -> bool { !self.x11.is_xwayland }
+    fn description(&self) -> &'static str {
+        if self.x11.is_xwayland { "XWayland 兼容模式" } else { "原生 X11" }
     }
     fn is_presentation_fullscreen(&self) -> bool {
         self.x11.is_presentation_fullscreen(self.win)
@@ -824,7 +965,71 @@ impl crate::backend::Backend for X11Plat {
     fn device_pixel_ratio(&self) -> f64 {
         self.scale.get()
     }
-    fn show_splash(&self, fonts: &crate::text::Fonts, icon: Option<&tiny_skia::Pixmap>, dur_ms: u64) {
-        crate::splash::show(&self.x11, fonts, icon, dur_ms);
+}
+
+#[cfg(test)]
+#[path = "x11_input_tests.rs"]
+mod input_protocol_tests;
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+
+    // Run only against an isolated server, for example:
+    // xvfb-run -a <cargo-test-executable> x11::protocol_tests --ignored --nocapture
+    // These tests validate protocol acceptance, not physical touchscreen behavior.
+    #[test]
+    #[ignore = "requires an isolated Xvfb server"]
+    fn touch_selection_is_accepted_and_can_be_read_back() {
+        let x11 = X11::connect().expect("connect to isolated Xvfb");
+        let (win, _) = x11.create_window(0, 0, 64, 64).unwrap();
+        x11.select_touch_events(win).expect("negotiate XI 2.2 and select touch events");
+
+        let selected = xinput::xi_get_selected_events(&x11.conn, win)
+            .unwrap()
+            .reply()
+            .unwrap();
+        let expected = xinput::XIEventMask::TOUCH_BEGIN
+            | xinput::XIEventMask::TOUCH_UPDATE
+            | xinput::XIEventMask::TOUCH_END
+            | xinput::XIEventMask::TOUCH_OWNERSHIP;
+        let all_devices = selected.masks.iter().find(|mask| mask.deviceid == 0).unwrap();
+        assert_eq!(all_devices.mask, vec![expected]);
+        let root_selected = xinput::xi_get_selected_events(&x11.conn, x11.root)
+            .unwrap()
+            .reply()
+            .unwrap();
+        assert!(root_selected.masks.is_empty(), "no global raw touch subscription");
+        x11.destroy_window(win);
+    }
+
+    #[test]
+    #[ignore = "requires an isolated Xvfb server"]
+    fn old_raw_touch_selection_is_rejected_on_overlay() {
+        let x11 = X11::connect().expect("connect to isolated Xvfb");
+        let (win, _) = x11.create_window(0, 0, 64, 64).unwrap();
+        xinput::xi_query_version(&x11.conn, 2, 2).unwrap().reply().unwrap();
+        let old_mask = xinput::XIEventMask::TOUCH_BEGIN
+            | xinput::XIEventMask::TOUCH_UPDATE
+            | xinput::XIEventMask::TOUCH_END
+            | xinput::XIEventMask::TOUCH_OWNERSHIP
+            | xinput::XIEventMask::RAW_TOUCH_BEGIN
+            | xinput::XIEventMask::RAW_TOUCH_UPDATE
+            | xinput::XIEventMask::RAW_TOUCH_END;
+        let result = xinput::xi_select_events(
+            &x11.conn,
+            win,
+            &[xinput::EventMask { deviceid: 0, mask: vec![old_mask] }],
+        )
+        .unwrap()
+        .check();
+        assert!(matches!(
+            result,
+            Err(x11rb::errors::ReplyError::X11Error(ref error))
+                if error.error_kind == x11rb::protocol::ErrorKind::Value
+        ), "old subscription must report BadValue, got {result:?}");
+        assert!(xinput::xi_get_selected_events(&x11.conn, win)
+            .unwrap().reply().unwrap().masks.is_empty());
+        x11.destroy_window(win);
     }
 }

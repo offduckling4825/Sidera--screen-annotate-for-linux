@@ -1,0 +1,26 @@
+# Linux sources and executable scripts must retain LF when checked out on Windows.
+*.rs text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+*.json text eol=lf
+*.xml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.desktop text eol=lf
+*.conf text eol=lf
+*.patch text eol=lf
+*.svg text eol=lf
+*.png binary
+compat/xwayland-24.1.10/debian/rules text eol=lf
+compat/xwayland-24.1.10/debian/changelog text eol=lf
+compat/xwayland-24.1.10/SOURCE-SHA256SUMS text eol=lf
+# Preserve upstream patch bytes and its recorded checksum, including context spaces.
+compat/xwayland-24.1.10/*.patch -whitespace

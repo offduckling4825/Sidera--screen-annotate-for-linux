@@ -380,7 +380,7 @@ protected:
       p.drawText(QRect(16, height() - 46, 320, 32),
                  Qt::AlignLeft | Qt::AlignVCenter,
                  QString::fromUtf8("第 %1 页 / %2").arg(g.currentSlide).arg(kCacheBoard));
-      if (QDateTime::currentMSecsSinceEpoch() < g.wbLimitMsgUntil) {
+      if (monotonicMs() < g.wbLimitMsgUntil) {
         QFont mf = p.font();
         mf.setBold(true);
         mf.setPointSize(28);
@@ -405,7 +405,7 @@ protected:
       pushUndo();                // 撤回：落笔前存快照
       g.isDrawing = true;
       g.lastPt   = ev->pos();
-      g.strokeStartMs = QDateTime::currentMSecsSinceEpoch();   // 起笔时间（时间→粗细）
+      g.strokeStartMs = monotonicMs();   // 起笔时间（时间→粗细）
       g.lastPenW = timedPenWidth();                            // 起笔最细
       // 落笔即画一个点（起笔最细）
       if (g.currentMode == 2) strokeSegment(g.lastPt, g.lastPt, true, g.eraserWidth());
@@ -531,7 +531,7 @@ protected:
       g.tMoved = true;                       // 视为已产生内容（落笔已画点）
       g.tBeginPos = now.first();
       g.tBeginRole = (modeEraseOnly || g.tPalmLatched) ? 2 : 1;
-      g.strokeStartMs = QDateTime::currentMSecsSinceEpoch();   // 起笔时间（时间→粗细）
+      g.strokeStartMs = monotonicMs();   // 起笔时间（时间→粗细）
       g.lastPenW = timedPenWidth();                            // 起笔最细
       if (g.tBeginRole == 1) strokeTapered(g.tBeginPos, g.tBeginPos, g.lastPenW, g.lastPenW);
       else strokeSegment(g.tBeginPos, g.tBeginPos, true, (mode == 2 ? g.eraserWidth() : g.palmEraseW));

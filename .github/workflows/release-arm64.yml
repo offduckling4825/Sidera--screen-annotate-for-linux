@@ -1,0 +1,118 @@
+name: Build ARM64 release asset
+run-name: ARM64 package for ${{ inputs.release_tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing Sidera custom release tag
+        required: true
+        default: v3.0-Electro-testing-custom20261024.29
+        type: string
+      runner_image:
+        description: Native ARM64 build system (also determines the library baseline)
+        required: true
+        default: ubuntu-22.04-arm
+        type: choice
+        options:
+          - ubuntu-22.04-arm
+          - ubuntu-24.04-arm
+
+# This workflow only builds a downloadable artifact. Publishing stays explicit.
+permissions:
+  contents: read
+
+jobs:
+  arm64:
+    runs-on: ${{ inputs.runner_image }}
+    timeout-minutes: 40
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      RUST_VERSION: 1.93.1
+      CARGO_TERM_COLOR: never
+    steps:
+      - name: Checkout build and verification tools
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate release tag and native architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v3\.0-Electro-testing-custom[0-9]{8}\.[0-9]+$ ]]
+          test "$(uname -m)" = aarch64
+          test "$(dpkg --print-architecture)" = arm64
+          version="${RELEASE_TAG#v}"
+          echo "SIDERA_VERSION=${version/-custom/+custom}" >> "$GITHUB_ENV"
+
+      - name: Checkout the released application sources
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+          path: release-source
+          persist-credentials: false
+
+      - name: Install build and isolated startup dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential binutils dpkg-dev python3 \
+            bubblewrap apparmor xvfb fonts-noto-cjk dbus-x11
+
+      - name: Prepare isolated test environment
+        run: bash .github/scripts/prepare-isolation.sh
+
+      - name: Install the release's Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs -o "$RUNNER_TEMP/rustup-init.sh"
+            sh "$RUNNER_TEMP/rustup-init.sh" -y --profile minimal --default-toolchain none
+          fi
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Compile the tagged sources natively
+        working-directory: release-source/rust
+        run: |
+          cargo +"$RUST_VERSION" check --tests --examples --locked
+          cargo +"$RUST_VERSION" build --release --locked
+
+      - name: Package with verified architecture and actual dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Old tags used a fixed libc requirement. Use the audited packager
+          # without changing the application, add-in, extension or lockfile.
+          cp rust/build_deb.sh release-source/rust/build_deb.sh
+          mkdir -p release-source/tools
+          cp tools/deb_dependencies.py release-source/tools/deb_dependencies.py
+          bash release-source/rust/build_deb.sh arm64
+          git -C release-source diff --exit-code -- rust/src rust/Cargo.toml rust/Cargo.lock wps-addin compat
+          mkdir release-artifacts
+          cp "release-source/sidera_${SIDERA_VERSION}_arm64.deb" release-artifacts/
+          dpkg-deb --extract "release-artifacts/sidera_${SIDERA_VERSION}_arm64.deb" "$PWD/release-unpacked-arm64"
+          cmp release-source/rust/target/release/sidera "$PWD/release-unpacked-arm64/usr/bin/sidera"
+          sudo apt-get --simulate install "$PWD/release-artifacts/sidera_${SIDERA_VERSION}_arm64.deb"
+
+      - name: Test the packaged ARM64 executable in isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/run_isolated.py --timeout 180 -- \
+            python3 release-source/rust/tests/test_startup.py \
+            "$PWD/release-unpacked-arm64/usr/bin/sidera" \
+            2>&1 | tee release-artifacts/STARTUP-TESTS-arm64.txt
+
+      - name: Record source identity and checksums
+        run: python3 tools/release_metadata.py release-source release-artifacts
+
+      - name: Upload verified package and build record
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidera-arm64-${{ inputs.release_tag }}
+          path: release-artifacts/
+          if-no-files-found: error
+          retention-days: 30

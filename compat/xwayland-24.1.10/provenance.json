@@ -1,0 +1,39 @@
+{
+  "date": "2026-10-24",
+  "purpose": "当前 Ubuntu 26.04 amd64 虚拟机的 Xwayland 崩溃回补验证；非官方 Ubuntu 更新",
+  "base_package_version": "2:24.1.10-1",
+  "local_package_version": "2:24.1.10-1+sidera1",
+  "source_pool": "https://security.ubuntu.com/ubuntu/pool/main/x/xwayland/",
+  "source_verification": "四个文件的 SHA256 见 SOURCE-SHA256SUMS；三个源归档还逐项匹配 .dsc 的 Checksums-Sha256。缺少对应 Debian 上传者公钥，未独立验证 .dsc PGP 签名。",
+  "patch": {
+    "file": "0001-xwayland-damage-report-null.patch",
+    "commit": "36f53145e415bbc959cdf2ed8bb0cb4f7c4c1f13",
+    "url": "https://gitlab.freedesktop.org/xorg/xserver/-/commit/36f53145e415bbc959cdf2ed8bb0cb4f7c4c1f13.patch",
+    "sha256": "6951494cbadaa33f4dcd02008c0bf83530dbc303c909dbfbe1718c317824b27a",
+    "application": "quilt，fuzz=0；第三块行号偏移 -35，保留全部上下文；上游生产代码仅此 12 行差异"
+  },
+  "build": {
+    "environment": "Ubuntu 26.04 amd64，GCC 15.2.0，Meson 1.10.1，glibc 2.43",
+    "command": "dpkg-buildpackage -b -uc -us -j4",
+    "options": "原 Debian rules、hardening=+all、xwayland_ei=portal，加 vendor_name 标记；具体 rules 与 changelog 随本目录保存",
+    "vendor": "The X.Org Foundation (Sidera damage-report fix)",
+    "release_number": 12401010,
+    "build_id": "e0d3b76046095e7cad2114e4836caefbed8c5482",
+    "reproducibility": "保存重建流程与来源，不承诺工具链或依赖更新后的构建逐字节一致",
+    "upstream_tests": "两项 XTS 包装测试因未提供 XTEST_DIR 跳过，不计为通过"
+  },
+  "artifacts": {
+    "Xwayland-sidera-damage-fix": {
+      "sha256": "295124beb1e08335463d961ae679fdd4f755a26bab53330a2b87e5b95796e9d4"
+    },
+    "xwayland_24.1.10-1+sidera1_amd64.deb": {
+      "sha256": "8a03a9028e0de9d06718c141219c4cd4ff1fedeaca3a71ea72e28b767d7b21ff"
+    },
+    "xwayland_24.1.10-1_amd64.deb": {
+      "role": "原版本回滚包；恢复后仍带有已确认的 damage_report 缺陷",
+      "url": "https://security.ubuntu.com/ubuntu/pool/main/x/xwayland/xwayland_24.1.10-1_amd64.deb",
+      "sha256": "f620802e59cb10a4d66e0ed2abf16ad425be1ab2b7a3deef1c2b367647c2c7a5",
+      "build_id": "0d748fbe3aab20c19c4af7bf3fe577972db83324"
+    }
+  }
+}

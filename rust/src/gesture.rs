@@ -77,7 +77,7 @@ pub fn touch_event(
         app.last_pen_w = app.timed_pen_width();
     }
 
-    let n = now.len();
+    let n = now.len().max(app.touch_frame_contacts);
     let any_large = diameter >= app.large_touch_threshold;
     let large_trigger = (!app.erase_by_finger) && (any_large || n >= 2);
     let multi_trigger = app.erase_by_finger && n >= 2;
@@ -95,9 +95,11 @@ pub fn touch_event(
         let bp = app.t_begin_pos;
         if app.t_begin_role == 1 {
             stroke_tapered(app, bp, bp, app.last_pen_w, app.last_pen_w);
+            dirty = Some(dirty_of(bp, bp, app.last_pen_w));
         } else {
             let w = if mode == 2 { app.eraser_width() } else { app.palm_erase_w };
             stroke_segment(app, bp, bp, true, w);
+            dirty = Some(dirty_of(bp, bp, w));
         }
     }
 

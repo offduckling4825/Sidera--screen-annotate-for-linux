@@ -81,6 +81,10 @@
       <arg name="mods_locked" type="uint" summary="locked modifiers"/>
       <arg name="group" type="uint" summary="keyboard layout"/>
     </request>
+    <!-- Opcode 3 in the upstream v1 protocol; required for seat removal. -->
+    <request name="destroy" type="destructor" since="1">
+      <description summary="destroy the virtual keyboard object"/>
+    </request>
   </interface>
 
   <interface name="zwp_virtual_keyboard_manager_v1" version="1">

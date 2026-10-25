@@ -33,6 +33,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <limits>
+#include <cmath>
 
 // ---- 调色板 / 尺寸（与 X11 路径一致） ----
 static const QVector<QColor> kColors = {
@@ -44,29 +46,32 @@ static const QVector<int> kEraserSizes = { 12, 24, 48 };
 static const QColor kWhiteboardColors[] = { QColor("#0F3D2E"), QColor(255,255,255) };
 static const int kMaxUndo = 12;
 static const int kCacheBoard = 10;
-static const int kCacheOther = 20;
 
 static const int kSbBaseW = 56, kSbBaseBtn = 34, kSbBaseIcon = 24, kSbBaseDot = 19;
 
 // ============================================================
 // 静态回调
 // ============================================================
-static void registryGlobal(void* data, wl_registry* r, uint32_t name, const char* interface, uint32_t /*version*/) {
+static void seatCapabilities(void*, wl_seat*, uint32_t);
+static void seatName(void*, wl_seat*, const char*) {}
+static const wl_seat_listener seatListener = { seatCapabilities, seatName };
+static void registryGlobal(void* data, wl_registry* r, uint32_t name, const char* interface, uint32_t version) {
   WlBackend* self = static_cast<WlBackend*>(data);
   if (!std::strcmp(interface, wl_compositor_interface.name))
-    self->compositor_ = (wl_compositor*)wl_registry_bind(r, name, &wl_compositor_interface, 4);
+    self->compositor_ = (wl_compositor*)wl_registry_bind(r, name, &wl_compositor_interface, qMin(version, 4u));
   else if (!std::strcmp(interface, wl_shm_interface.name))
     self->shm_ = (wl_shm*)wl_registry_bind(r, name, &wl_shm_interface, 1);
-  else if (!std::strcmp(interface, wl_seat_interface.name)) {
-    self->seat_ = (wl_seat*)wl_registry_bind(r, name, &wl_seat_interface, 7);
-    self->pointer_ = wl_seat_get_pointer(self->seat_);
-    self->touch_ = wl_seat_get_touch(self->seat_);
+  else if (!std::strcmp(interface, wl_seat_interface.name) && !self->seat_) {
+    self->seatName_ = name;
+    self->seat_ = (wl_seat*)wl_registry_bind(r, name, &wl_seat_interface, qMin(version, 7u));
+    wl_seat_add_listener(self->seat_, &seatListener, self);
   }
   else if (!std::strcmp(interface, wl_output_interface.name) && !self->output_) {
-    self->output_ = (wl_output*)wl_registry_bind(r, name, &wl_output_interface, 4);
+    self->outputName_ = name;
+    self->output_ = (wl_output*)wl_registry_bind(r, name, &wl_output_interface, qMin(version, 2u));
   }
   else if (!std::strcmp(interface, zwlr_layer_shell_v1_interface.name))
-    self->layerShell_ = (zwlr_layer_shell_v1*)wl_registry_bind(r, name, &zwlr_layer_shell_v1_interface, 4);
+    self->layerShell_ = (zwlr_layer_shell_v1*)wl_registry_bind(r, name, &zwlr_layer_shell_v1_interface, qMin(version, 4u));
   else if (!std::strcmp(interface, wp_fractional_scale_manager_v1_interface.name))
     self->fsManager_ = (wp_fractional_scale_manager_v1*)wl_registry_bind(r, name, &wp_fractional_scale_manager_v1_interface, 1);
   else if (!std::strcmp(interface, wp_viewporter_interface.name))
@@ -74,13 +79,15 @@ static void registryGlobal(void* data, wl_registry* r, uint32_t name, const char
   else if (!std::strcmp(interface, zwp_virtual_keyboard_manager_v1_interface.name))
     self->vkManager_ = (zwp_virtual_keyboard_manager_v1*)wl_registry_bind(r, name, &zwp_virtual_keyboard_manager_v1_interface, 1);
   else if (!std::strcmp(interface, zwlr_screencopy_manager_v1_interface.name))
-    self->screencopy_ = (zwlr_screencopy_manager_v1*)wl_registry_bind(r, name, &zwlr_screencopy_manager_v1_interface, 3);
+    self->screencopy_ = (zwlr_screencopy_manager_v1*)wl_registry_bind(r, name, &zwlr_screencopy_manager_v1_interface, qMin(version, 3u));
 }
 
 static void pointerMotion(void* d, wl_pointer*, uint32_t, wl_fixed_t sx, wl_fixed_t sy) {
+  if (static_cast<WlBackend*>(d)->touchId_ >= 0) return;
   static_cast<WlBackend*>(d)->onPointerMove(QPoint(wl_fixed_to_int(sx), wl_fixed_to_int(sy)));
 }
 static void pointerButton(void* d, wl_pointer*, uint32_t, uint32_t, uint32_t button, uint32_t state) {
+  if (static_cast<WlBackend*>(d)->touchId_ >= 0) return;
   static_cast<WlBackend*>(d)->onPointerButton(button, state == WL_POINTER_BUTTON_STATE_PRESSED);
 }
 static void touchDown(void* d, wl_touch*, uint32_t, uint32_t, wl_surface*, int32_t id, wl_fixed_t x, wl_fixed_t y) {
@@ -94,21 +101,38 @@ static void touchMotion(void* d, wl_touch*, uint32_t, int32_t id, wl_fixed_t x, 
 }
 static void outputScale(void* d, wl_output*, int32_t factor) {
   WlBackend* s = static_cast<WlBackend*>(d);
-  if (factor > 0) s->scale_ = factor;
+  if (factor > 0 && factor <= 4) s->scale_ = factor;
+  if (s->initialized_) s->renderAndCommit();
 }
 static void fractionalPreferred(void* d, wp_fractional_scale_v1*, uint32_t scale) {
   WlBackend* s = static_cast<WlBackend*>(d);
-  if (scale > 0) s->fracScale_ = scale / 120.0;
+  if (scale >= 120 && scale <= 480) s->fracScale_ = scale / 120.0;
+  if (s->initialized_) s->renderAndCommit();
 }
 static void layerConfigure(void* d, zwlr_layer_surface_v1* ls, uint32_t serial, uint32_t w, uint32_t h) {
   WlBackend* s = static_cast<WlBackend*>(d);
-  s->logicalW_ = w; s->logicalH_ = h;
-  s->width_ = w; s->height_ = h;
   zwlr_layer_surface_v1_ack_configure(ls, serial);
+  // Reject overflow before any allocation or QImage construction.
+  if (!w || !h || w > 16384 || h > 16384 || uint64_t(w) * h > 67108864) return;
+  s->logicalW_ = int(w); s->logicalH_ = int(h);
+  if (s->initialized_) {
+    s->cancelInput();
+    s->layoutUi();
+    s->renderAndCommit();
+  }
 }
 static void bufferRelease(void* d, wl_buffer* buffer) {
   WlBackend* s = static_cast<WlBackend*>(d);
   for (int i = 0; i < 2; i++) if (s->bufs_[i].buffer == buffer) { s->bufs_[i].busy = false; break; }
+  for (int i = 0; i < s->retiredPools_.size(); ++i) {
+    if (s->retiredPools_[i].buffer != buffer) continue;
+    const auto retired = s->retiredPools_.takeAt(i);
+    wl_buffer_destroy(retired.buffer);
+    wl_shm_pool_destroy(retired.pool);
+    munmap(retired.data, retired.size);
+    break;
+  }
+  if (s->pendingRender_) s->renderAndCommit();
 }
 
 // ---- no-op stubs ----
@@ -128,17 +152,27 @@ static void noopPointerAxisDiscrete(void*, wl_pointer*, uint32_t, int32_t) {}
 [[maybe_unused]] static void noopPointerAxisRelDir(void*, wl_pointer*, uint32_t, uint32_t) {}
 [[maybe_unused]] static void noopPointerWarp(void*, wl_pointer*, wl_fixed_t, wl_fixed_t) {}
 static void noopTouchFrame(void*, wl_touch*) {}
-static void noopTouchCancel(void*, wl_touch*) {}
+static void noopTouchCancel(void* d, wl_touch*) { static_cast<WlBackend*>(d)->cancelInput(); }
 static void noopTouchShape(void*, wl_touch*, int32_t, wl_fixed_t, wl_fixed_t) {}
 static void noopTouchOrientation(void*, wl_touch*, int32_t, wl_fixed_t) {}
-static void noopRegistryRemove(void*, wl_registry*, uint32_t) {}
-static void noopLayerClosed(void*, zwlr_layer_surface_v1*) {}
+static void noopRegistryRemove(void* d, wl_registry*, uint32_t name) {
+  auto* s = static_cast<WlBackend*>(d);
+  // The legacy backend owns one output/seat. Exit safely instead of retaining
+  // dead input objects; the Rust backend provides live multi-output recovery.
+  if (name == s->seatName_ || name == s->outputName_) {
+    s->cancelInput();
+    QCoreApplication::quit();
+  }
+}
+static void noopLayerClosed(void*, zwlr_layer_surface_v1*) { QCoreApplication::quit(); }
 
 // ---- screencopy 回调 ----
 static void shotBuffer(void* d, zwlr_screencopy_frame_v1* frame, uint32_t format, uint32_t w, uint32_t h, uint32_t stride);
 static void shotReady(void* d, zwlr_screencopy_frame_v1* frame, uint32_t, uint32_t, uint32_t);
 static void shotFailed(void* d, zwlr_screencopy_frame_v1* frame);
-static void noopShotFlags(void*, zwlr_screencopy_frame_v1*, uint32_t) {}
+static void noopShotFlags(void* d, zwlr_screencopy_frame_v1*, uint32_t flags) {
+  static_cast<WlBackend*>(d)->shotInverted_ = flags & ZWLR_SCREENCOPY_FRAME_V1_FLAGS_Y_INVERT;
+}
 static void noopShotDamage(void*, zwlr_screencopy_frame_v1*, uint32_t, uint32_t, uint32_t, uint32_t) {}
 static void noopShotDmabuf(void*, zwlr_screencopy_frame_v1*, uint32_t, uint32_t, uint32_t) {}
 static void noopShotBufferDone(void*, zwlr_screencopy_frame_v1*) {}
@@ -163,6 +197,21 @@ static const wl_pointer_listener pointerListener = {
 static const wl_touch_listener touchListener = {
   touchDown, touchUp, touchMotion, noopTouchFrame, noopTouchCancel, noopTouchShape, noopTouchOrientation
 };
+static void seatCapabilities(void* data, wl_seat* seat, uint32_t caps) {
+  auto* s = static_cast<WlBackend*>(data);
+  if ((caps & WL_SEAT_CAPABILITY_POINTER) && !s->pointer_) {
+    s->pointer_ = wl_seat_get_pointer(seat);
+    wl_pointer_add_listener(s->pointer_, &pointerListener, s);
+  } else if (!(caps & WL_SEAT_CAPABILITY_POINTER) && s->pointer_) {
+    s->cancelInput(); wl_pointer_destroy(s->pointer_); s->pointer_ = nullptr;
+  }
+  if ((caps & WL_SEAT_CAPABILITY_TOUCH) && !s->touch_) {
+    s->touch_ = wl_seat_get_touch(seat);
+    wl_touch_add_listener(s->touch_, &touchListener, s);
+  } else if (!(caps & WL_SEAT_CAPABILITY_TOUCH) && s->touch_) {
+    s->cancelInput(); wl_touch_destroy(s->touch_); s->touch_ = nullptr;
+  }
+}
 static const wl_output_listener outputListener = {
   noopOutputGeometry, noopOutputMode, noopOutputDone, outputScale,
 #ifdef WL_OUTPUT_NAME_SINCE_VERSION
@@ -182,15 +231,22 @@ static const wp_fractional_scale_v1_listener fractionalScaleListener = { fractio
 WlBackend::WlBackend(QObject* parent) : QObject(parent) {}
 
 WlBackend::~WlBackend() {
+  if (shotFrame_) shotFailed(this, shotFrame_);
   if (vk_) zwp_virtual_keyboard_v1_destroy(vk_);
   if (xkbMap_) xkb_keymap_unref(xkbMap_);
   if (xkbCtx_) xkb_context_unref(xkbCtx_);
   if (fractionalScale_) wp_fractional_scale_v1_destroy(fractionalScale_);
   if (viewport_) wp_viewport_destroy(viewport_);
-  if (surface_) wl_surface_destroy(surface_);
   if (layerSurface_) zwlr_layer_surface_v1_destroy(layerSurface_);
-  if (pool_) wl_shm_pool_destroy(pool_);
-  if (shmData_ && shmData_ != MAP_FAILED) munmap(shmData_, shmSize_);
+  if (surface_) wl_surface_destroy(surface_);
+  destroyBuffers();
+  for (const auto& retired : retiredPools_) {
+    wl_buffer_destroy(retired.buffer);
+    wl_shm_pool_destroy(retired.pool);
+    munmap(retired.data, retired.size);
+  }
+  if (pointer_) wl_pointer_destroy(pointer_);
+  if (touch_) wl_touch_destroy(touch_);
   if (compositor_) wl_compositor_destroy(compositor_);
   if (shm_) wl_shm_destroy(shm_);
   if (seat_) wl_seat_destroy(seat_);
@@ -216,12 +272,10 @@ bool WlBackend::init() {
     qWarning() << "[WlBackend] 合成器缺少 wl_compositor/wl_shm/wlr-layer-shell";
     return false;
   }
-  if (pointer_) wl_pointer_add_listener(pointer_, &pointerListener, this);
-  if (touch_)   wl_touch_add_listener(touch_, &touchListener, this);
   if (output_)  wl_output_add_listener(output_, &outputListener, this);
 
   createSurface();
-  if (fsManager_) {
+  if (fsManager_ && viewporter_) {
     fractionalScale_ = wp_fractional_scale_manager_v1_get_fractional_scale(fsManager_, surface_);
     wp_fractional_scale_v1_add_listener(fractionalScale_, &fractionalScaleListener, this);
   }
@@ -243,17 +297,26 @@ bool WlBackend::init() {
   setupVirtualKeyboard();
   loadSettings();
   layoutUi();
+  initialized_ = true;
   setMode(0);
 
   // WPS 联动桥（HTTP 16666 + 加载项自动注册）——平台无关
   wps_ = new WpsBridge(this);
   wps_->onRealPos = [this](int pos) { wpsOnRealPos(pos); };
   wps_->onSlideshowBegin = [this](int pos) { wpsOnBegin(pos); };
+  wps_->onSlideshowEnd = [this]() {
+    pageCache_.clear(); savedNormalPage_ = 1;
+    if (!whiteboard_) { currentPage_ = 1; loadPage(1); renderAndCommit(); }
+  };
   wps_->start();
 
   notifier_ = new QSocketNotifier(wl_display_get_fd(display_), QSocketNotifier::Read, this);
   connect(notifier_, &QSocketNotifier::activated, this, [this]() {
-    if (wl_display_dispatch(display_) < 0) qWarning() << "[WlBackend] display 断开";
+    if (wl_display_dispatch(display_) < 0) {
+      notifier_->setEnabled(false);
+      qWarning() << "[WlBackend] display 断开";
+      QCoreApplication::quit();
+    }
   });
   notifier_->setEnabled(true);
 
@@ -295,16 +358,40 @@ void WlBackend::createBuffers() {
     bufs_[i].size = bsize;
     wl_buffer_add_listener(bufs_[i].buffer, &bufferListener, this);
   }
-  ink_ = QPixmap(logicalW_, logicalH_);
-  ink_.fill(Qt::transparent);
+  bufferW_ = width_; bufferH_ = height_;
+}
+
+void WlBackend::destroyBuffers() {
+  for (auto& b : bufs_) { if (b.buffer) wl_buffer_destroy(b.buffer); b = Buf{}; }
+  if (pool_) wl_shm_pool_destroy(pool_);
+  if (shmData_) munmap(shmData_, shmSize_);
+  pool_ = nullptr; shmData_ = nullptr; shmSize_ = 0;
+  bufferW_ = bufferH_ = 0;
 }
 
 void WlBackend::maybeCreateBuffers() {
-  if (pool_ || logicalW_ <= 0 || logicalH_ <= 0) return;
-  width_  = qMax(1, int(qRound(logicalW_ * fracScale_)));
-  height_ = qMax(1, int(qRound(logicalH_ * fracScale_)));
+  if (logicalW_ <= 0 || logicalH_ <= 0) return;
+  const double scale = viewport_ && fractionalScale_ ? fracScale_ :
+      (wl_surface_get_version(surface_) >= 3 ? scale_ : 1);
+  const qint64 width = qRound64(logicalW_ * scale), height = qRound64(logicalH_ * scale);
+  if (width <= 0 || height <= 0 || width > 32768 || height > 32768 || width * height > 67108864) {
+    width_ = height_ = 0;
+    return;
+  }
+  width_ = int(width); height_ = int(height);
+  if (pool_ && bufferW_ == width_ && bufferH_ == height_) return;
+  // The displayed buffer may only be released after a replacement is committed.
+  // Keep its entire old pool alive while creating the replacement at the new size.
+  if ((bufs_[0].busy && bufs_[1].busy) || retiredPools_.size() >= 2) return;
+  if (pool_ && (bufs_[0].busy || bufs_[1].busy)) {
+    const int busy = bufs_[0].busy ? 0 : 1;
+    retiredPools_.append({pool_, shmData_, shmSize_, bufs_[busy].buffer});
+    if (bufs_[1 - busy].buffer) wl_buffer_destroy(bufs_[1 - busy].buffer);
+    bufs_[0] = Buf{}; bufs_[1] = Buf{};
+    pool_ = nullptr; shmData_ = nullptr; shmSize_ = 0;
+  }
+  destroyBuffers();
   createBuffers();
-  if (viewport_ && pool_) wp_viewport_set_destination(viewport_, logicalW_, logicalH_);
 }
 
 // ============================================================
@@ -322,7 +409,7 @@ void WlBackend::setupVirtualKeyboard() {
   size_t len = std::strlen(str) + 1;
   int fd = memfd_create("sidera-keymap", MFD_CLOEXEC);
   if (fd >= 0) {
-    ftruncate(fd, len);
+    if (ftruncate(fd, len) < 0) { ::close(fd); free(str); return; }
     void* m = mmap(nullptr, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (m != MAP_FAILED) { std::memcpy(m, str, len); munmap(m, len); }
     zwp_virtual_keyboard_v1_keymap(vk_, WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1, fd, len);
@@ -343,7 +430,7 @@ void WlBackend::sendKeysym(xkb_keysym_t sym) {
   }
   if (!kc) return;
   uint32_t evdev = (uint32_t)(kc - 8);   // 协议使用 evdev scancode
-  uint32_t t = (uint32_t)QDateTime::currentMSecsSinceEpoch();
+  uint32_t t = (uint32_t)monotonicMs();
   zwp_virtual_keyboard_v1_key(vk_, t, evdev, 1);
   zwp_virtual_keyboard_v1_key(vk_, t + 1, evdev, 0);
   wl_display_flush(display_);
@@ -355,7 +442,7 @@ void WlBackend::sendKeysym(xkb_keysym_t sym) {
 void WlBackend::render(QImage& img) {
   QPainter p(&img);
   p.setRenderHint(QPainter::Antialiasing, true);
-  if (fracScale_ != 1.0) p.scale(fracScale_, fracScale_);
+  p.scale(double(width_) / logicalW_, double(height_) / logicalH_);
 
   p.setCompositionMode(QPainter::CompositionMode_Source);
   if (whiteboard_) p.fillRect(0, 0, logicalW_, logicalH_, kWhiteboardColors[wbBgIndex_]);
@@ -393,10 +480,19 @@ void WlBackend::startAnim() {
   animTimer_->start();
 }
 
-void WlBackend::renderAndCommit() {  if (!pool_ || !surface_ || width_ <= 0 || height_ <= 0) return;
+void WlBackend::renderAndCommit() {
+  if (!surface_) return;
+  pendingRender_ = true;
+  maybeCreateBuffers();
+  if (!pool_ || bufferW_ != width_ || bufferH_ != height_ || width_ <= 0 || height_ <= 0) return;
   int idx = (curBuf_ == 0) ? 1 : 0;
   if (bufs_[idx].busy) idx = curBuf_;
   if (bufs_[idx].busy) return;
+  if (ink_.size() != QSize(logicalW_, logicalH_)) {
+    if (ink_.isNull()) { ink_ = QPixmap(logicalW_, logicalH_); ink_.fill(Qt::transparent); }
+    else ink_ = ink_.scaled(logicalW_, logicalH_, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    undoStack_.clear();
+  }
   curBuf_ = idx;
   bufs_[idx].busy = true;
   uchar* base = (uchar*)shmData_ + (size_t)idx * bufs_[idx].size;
@@ -404,7 +500,13 @@ void WlBackend::renderAndCommit() {  if (!pool_ || !surface_ || width_ <= 0 || h
   render(img);
   if (qgetenv("SIDERA_WL_DUMP") == "1") img.save("/tmp/sidera_frame.png");
   wl_surface_attach(surface_, bufs_[idx].buffer, 0, 0);
-  wl_surface_damage_buffer(surface_, 0, 0, width_, height_);
+  if (viewport_) wp_viewport_set_destination(viewport_, logicalW_, logicalH_);
+  else if (wl_surface_get_version(surface_) >= 3) wl_surface_set_buffer_scale(surface_, scale_);
+  if (wl_surface_get_version(surface_) >= 4) wl_surface_damage_buffer(surface_, 0, 0, width_, height_);
+  else wl_surface_damage(surface_, 0, 0, logicalW_, logicalH_);
+  pendingRender_ = false;
+  if (mode_ == 0 && !whiteboard_) setInputRegionSidebar();
+  else setInputRegionFull();
   wl_surface_commit(surface_);
   wl_display_flush(display_);
 }
@@ -689,7 +791,7 @@ void WlBackend::onPointerButton(uint32_t button, bool pressed) {
       pushUndo();
       drawing_ = true;
       lastPt_ = curPos_;
-      strokeStartMs_ = QDateTime::currentMSecsSinceEpoch();
+      strokeStartMs_ = monotonicMs();
       lastPenW_ = timedWidth();
       if (mode_ == 2) drawEraseSegment(&ink_, lastPt_, lastPt_, eraserWidth());
       else            drawPenTapered(&ink_, kColors[curColor_], lastPt_, lastPt_, lastPenW_, lastPenW_);
@@ -715,6 +817,12 @@ void WlBackend::onTouchUp(int id) {
   if (id != touchId_) return;
   touchId_ = -1;
   onPointerButton(0x110, false);
+}
+void WlBackend::cancelInput() {
+  drawing_ = false;
+  touchId_ = -1;
+  draggingSlider_ = 0;
+  strokeStartMs_ = 0;
 }
 
 // ============================================================
@@ -904,24 +1012,19 @@ void WlBackend::clearInk() {
 }
 
 void WlBackend::savePage() {
-  QMap<int, QPixmap>& c = whiteboard_ ? wbCache_ : pageCache_;
-  int cap = whiteboard_ ? kCacheBoard : kCacheOther;
-  if (!c.contains(currentPage_) && c.size() >= cap) {
-    if (!c.isEmpty()) c.remove(c.firstKey());
-  }
-  c[currentPage_] = ink_;
+  PageCache& cache = whiteboard_ ? wbCache_ : pageCache_;
+  cache.insert(currentPage_, ink_);
 }
-
 void WlBackend::loadPage(int page) {
   ink_.fill(Qt::transparent);
-  QMap<int, QPixmap>& c = whiteboard_ ? wbCache_ : pageCache_;
-  if (c.contains(page)) { QPainter p(&ink_); p.drawPixmap(0, 0, c[page]); p.end(); }
+  const QPixmap cached = (whiteboard_ ? wbCache_ : pageCache_).value(page);
+  if (!cached.isNull()) { QPainter painter(&ink_); painter.drawPixmap(ink_.rect(), cached, cached.rect()); }
   undoStack_.clear();
 }
 
 void WlBackend::goNextPage() {
   // 白板：纯本地；非白板且加载项在线：交给加载项翻页（按真实页号回传驱动缓存）
-  if (!whiteboard_ && wps_ && wps_->connected()) { wps_->enqueue("NEXT"); return; }
+  if (!whiteboard_ && wps_ && wps_->connected() && wps_->position() > 0) { wps_->enqueue("NEXT"); return; }
   savePage();
   if (whiteboard_) {
     currentPage_++;
@@ -936,7 +1039,7 @@ void WlBackend::goNextPage() {
 }
 
 void WlBackend::goPrevPage() {
-  if (!whiteboard_ && wps_ && wps_->connected()) { wps_->enqueue("PREV"); return; }
+  if (!whiteboard_ && wps_ && wps_->connected() && wps_->position() > 0) { wps_->enqueue("PREV"); return; }
   savePage();
   if (whiteboard_) {
     if (currentPage_ > 1) currentPage_--;
@@ -951,7 +1054,9 @@ void WlBackend::goPrevPage() {
 
 // 加载项回传真实页号：存旧页、载新页（页内动画步不动缓存）
 void WlBackend::wpsOnRealPos(int pos) {
-  if (whiteboard_ || pos <= 0) return;
+  if (pos <= 0) return;
+  if (whiteboard_) { savedNormalPage_ = pos; return; }
+  if (pos == currentPage_) return;
   savePage();
   currentPage_ = pos;
   loadPage(pos);
@@ -960,8 +1065,8 @@ void WlBackend::wpsOnRealPos(int pos) {
 
 // 放映开始：清空并落到起始页
 void WlBackend::wpsOnBegin(int pos) {
-  if (whiteboard_) return;
   pageCache_.clear();
+  if (whiteboard_) { savedNormalPage_ = pos > 0 ? pos : 1; return; }
   currentPage_ = pos > 0 ? pos : 1;
   loadPage(currentPage_);
   renderAndCommit();
@@ -974,25 +1079,25 @@ void WlBackend::exitPresentation() {
     return;
   }
   if (mode_ != 0) { mode_ = 0; setInputRegionSidebar(); }
-  sendKeysym(XKB_KEY_Escape);
+  if (!(wps_ && wps_->connected() && wps_->position() > 0 && wps_->enqueue("EXIT")))
+    sendKeysym(XKB_KEY_Escape);
   renderAndCommit();
 }
 
 void WlBackend::toggleWhiteboard() {
+  savePage();
   if (!whiteboard_) {
-    savePage();
     savedNormalPage_ = currentPage_;
-    wbCache_.clear();
     whiteboard_ = true;
-    currentPage_ = 1;
-    ink_.fill(Qt::transparent);
-    undoStack_.clear();
+    currentPage_ = whiteboardPage_;
+    loadPage(currentPage_);
   } else {
-    wbCache_.clear();
+    whiteboardPage_ = currentPage_;
     whiteboard_ = false;
     currentPage_ = savedNormalPage_;
     loadPage(currentPage_);
   }
+  if (wps_) wps_->setWhiteboard(whiteboard_);
   renderAndCommit();
 }
 
@@ -1000,7 +1105,7 @@ int WlBackend::timedWidth() {
   int base = kPenSizes[curPenSize_];
   if (strokeStartMs_ <= 0) return base;
   int minw = qMax(1, int(qRound(base * 0.85)));
-  qint64 dt = QDateTime::currentMSecsSinceEpoch() - strokeStartMs_;
+  qint64 dt = monotonicMs() - strokeStartMs_;
   double t = qBound(0.0, double(dt) / 600.0, 1.0);
   return minw + int(qRound((base - minw) * t));
 }
@@ -1013,18 +1118,24 @@ int WlBackend::eraserWidth() { return kEraserSizes[curEraserSize_]; }
 void WlBackend::doScreenshot() {
   if (!screencopy_ || !output_ || shotFrame_) return;
   shotFrame_ = zwlr_screencopy_manager_v1_capture_output(screencopy_, 0, output_);
+  shotInverted_ = false;
   zwlr_screencopy_frame_v1_add_listener(shotFrame_, &shotListener, this);
+  auto* frame = shotFrame_;
+  QTimer::singleShot(5000, this, [this, frame]() { if (shotFrame_ == frame) shotFailed(this, frame); });
 }
 
 static void shotBuffer(void* d, zwlr_screencopy_frame_v1* frame, uint32_t format, uint32_t w, uint32_t h, uint32_t stride) {
   WlBackend* s = static_cast<WlBackend*>(d);
+  if ((format != WL_SHM_FORMAT_ARGB8888 && format != WL_SHM_FORMAT_XRGB8888) ||
+      !w || !h || w > 32768 || h > 32768 || stride < uint64_t(w) * 4 ||
+      uint64_t(stride) * h > 256u * 1024 * 1024) { shotFailed(d, frame); return; }
   s->shotFmt_ = (int)format; s->shotW_ = (int)w; s->shotH_ = (int)h; s->shotStride_ = (int)stride;
   size_t size = (size_t)stride * h;
   int fd = memfd_create("sidera-shot", MFD_CLOEXEC);
-  if (fd < 0) return;
-  if (ftruncate(fd, size) < 0) { ::close(fd); return; }
+  if (fd < 0) { shotFailed(d, frame); return; }
+  if (ftruncate(fd, size) < 0) { ::close(fd); shotFailed(d, frame); return; }
   void* m = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-  if (m == MAP_FAILED) { ::close(fd); return; }
+  if (m == MAP_FAILED) { ::close(fd); shotFailed(d, frame); return; }
   s->shotFd_ = fd; s->shotData_ = m; s->shotSize_ = size;
   wl_shm_pool* pool = wl_shm_create_pool(s->shm_, fd, (int)size);
   s->shotBuffer_ = wl_shm_pool_create_buffer(pool, 0, w, h, stride, format);
@@ -1037,14 +1148,15 @@ static void shotReady(void* d, zwlr_screencopy_frame_v1* frame, uint32_t, uint32
   QImage::Format fmt = (s->shotFmt_ == WL_SHM_FORMAT_XRGB8888) ? QImage::Format_RGB32
                                                                : QImage::Format_ARGB32;
   QImage img((const uchar*)s->shotData_, s->shotW_, s->shotH_, s->shotStride_, fmt);
-  img = img.copy();
+  img = s->shotInverted_ ? img.mirrored(false, true) : img.copy();
   QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
   if (dir.isEmpty()) dir = QDir::homePath();
   QDir().mkpath(dir);
   QString fn = dir + "/sidera_" + QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss") + ".png";
   if (img.save(fn, "PNG")) {
     qDebug() << "[WlBackend] 截图已保存:" << fn;
-    QGuiApplication::clipboard()->setImage(img);
+    if (QGuiApplication::platformName() != "offscreen") QGuiApplication::clipboard()->setImage(img);
+    else qWarning() << "截图已保存；当前会话无法直接复制到剪贴板。";
   }
   // 清理
   if (s->shotBuffer_) { wl_buffer_destroy(s->shotBuffer_); s->shotBuffer_ = nullptr; }
@@ -1067,7 +1179,7 @@ static void shotFailed(void* d, zwlr_screencopy_frame_v1* frame) {
 // ============================================================
 // 设置面板（在覆盖层内绘制）
 // ============================================================
-static QString wlConfigPath() { return QDir::homePath() + "/.config/sidera/config"; }
+static QString wlConfigPath() { return QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/sidera/config"; }
 static QString wlAutoStartPath() {
   QString dir = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/autostart";
   QDir().mkpath(dir);
@@ -1096,7 +1208,7 @@ void WlBackend::loadSettings() {
     QString line = QString::fromUtf8(f.readLine()).trimmed();
     int eq = line.indexOf('='); if (eq < 0) continue;
     QString k = line.left(eq), v = line.mid(eq + 1);
-    if (k == "sbScale") sbScale_ = qBound(0.6, v.toDouble(), 1.4);
+    if (k == "sbScale") { bool ok = false; double scale = v.toDouble(&ok); if (ok && qIsFinite(scale)) sbScale_ = qBound(0.6, scale, 1.4); }
     else if (k == "sidebarAlpha") sidebarAlpha_ = qBound(30, v.toInt(), 255);
   }
 }
@@ -1116,9 +1228,13 @@ void WlBackend::saveSettings() {
   kv["sbScale"] = QString::number(sbScale_, 'f', 2);
   kv["sidebarAlpha"] = QString::number(sidebarAlpha_);
   QDir().mkpath(QFileInfo(path).absolutePath());
-  if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
-    QTextStream ts(&f);
+  if (QFileInfo(path).isSymLink()) { qWarning() << "Refusing symlink settings"; return; }
+  QSaveFile pending(path);
+  if (pending.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    QTextStream ts(&pending);
     for (auto it = kv.constBegin(); it != kv.constEnd(); ++it) ts << it.key() << "=" << it.value() << "\n";
+    ts.flush();
+    if (!pending.commit()) qWarning() << "Cannot save settings:" << pending.errorString();
   }
 }
 

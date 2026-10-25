@@ -7,6 +7,8 @@
 #include <QObject>
 #include <QString>
 #include <QQueue>
+#include <QElapsedTimer>
+#include <QMap>
 #include <functional>
 
 class QTcpServer;
@@ -18,15 +20,20 @@ public:
   explicit WpsBridge(QObject* parent = nullptr);
   ~WpsBridge() override;
 
-  bool start();                      // 监听 127.0.0.1:16666，并自动登记加载项
+  bool start(quint16 port = 16666, bool registerAddin = true);
   void stop();
-  void enqueue(const QString& cmd);  // NEXT / PREV
+  bool enqueue(const QString& cmd);  // NEXT / PREV / EXIT, bounded and expiring
+  void setWhiteboard(bool enabled) { whiteboard_ = enabled; if (enabled) queue_.clear(); }
+  int position() const { return realPos_; }
+  quint16 port() const;
   bool connected() const { return connected_; }
   QString logFile() const;
 
   // 回调（由使用者设置）
   std::function<void(int)> onRealPos;        // 真实页号变化（去重后）
   std::function<void(int)> onSlideshowBegin; // 放映开始
+  std::function<void()> onSlideshowEnd;
+  std::function<void(bool)> onConnectionChanged;
 
 private:
   void onNewConnection();
@@ -41,8 +48,12 @@ private:
 
   QTcpServer* server_ = nullptr;
   QTimer*     ping_   = nullptr;
-  QQueue<QString> queue_;
+  QQueue<QPair<qint64, QString>> queue_;
+  QElapsedTimer clock_;
+  QMap<QString, quint64> sequences_;
+  bool whiteboard_ = false;
   bool    connected_ = false;
   qint64  lastSeen_  = 0;
   int     realPos_   = -1;
+  int     deck_      = -1;
 };

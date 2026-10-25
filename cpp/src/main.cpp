@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Carl_Jin   GNU GPL v3
 #include "app.h"
 #include "widget.h"
+#include <QLockFile>
 #ifdef SIDERA_HAVE_WAYLAND
 #include "backend_wayland.h"
 #endif
@@ -15,7 +16,9 @@ AppState g;
 // 是否处于原生 Wayland 会话（此时走裸协议后端，Qt 用 offscreen 平台）
 #ifdef SIDERA_HAVE_WAYLAND
 static bool isWaylandSession() {
-  if (qgetenv("XDG_SESSION_TYPE").toLower() == "wayland") return true;
+  const QByteArray session = qgetenv("XDG_SESSION_TYPE").trimmed().toLower();
+  if (session == "x11") return false;
+  if (session == "wayland") return true;
   if (!qgetenv("WAYLAND_DISPLAY").isEmpty()) return true;
   return false;
 }
@@ -90,7 +93,11 @@ int main(int argc, char* argv[]) {
   g.platform = wayland ? "wayland" : "x11";
   qDebug() << "[INFO] 平台:" << g.platform;
 
-  // 单实例：先探测是否已有实例；有则唤醒其窗口并退出，无则清理残留后监听
+  const QString runtime = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+  if (runtime.isEmpty()) { qWarning() << "无法确定单实例运行目录"; return 1; }
+  QLockFile instanceLock(runtime + "/sidera-cpp.lock");
+  const bool ownsInstance = instanceLock.tryLock(0);
+  // Serialize stale-socket cleanup before probing/binding.
   {
     const QString name = "sidera-single";
     QLocalSocket probe;
@@ -100,14 +107,16 @@ int main(int argc, char* argv[]) {
       qWarning() << "[WARN] Sidera已在运行，退出新实例";
       return 0;
     }
+    if (!ownsInstance) { qWarning() << "Sidera 正在启动，或单实例锁不可用"; return 1; }
     QLocalServer::removeServer(name);           // 仅清理上次崩溃的残留，不会误删运行中的实例
     QLocalServer* single = new QLocalServer(&app);
+    single->setSocketOptions(QLocalServer::UserAccessOption);
     if (!single->listen(name)) {               // 极端竞态：探测后又有人抢先
       QLocalSocket ping;
       ping.connectToServer(name);
       if (ping.waitForConnected(300)) { ping.write("show"); ping.flush(); }
-      qWarning() << "[WARN] Sidera已在运行，退出新实例";
-      return 0;
+      qWarning() << "无法创建单实例通信文件：" << single->errorString();
+      return 1;
     }
     QObject::connect(single, &QLocalServer::newConnection, [single]() {
       QLocalSocket* c = single->nextPendingConnection();

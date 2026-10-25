@@ -2,13 +2,45 @@ name: Build & Verify
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, custom ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, custom ]
 
 jobs:
+  wps-addin:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install WPS installer test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 bubblewrap apparmor
+
+      - name: Prepare isolated test environment
+        run: bash .github/scripts/prepare-isolation.sh
+
+      - name: Test WPS add-in registration
+        run: python3 wps-addin/tests/test_install.py
+
+      - name: Check Markdown links and anchors
+        run: python3 tools/check_markdown.py
+
+      - name: Verify WPS add-in startup and state sync
+        run: |
+          node --check wps-addin/main.js
+          node --check wps-addin/js/bridge.js
+          node --test wps-addin/tests/bridge.test.cjs wps-addin/tests/state-sync.test.cjs
+          node --test compat/gnome-extension/tests/chrome.test.mjs
+
   build-amd64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,18 +51,29 @@ jobs:
           sudo apt-get install -y \
             build-essential \
             pkg-config \
+            python3 bubblewrap apparmor \
             qtbase5-dev \
-            libqt5widgets5 \
-            libqt5network5 \
+            libwayland-dev libxkbcommon-dev sway dbus-x11 fonts-noto-cjk \
             libx11-dev \
             libxcb1-dev \
             libxext-dev \
             libxtst-dev
 
+      - name: Prepare isolated test environment
+        run: bash .github/scripts/prepare-isolation.sh
+
+      - name: Test shared C++ bridge in isolation
+        working-directory: cpp
+        run: make test
+
       - name: Compile Sidera
         working-directory: cpp
         run: |
-          make -j$(nproc)
+          make -j$(nproc) WITH_WAYLAND=0
+          make -j$(nproc) WITH_WAYLAND=1
+
+      - name: Test C++ cache and Wayland buffer lifecycle
+        run: python3 cpp/tests/test_core_state.py
 
       - name: Verify build artifact
         working-directory: cpp
@@ -39,13 +82,25 @@ jobs:
           echo "annotate_amd64 built successfully."
 
   rust:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install startup test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 bubblewrap apparmor xvfb dpkg-dev gcc fonts-noto-cjk sway dbus-x11
+
+      - name: Prepare isolated test environment
+        run: bash .github/scripts/prepare-isolation.sh
+
+      - name: Test DEB packaging architecture checks
+        run: python3 rust/tests/test_build_deb.py
+
       - name: Ensure clippy
-        run: rustup component add clippy
+        working-directory: rust
+        run: rustup show active-toolchain
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -63,8 +118,16 @@ jobs:
         run: cargo build --release --locked
 
       - name: Test
-        working-directory: rust
-        run: cargo test --locked
+        run: python3 tools/test_rust.py
+
+      - name: Test startup diagnostics and backend selection
+        run: python3 tools/run_isolated.py --timeout 180 -- python3 rust/tests/test_startup.py rust/target/release/sidera
+
+      - name: Test X11 touch and input regions
+        run: python3 tools/test_rust.py --x11
+
+      - name: Test Wayland buffer lifecycle
+        run: python3 tools/test_rust.py --wayland
 
       - name: Clippy
         working-directory: rust

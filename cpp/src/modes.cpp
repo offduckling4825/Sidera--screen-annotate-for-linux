@@ -76,9 +76,13 @@ void switchToDrawMode(int mode) {
 void initCanvas() {
   QSize sz = QGuiApplication::primaryScreen()->size();
   if (g.canvas && g.canvas->size() == sz) return;  // 尺寸没变，复用
+  QPixmap resized;
+  if (g.canvas && !g.canvas->isNull())
+    resized = g.canvas->scaled(sz, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
   if (g.canvas) delete g.canvas;
-  g.canvas = new QPixmap(sz);
-  g.canvas->fill(Qt::transparent);
+  g.canvas = new QPixmap(resized.isNull() ? QPixmap(sz) : resized);
+  if (resized.isNull()) g.canvas->fill(Qt::transparent);
+  clearUndo(); // Previous pixel rectangles belong to the old dimensions.
 }
 
 void clearCanvas() {

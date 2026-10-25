@@ -129,8 +129,7 @@ static void doScreenshot() {
 
 // 清除当前页笔迹（清画布 + 丢弃当前页缓存）
 void clearCurrentStrokes() {
-  QMap<int, QPixmap*>& c = activeCache();
-  if (c.contains(g.currentSlide)) { delete c.take(g.currentSlide); }
+  activeCache().remove(g.currentSlide);
   if (g.canvas) g.canvas->fill(Qt::transparent);
   g.pageHasInk = false;
   clearUndo();
