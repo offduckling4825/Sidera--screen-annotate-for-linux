@@ -106,7 +106,7 @@
 
 两种包均需要 Python 3，动态库依赖从实际 ELF 生成；不能沿用旧 `.29` amd64 包的 libc6 ≥ 2.43 结论。详见[更新记录](CHANGELOG.md)、[custom.35 发布记录](docs/releases/2026-10-25-custom35.md)和 Release 内的构建记录。旧版本仍保留在历史 Release 中。
 
-custom.35 针对小屏幕设置增加自适应分页，完成按钮固定可见；两种架构各通过 136 项隔离检查，附件校验记录见 Release 的 BUILDINFO。真实桌面和 WPS 操作验收仍由用户进行，**不标记为完整实机验收通过或稳定版**。参见[测试环境与验证边界](docs/TEST_ENVIRONMENT.md)。
+custom.35 针对小屏幕设置增加自适应分页，完成按钮固定可见；两种架构各通过 136 项隔离检查，附件校验记录见 Release 的 BUILDINFO。2026-10-25，用户确认当前 VMware 环境中的绘图与穿透、WPS 放映控制、白板与设置等三组功能没有问题；详细范围见[测试环境与验证边界](docs/TEST_ENVIRONMENT.md)。学校实机、安装恢复和长时间稳定性仍待验收，当前保留预发布标记。
 
 ## 安装与开始使用
 
@@ -184,6 +184,7 @@ custom.35 包含此前复查与主题修改，旧 custom.29 保留独立历史�
 | [作者与致谢](NOTICE.md) | 原作者与本分支贡献归属 |
 | [项目分析](docs/PROJECT_ANALYSIS.md) · [问题清单](docs/ISSUES.md) | 架构评审与尚待解决的问题 |
 | [重构计划](docs/REFACTOR_PLAN.md) · [测试环境](docs/TEST_ENVIRONMENT.md) | 后续改进顺序与验证记录 |
+| [功能待办](TODO.md) | 留待后续实现的应用避让、常驻音频按钮与播放/静音提示 |
 
 `rust/` 是当前定制实现，`wps-addin/` 是 WPS 加载项，`compat/` 存放 GNOME 扩展、独立测试桌面及特定环境的修补材料。修补材料有各自适用范围，不是通用系统更新。
 
