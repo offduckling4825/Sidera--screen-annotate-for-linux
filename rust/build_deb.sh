@@ -67,10 +67,12 @@ if ! LC_ALL=C awk -v expected="$ELF_MACHINE" '
   exit 1
 fi
 
-if ! DEPENDS="$(python3 "$REPO/tools/deb_dependencies.py" "$BIN" "$DEB_ARCH" 2>/dev/null)"; then
-  # 主机上没有目标架构的 dpkg 库信息时（例如容器编译 + 主机打包），回退为固定依赖
-  DEPENDS="libc6 (>= 2.30), libgcc-s1"
-  echo "警告: 无法自动计算 DEB 依赖，回退为: $DEPENDS" >&2
+if [ -n "${SIDERA_DEB_DEPENDS:-}" ]; then
+  # 显式指定依赖（用于非 Debian/Ubuntu 主机做“容器编译 + 主机打包”）
+  DEPENDS="$SIDERA_DEB_DEPENDS"
+else
+  # 严格模式：ELF 不合法 / 依赖无法确定时直接失败（不静默回退）
+  DEPENDS="$(python3 "$REPO/tools/deb_dependencies.py" "$BIN" "$DEB_ARCH")"
 fi
 OUTPUT="$REPO/${PKG_NAME}_${VERSION}_${DEB_ARCH}.deb"
 PKG_DIR="$(mktemp -d "$REPO/.sidera-package.XXXXXXXX")"

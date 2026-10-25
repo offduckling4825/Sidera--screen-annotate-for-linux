@@ -54,7 +54,10 @@ echo "==> 编译 aarch64（容器方式）..."
 # ---------- 打包（从容器编译好的二进制，主机打包）----------
 if [ "$NO_PKG" -eq 0 ]; then
   echo "==> 打包 arm64：DEB..."
-  ./build_deb.sh aarch64
+  if ! ./build_deb.sh aarch64; then
+    echo "==> 自动依赖计算失败（可能不是 Debian/Ubuntu 主机），改用固定依赖重试 DEB..."
+    SIDERA_DEB_DEPENDS="libc6 (>= 2.30), libgcc-s1, python3" ./build_deb.sh aarch64
+  fi
   echo "==> 打包 arm64：RPM..."
   ./build_rpm.sh aarch64
   echo "==> 打包 arm64：Arch..."
