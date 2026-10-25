@@ -116,8 +116,8 @@ make -C cpp -j4 WITH_WAYLAND=1
 
 ```sh
 cd rust
-SIDERA_VERSION=3.0-Electro-testing+local1 bash build_deb.sh amd64
-dpkg-deb -f ../sidera_3.0-Electro-testing+local1_amd64.deb Architecture Depends
+SIDERA_VERSION=3.0-Electro-stable+local1 bash build_deb.sh amd64
+dpkg-deb -f ../sidera_3.0-Electro-stable+local1_amd64.deb Architecture Depends
 ```
 
 外部 `amd64-sysroot/`、`aarch64-sysroot/` 不在仓库。现有容器脚本不负责创建它们；缺少来源、版本和校验和时不能声称可复现。ARM64 另需匹配工具链与 QEMU/binfmt 或原生构建机；低 ABI 必须在相应库环境构建，再到目标机验收，不能仅降低 control 中的 libc 要求。

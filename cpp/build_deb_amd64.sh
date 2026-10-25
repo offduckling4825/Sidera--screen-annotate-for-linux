@@ -1,14 +1,14 @@
 #!/bin/bash
 # amd64 deb 打包脚本
 # 用法: ./build_deb_amd64.sh
-# 产物: sidera_2.6-Geo-stable_amd64.deb
+# 产物: sidera_3.0-Electro-stable_amd64.deb
 
 set -e
 cd "$(dirname "$0")"
 
 BINARY="annotate_amd64"
 PKG_NAME="sidera"
-VERSION="${SIDERA_VERSION:-2.6-Geo-stable}"
+VERSION="${SIDERA_VERSION:-3.0-Electro-stable}"
 dpkg --validate-version "$VERSION" || exit 1
 [[ "$VERSION" != */* && "$VERSION" != *[[:space:]]* ]] || exit 1
 ARCH="amd64"

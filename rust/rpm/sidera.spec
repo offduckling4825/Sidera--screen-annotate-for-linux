@@ -1,6 +1,6 @@
 Name:           sidera
 Version:        3.0
-Release:        1
+Release:        Electro_stable
 Summary:        Linux 屏幕批注与教学演示工具（Rust，X11/Wayland，WPS 联动）
 
 License:        GPL-3.0-only
