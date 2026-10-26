@@ -33,9 +33,12 @@ tar xf %{SOURCE0} -C %{buildroot}
 /usr/bin/sidera-gnome-install
 /usr/share/sidera
 /usr/share/applications/sidera.desktop
+/usr/share/applications/sidera-compat.desktop
+/usr/share/applications/sidera-gnome.desktop
 /usr/share/icons/hicolor/scalable/apps/sidera.svg
 /usr/share/icons/hicolor/256x256/apps/sidera.png
 /usr/share/pixmaps/sidera.svg
+/usr/share/pixmaps/sidera-*.svg
 /usr/lib/udev/rules.d/70-sidera-uinput.rules
 /usr/lib/udev/rules.d/70-sidera-input.rules
 /etc/modules-load.d/sidera-uinput.conf
