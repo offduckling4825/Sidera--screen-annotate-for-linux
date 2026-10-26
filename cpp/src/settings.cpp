@@ -21,6 +21,7 @@ static void setAutoStart(bool on) {
          << "Name=Sidera\n"
          << "Comment=Sidera软件\n"
          << "Exec=sidera\n"
+         << "Icon=sidera\n"
          << "Terminal=false\n";
       f.close();
     }

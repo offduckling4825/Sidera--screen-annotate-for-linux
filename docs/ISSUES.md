@@ -157,4 +157,4 @@ CI 配置已覆盖 custom/main、隔离 Rust/JS/C++ 与协议检查；已修复 
 
 ### S28 — 编译打包安装后应用图标不显示
 
-Rust 已在 custom.13 使用随内容变化的图标路径，统一三个入口并保留 desktop ID；文件、入口与用户有效引用曾完成核对。原标志只调整配色。Ubuntu 应用菜单的最终显示、收藏刷新，以及 C++/ARM64 各目标桌面仍按 [G22](TEST_ENVIRONMENT.md#g22-安装后图标专项) 人工验收，不再把根因写为完全未知。
+Rust DEB、RPM、Arch 包现统一使用随内容变化的图标路径，并包含默认、GNOME 原生、X11/XWayland 三个 desktop 入口；开机自启动文件优先写入绝对图标路径。原标志只调整配色。Ubuntu 应用菜单的最终显示、收藏刷新，以及 C++/ARM64 各目标桌面仍按 [G22](TEST_ENVIRONMENT.md#g22-安装后图标专项) 人工验收。

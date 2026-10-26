@@ -48,23 +48,36 @@ package() {
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/sidera/LICENSE"
   install -Dm644 README.classroom.md "${pkgdir}/usr/share/doc/sidera/README.classroom.md"
 
-  # 图标
+  # 图标：内容寻址路径用于刷新桌面图标缓存
+  icon_sha="$(sha256sum sidera.svg | cut -c1-12)"
+  icon_path="/usr/share/pixmaps/sidera-${icon_sha}.svg"
   install -Dm644 sidera.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/sidera.svg"
   install -Dm644 sidera.svg "${pkgdir}/usr/share/pixmaps/sidera.svg"
+  install -Dm644 sidera.svg "${pkgdir}${icon_path}"
   install -Dm644 sidera.png "${pkgdir}/usr/share/icons/hicolor/256x256/apps/sidera.png"
 
-  # desktop 入口
+  # desktop 入口（默认、GNOME 原生、X11/XWayland 兼容）
   install -d "${pkgdir}/usr/share/applications"
-  cat > "${pkgdir}/usr/share/applications/sidera.desktop" << 'EOF'
+  cat > "${pkgdir}/usr/share/applications/sidera.desktop" << EOF
 [Desktop Entry]
 Type=Application
 Name=Sidera
 Comment=Sidera 屏幕批注
 Exec=sidera
-Icon=/usr/share/pixmaps/sidera.svg
+Icon=${icon_path}
 Categories=Graphics;Utility;
 Terminal=false
 EOF
+  install -m 644 compat/gnome-extension/sidera-gnome.desktop "${pkgdir}/usr/share/applications/"
+  install -m 644 compat/gnome-extension/sidera-compat.desktop "${pkgdir}/usr/share/applications/"
+  sed -i "s|^Icon=.*|Icon=${icon_path}|" \
+    "${pkgdir}/usr/share/applications/sidera-gnome.desktop" \
+    "${pkgdir}/usr/share/applications/sidera-compat.desktop"
+
+  # GNOME 原生扩展与安装器
+  install -d "${pkgdir}/usr/share/sidera/gnome-extension"
+  cp -a compat/gnome-extension/. "${pkgdir}/usr/share/sidera/gnome-extension/"
+  install -Dm755 compat/gnome-extension/install.py "${pkgdir}/usr/bin/sidera-gnome-install"
 
   # udev 规则：uinput（按键注入）+ input（触屏读取）
   install -Dm644 "${srcdir}/70-sidera-uinput.rules" \

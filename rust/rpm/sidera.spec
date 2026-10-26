@@ -28,6 +28,7 @@ tar xf %{SOURCE0} -C %{buildroot}
 /usr/bin/sidera
 /usr/bin/sidera-wps-addin-install
 /usr/bin/sidera-wps-addin-cleanup
+/usr/bin/sidera-gnome-install
 /usr/share/sidera
 /usr/share/applications/sidera.desktop
 /usr/share/icons/hicolor/scalable/apps/sidera.svg

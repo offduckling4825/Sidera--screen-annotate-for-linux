@@ -1065,16 +1065,26 @@ pub fn is_autostart() -> bool {
     autostart_path().exists()
 }
 
+fn autostart_icon() -> String {
+    for path in ["/usr/share/pixmaps/sidera.svg",
+                 "/usr/share/icons/hicolor/256x256/apps/sidera.png"] {
+        if std::path::Path::new(path).is_file() {
+            return path.to_string();
+        }
+    }
+    "sidera".to_string()
+}
+
 pub fn set_autostart(on: bool) {
     let p = autostart_path();
     if on {
         if let Some(parent) = p.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let _ = std::fs::write(
-            p,
-            "[Desktop Entry]\nType=Application\nName=Sidera\nComment=Sidera软件\nExec=sidera\nIcon=sidera\nTerminal=false\n",
-        );
+        let entry = format!(
+            "[Desktop Entry]\nType=Application\nName=Sidera\nComment=Sidera软件\nExec=sidera\nIcon={}\nTerminal=false\n",
+            autostart_icon());
+        let _ = std::fs::write(p, entry);
     } else {
         let _ = std::fs::remove_file(p);
     }

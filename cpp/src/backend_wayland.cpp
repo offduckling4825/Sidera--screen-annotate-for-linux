@@ -1194,7 +1194,7 @@ void WlBackend::setAutoStart(bool on) {
     QFile f(path);
     if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
       QTextStream ts(&f);
-      ts << "[Desktop Entry]\nType=Application\nName=Sidera\nComment=Sidera\nExec=sidera\nTerminal=false\n";
+      ts << "[Desktop Entry]\nType=Application\nName=Sidera\nComment=Sidera\nExec=sidera\nIcon=sidera\nTerminal=false\n";
     }
   } else {
     QFile::remove(path);

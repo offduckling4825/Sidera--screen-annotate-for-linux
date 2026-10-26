@@ -20,9 +20,14 @@ stage_files() {
   install -Dm644 "$REPO/LICENSE" "$root/usr/share/licenses/sidera/LICENSE"
   install -Dm644 "$REPO/README.classroom.md" "$root/usr/share/doc/sidera/README.classroom.md"
 
+  local icon_sha icon_path
+  icon_sha="$(sha256sum "$REPO/sidera.svg" | cut -c1-12)"
+  icon_path="/usr/share/pixmaps/sidera-$icon_sha.svg"
   install -Dm644 "$REPO/sidera.svg" "$root/usr/share/icons/hicolor/scalable/apps/sidera.svg"
   install -Dm644 "$REPO/sidera.png" "$root/usr/share/icons/hicolor/256x256/apps/sidera.png"
   install -Dm644 "$REPO/sidera.svg" "$root/usr/share/pixmaps/sidera.svg"
+  # Content-addressed path invalidates stale desktop icon caches after upgrades.
+  install -Dm644 "$REPO/sidera.svg" "$root$icon_path"
 
   install -Dm644 "$REPO/rust/arch/70-sidera-uinput.rules" "$root/usr/lib/udev/rules.d/70-sidera-uinput.rules"
   install -Dm644 "$REPO/rust/arch/70-sidera-input.rules" "$root/usr/lib/udev/rules.d/70-sidera-input.rules"
@@ -30,16 +35,26 @@ stage_files() {
   echo uinput > "$root/etc/modules-load.d/sidera-uinput.conf"
 
   install -d "$root/usr/share/applications"
-  cat > "$root/usr/share/applications/sidera.desktop" <<'EOF'
+  cat > "$root/usr/share/applications/sidera.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Sidera
 Comment=Sidera 屏幕批注
 Exec=sidera
-Icon=/usr/share/pixmaps/sidera.svg
+Icon=$icon_path
 Categories=Graphics;Utility;
 Terminal=false
 EOF
+
+  # Native GNOME and X11/XWayland compatibility entries, matching the DEB.
+  install -m 644 "$REPO/compat/gnome-extension/sidera-gnome.desktop" "$root/usr/share/applications/"
+  install -m 644 "$REPO/compat/gnome-extension/sidera-compat.desktop" "$root/usr/share/applications/"
+  sed -i "s|^Icon=.*|Icon=$icon_path|" \
+    "$root/usr/share/applications/sidera-gnome.desktop" \
+    "$root/usr/share/applications/sidera-compat.desktop"
+  install -d "$root/usr/share/sidera/gnome-extension"
+  cp -a "$REPO/compat/gnome-extension/." "$root/usr/share/sidera/gnome-extension/"
+  install -Dm755 "$REPO/compat/gnome-extension/install.py" "$root/usr/bin/sidera-gnome-install"
 }
 
 # 解析架构参数 -> 容器产物架构 / 包架构
