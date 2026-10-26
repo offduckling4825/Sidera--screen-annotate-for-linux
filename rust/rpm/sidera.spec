@@ -12,6 +12,8 @@ Source0:        sidera-files.tar.gz
 %global __os_install_post %{nil}
 
 Requires:       glibc >= 2.30
+Requires:       libgcc
+Requires:       python3
 
 %description
 Sidera 星罗 —— 面向 Linux 教室与演示的屏幕批注工具，纯 Rust 实现，

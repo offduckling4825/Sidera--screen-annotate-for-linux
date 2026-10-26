@@ -46,6 +46,8 @@ size = ${SIZE}
 arch = ${PKG_ARCH}
 license = GPL-3.0-only
 depend = glibc
+depend = gcc-libs
+depend = python
 EOF
 
 # .INSTALL
