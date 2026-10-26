@@ -79,7 +79,8 @@ pub fn touch_event(
 
     let n = now.len().max(app.touch_frame_contacts);
     let any_large = diameter >= app.large_touch_threshold;
-    let large_trigger = (!app.erase_by_finger) && (any_large || n >= 2);
+    // 手背模式只认接触面积；多指只在“多指橡皮”模式下生效。
+    let large_trigger = (!app.erase_by_finger) && any_large;
     let multi_trigger = app.erase_by_finger && n >= 2;
     if large_trigger || multi_trigger {
         app.t_palm_latched = true;
@@ -201,4 +202,41 @@ pub fn touch_event(
     }
 
     dirty
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tiny_skia::Pixmap;
+
+    fn app(erase_by_finger: bool) -> App {
+        let mut app = App::new(Pixmap::new(200, 200).unwrap(), 200, 200);
+        app.mode = 1;
+        app.large_touch_threshold = 64.0;
+        app.erase_by_finger = erase_by_finger;
+        app
+    }
+
+    #[test]
+    fn palm_mode_ignores_two_small_contacts_but_finger_mode_erases() {
+        let mut palm = app(false);
+        touch_event(&mut palm, 1, 50, 50, TouchKind::Begin, 10.0);
+        touch_event(&mut palm, 2, 100, 100, TouchKind::Begin, 10.0);
+        assert!(!palm.t_palm_latched, "small multi-touch must not latch palm erase");
+        assert!(palm.palm_erase_preview.is_empty());
+
+        let mut fingers = app(true);
+        touch_event(&mut fingers, 1, 50, 50, TouchKind::Begin, 10.0);
+        touch_event(&mut fingers, 2, 100, 100, TouchKind::Begin, 10.0);
+        assert!(fingers.t_palm_latched, "multi-finger mode still erases with two contacts");
+        assert_eq!(fingers.palm_erase_preview.len(), 2);
+    }
+
+    #[test]
+    fn palm_mode_still_erases_a_large_contact() {
+        let mut palm = app(false);
+        touch_event(&mut palm, 1, 50, 50, TouchKind::Begin, 80.0);
+        assert!(palm.t_palm_latched);
+        assert_eq!(palm.palm_erase_preview, vec![(50, 50)]);
+    }
 }

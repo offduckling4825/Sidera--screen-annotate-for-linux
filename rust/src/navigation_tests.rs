@@ -2,7 +2,7 @@ use super::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-struct TestBackend { keys: Rc<Cell<usize>>, direct_keys: bool, input: RefCell<Vec<IRect>> }
+struct TestBackend { keys: Rc<Cell<usize>>, direct_keys: bool, foreground: Option<bool>, input: RefCell<Vec<IRect>> }
 impl Backend for TestBackend {
     fn as_any(&self) -> &dyn std::any::Any { self }
     fn screen_size(&self) -> (i32, i32) { (100, 100) }
@@ -13,13 +13,18 @@ impl Backend for TestBackend {
     fn virtual_right_click(&self, _: i32, _: i32) {}
     fn screenshot(&self) -> Option<(Vec<u8>, u32, u32)> { None }
     fn is_presentation_fullscreen(&self) -> bool { false }
+    fn presentation_foreground(&self) -> Option<bool> { self.foreground }
     fn has_compositor(&self) -> bool { true }
 }
 
 pub(crate) fn fixture(direct_keys: bool) -> (Rt, App, Rc<Cell<usize>>) {
+    fixture_with_foreground(direct_keys, None)
+}
+
+fn fixture_with_foreground(direct_keys: bool, foreground: Option<bool>) -> (Rt, App, Rc<Cell<usize>>) {
     let keys = Rc::new(Cell::new(0));
     let rt = Rt {
-        backend: Box::new(TestBackend { keys: keys.clone(), direct_keys, input: RefCell::new(Vec::new()) }),
+        backend: Box::new(TestBackend { keys: keys.clone(), direct_keys, foreground, input: RefCell::new(Vec::new()) }),
         fonts: Fonts::load(), icon: None, icon_big: None,
         batching: Cell::new(true), dirty: RefCell::new(Vec::new()),
     };
@@ -86,6 +91,23 @@ fn disabling_link_does_not_enable_xwayland_portal_input() {
 }
 
 #[test]
+fn background_wps_does_not_enter_presentation_or_switch_pages() {
+    let (rt, mut app, _) = fixture_with_foreground(false, Some(false));
+    let bridge = WpsBridge::from_listener(std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap());
+    {
+        let mut s = bridge.shared.lock().unwrap();
+        s.connected = true; s.last_seen = now_ms(); s.real_pos = 3;
+        s.page_index = 3; s.page_total = 10; s.can_jump = true; s.deck_epoch = 7;
+    }
+    let update = WpsUpdate { connected: true, events: vec![WpsEvent::RealPos(3)] };
+    tick_shared(&rt, &mut app, &mut Ip::default(), Some(&bridge), &update, &mut Timers::new());
+    assert_eq!(app.current_slide, 1, "background page changes must not replace the canvas");
+    assert!(!app.wps_can_jump);
+    assert!(!app.sidebar_page_visible());
+    assert_eq!(app.presentation_action, ui::PresentationAction::Escape);
+}
+
+#[test]
 fn linked_navigation_queues_wps_commands_and_waits_for_real_page_state() {
     let (rt, mut app, keys) = fixture(false);
     let bridge = WpsBridge::from_listener(std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap());
@@ -120,43 +142,37 @@ fn whiteboard_pages_remain_local() {
 }
 
 #[test]
-fn presentation_lifecycle_does_not_erase_visible_or_hidden_whiteboard() {
-    for visible in [true, false] {
-        for (event, overlay_page) in [(WpsEvent::SlideshowBegin(4), 4), (WpsEvent::SlideshowEnd, 1)] {
-            let (rt, mut app, keys) = fixture(false);
-            app.current_slide = 7;
-            paint::stroke_tapered(&mut app, (20, 20), (80, 20), 6, 6);
-            app.toggle_whiteboard();
-            paint::stroke_tapered(&mut app, (20, 40), (80, 40), 6, 6);
-            let first = app.canvas.data().to_vec();
-            go_next(&rt, &mut app, None);
-            paint::stroke_tapered(&mut app, (20, 60), (80, 60), 6, 6);
-            let second = app.canvas.data().to_vec();
-            if !visible { app.toggle_whiteboard(); }
-            let mut ip = Ip::default();
-            let mut timers = Timers::new();
-            let update = WpsUpdate { connected: false, events: vec![event] };
-            tick_shared(&rt, &mut app, &mut ip, None, &update, &mut timers);
-            assert_eq!(app.whiteboard, visible);
-            if visible {
-                assert_eq!(app.current_slide, 2);
-                assert_eq!(app.canvas.data(), second.as_slice());
-                app.toggle_whiteboard();
-            }
-            assert_eq!(app.current_slide, overlay_page);
-            assert!(!app.page_has_ink);
-            app.toggle_whiteboard();
-            assert_eq!(app.current_slide, 2);
-            assert_eq!(app.canvas.data(), second.as_slice());
-            go_prev(&rt, &mut app, None);
-            assert_eq!(app.canvas.data(), first.as_slice());
-            assert_eq!(keys.get(), 0);
-        }
+fn presentation_lifecycle_does_not_erase_visible_whiteboard() {
+    for (event, overlay_page) in [(WpsEvent::SlideshowBegin(4), 4), (WpsEvent::SlideshowEnd, 1)] {
+        let (rt, mut app, keys) = fixture(false);
+        app.current_slide = 7;
+        paint::stroke_tapered(&mut app, (20, 20), (80, 20), 6, 6);
+        app.toggle_whiteboard();
+        paint::stroke_tapered(&mut app, (20, 40), (80, 40), 6, 6);
+        go_next(&rt, &mut app, None);
+        paint::stroke_tapered(&mut app, (20, 60), (80, 60), 6, 6);
+        let second = app.canvas.data().to_vec();
+        let mut ip = Ip::default();
+        let mut timers = Timers::new();
+        let update = WpsUpdate { connected: false, events: vec![event] };
+        tick_shared(&rt, &mut app, &mut ip, None, &update, &mut timers);
+        assert!(app.whiteboard);
+        assert_eq!(app.current_slide, 2);
+        assert_eq!(app.canvas.data(), second.as_slice());
+        // A manual mode switch now clears the whiteboard but keeps the overlay.
+        app.toggle_whiteboard();
+        assert_eq!(app.current_slide, overlay_page);
+        assert!(!app.page_has_ink);
+        app.toggle_whiteboard();
+        assert!(app.whiteboard);
+        assert_eq!(app.current_slide, 1);
+        assert!(app.canvas.data().iter().all(|&b| b == 0));
+        assert_eq!(keys.get(), 0);
     }
 }
 
 #[test]
-fn presentation_page_changes_behind_whiteboard_restore_the_current_page() {
+fn presentation_page_changes_behind_whiteboard_update_the_overlay_on_mode_switch() {
     let (rt, mut app, keys) = fixture(false);
     app.current_slide = 2;
     app.wps_real_pos = 2;
@@ -169,8 +185,10 @@ fn presentation_page_changes_behind_whiteboard_restore_the_current_page() {
     assert_eq!(app.current_slide, 1);
     app.toggle_whiteboard();
     assert_eq!(app.current_slide, 7);
+    assert!(!app.whiteboard);
     app.toggle_whiteboard();
-    assert_eq!(app.canvas.data(), whiteboard.as_slice());
+    assert_eq!(app.current_slide, 1);
+    assert!(app.canvas.data().iter().all(|&b| b == 0));
     assert_eq!(keys.get(), 0);
 }
 
@@ -316,7 +334,7 @@ fn button_center(app: &App, btn: Btn) -> (i32, i32) {
 }
 
 #[test]
-fn both_clear_controls_fold_desktop_tools_but_keep_whiteboard_ready() {
+fn both_clear_controls_keep_restore_reachable_and_whiteboard_ready() {
     for whiteboard in [false, true] {
         for popup_clear in [false, true] {
             let (rt, mut app, mut ip) = ui_fixture();
@@ -339,13 +357,15 @@ fn both_clear_controls_fold_desktop_tools_but_keep_whiteboard_ready() {
                 on_release(&rt, &mut app, &mut ip, None, r.x + r.w / 2, r.y + r.h / 2, 1);
             } else { handle_btn(&rt, &mut app, None, Btn::Clear, false); }
             assert!(!app.page_has_ink && !app.is_drawing);
+            assert!(app.can_restore_cleared(), "clearing must leave one restore snapshot");
             resolve_drawing_tools_auto_update(&rt, &mut app);
-            assert_eq!(app.drawing_tools.expanded(), whiteboard);
+            assert!(app.drawing_tools.expanded(), "restore must stay reachable after clearing");
             assert!(!app.pen_popup_visible && !app.eraser_popup_visible);
             assert_eq!(app.whiteboard, whiteboard);
             assert_eq!(app.mode, if whiteboard { 1 } else { 0 });
             app.drawing_tools.settle();
-            assert_eq!(ui::sidebar_buttons(&app, false).iter().any(|(b, _)| *b == Btn::Eraser), whiteboard);
+            assert!(ui::sidebar_buttons(&app, false).iter().any(|(b, _)| *b == Btn::Eraser),
+                "the clear restore action lives beside eraser/undo");
             assert!(ui::sidebar_buttons(&app, false).iter().any(|(b, _)| *b == Btn::Next));
             app.load_page(app.current_slide);
             assert!(!app.page_has_ink, "cleared content must not return from its cache");

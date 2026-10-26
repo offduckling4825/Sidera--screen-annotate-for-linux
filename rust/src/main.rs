@@ -5,6 +5,7 @@
 mod app;
 mod backend;
 mod bridge_http;
+mod clear_history;
 mod desktop;
 mod clipboard;
 mod gnome;
@@ -243,6 +244,9 @@ impl Rt {
     }
     pub(crate) fn is_fullscreen(&self) -> bool {
         self.backend.is_presentation_fullscreen()
+    }
+    pub(crate) fn wps_foreground(&self) -> Option<bool> {
+        self.backend.presentation_foreground()
     }
     pub(crate) fn set_input_region(&self, rects: &[IRect], full: bool) {
         self.backend.set_input_region(rects, full);
@@ -1025,11 +1029,13 @@ fn activate_press(
 pub(crate) fn clear_drawing(rt: &Rt, app: &mut App) {
     close_all_popups(rt, app);
     // Clearing desktop annotations ends drawing; a whiteboard remains ready to write.
+    app.remember_before_clear();
     app.is_drawing = false;
     app.reset_palm_gesture();
     app.clear_current_strokes();
     app.mode = if app.whiteboard { 1 } else { 0 };
-    app.drawing_tools.set_expanded(app.whiteboard);
+    // Keep the tool group visible so the new restore action is reachable.
+    app.drawing_tools.set_expanded(app.whiteboard || app.can_restore_cleared());
     apply_input_shape(rt, app);
     rt.redraw_full(app);
 }
@@ -1068,6 +1074,12 @@ pub(crate) fn handle_btn(rt: &Rt, app: &mut App, wps: Option<&WpsBridge>, k: Btn
             rt.redraw_full(app);
         }
         Btn::Clear => clear_drawing(rt, app),
+        Btn::Restore => {
+            if app.restore_cleared() {
+                rt.redraw_full(app);
+                apply_input_shape(rt, app);
+            }
+        }
         Btn::Undo => {
             app.undo_last();
             rt.redraw_full(app);
@@ -1707,11 +1719,16 @@ pub(crate) fn tick_shared(rt: &Rt, app: &mut App, _ip: &mut Ip,
     wps_bridge: Option<&WpsBridge>, update: &WpsUpdate, t: &mut Timers) {
     if app.update_system_theme(system_theme::dark()) { rt.redraw_full(app); }
     tick_launch(rt, app, wps_bridge, update.connected);
-    let jump_epoch = if app.wps_debug { wps_bridge.and_then(WpsBridge::jump_epoch) } else { None };
+    if app.sidebar_expand_due() { expand_sidebars(rt, app); }
+    // X11 can tell whether WPS/our overlay is focused. When another app is in
+    // front, keep the background slideshow from driving presentation UI/pages.
+    let wps_foreground = rt.wps_foreground();
+    let wps_visible = wps_foreground != Some(false);
+    let jump_epoch = if app.wps_debug && wps_visible { wps_bridge.and_then(WpsBridge::jump_epoch) } else { None };
     let jump_changed = app.wps_can_jump != jump_epoch.is_some() || app.wps_deck_epoch != jump_epoch.unwrap_or(-1);
     app.wps_can_jump = jump_epoch.is_some();
     app.wps_deck_epoch = jump_epoch.unwrap_or(-1);
-    let pages = if app.wps_debug {
+    let pages = if app.wps_debug && wps_visible {
         wps_bridge.map(WpsBridge::page_progress).unwrap_or((-1, -1))
     } else { (-1, -1) };
     let show_pages = app.whiteboard || (app.wps_debug && update.connected && (pages.0 > 0 || pages.1 > 0));
@@ -1749,8 +1766,12 @@ pub(crate) fn tick_shared(rt: &Rt, app: &mut App, _ip: &mut Ip,
     }
 
     // WPS 事件（真实页号 / 放映开始）
+    // 后台放映的开始/翻页事件不切换当前画布；结束事件仍处理，避免残留放映状态。
     {
         for ev in update.events.iter().cloned() {
+            if !wps_visible && !matches!(ev, WpsEvent::SlideshowEnd) {
+                continue;
+            }
             match ev {
                 WpsEvent::SlideshowBegin(pos) => {
                     app.clear_slide_pages();
@@ -1804,10 +1825,10 @@ pub(crate) fn tick_shared(rt: &Rt, app: &mut App, _ip: &mut Ip,
         }
     }
 
-    let linked_show = app.wps_debug && wps_bridge.is_some_and(|w| w.showing());
+    let linked_show = app.wps_debug && wps_visible && wps_bridge.is_some_and(|w| w.showing());
     // Reconnecting to the same reported slide need not emit a new WPS event.
     // Reconcile the locally estimated page without filing its ink under an old page.
-    if app.wps_debug && !app.whiteboard {
+    if app.wps_debug && wps_visible && !app.whiteboard {
         if let Some(pos) = wps_bridge.and_then(|w| w.position()) {
             if app.current_slide != pos {
                 app.save_current_page();
@@ -1820,7 +1841,7 @@ pub(crate) fn tick_shared(rt: &Rt, app: &mut App, _ip: &mut Ip,
     }
     let navigation_ready = navigation_route(linked_show, wps_bridge.is_some_and(|w| w.ready()),
         rt.backend.can_inject_keys_without_prompt()) != NavigationRoute::Unavailable;
-    let action = if app.wps_debug && wps_bridge.is_some_and(|w| w.start_available()) {
+    let action = if app.wps_debug && wps_visible && wps_bridge.is_some_and(|w| w.start_available()) {
         ui::PresentationAction::Start
     } else if linked_show {
         ui::PresentationAction::End

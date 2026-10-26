@@ -107,6 +107,7 @@ pub struct App {
     pub sb_y: i32,
     pub sidebar_anim_start: Option<std::time::Instant>,
     pub sidebar_anim_from: f32,
+    pub sidebar_collapsed_since: Option<std::time::Instant>,
 
     // 颜色/粗细
     pub cur_color: usize,
@@ -173,6 +174,8 @@ pub struct App {
 
     // 撤回栈：每个条目只保存本次操作覆盖到的瓦片“原始像素”
     pub undo: VecDeque<UndoEntry>,
+    // 手动清空前的整页快照（容量 1，压缩存储）
+    pub clear_history: crate::clear_history::ClearHistory,
 
     // 画布
     pub canvas: Pixmap,
@@ -237,6 +240,7 @@ impl App {
             sb_y: ((screen_h - sb_height_of(DEFAULT_SB_SCALE)) / 2).max(0),
             sidebar_anim_start: None,
             sidebar_anim_from: 0.0,
+            sidebar_collapsed_since: None,
             cur_color: 0,
             cur_pen: 1,
             cur_eraser: 1,
@@ -282,6 +286,7 @@ impl App {
             t_begin_role: 0,
             stroke_pts: Vec::new(),
             undo: VecDeque::new(),
+            clear_history: crate::clear_history::ClearHistory::default(),
             canvas,
             screen_w,
             screen_h,
@@ -351,7 +356,7 @@ impl App {
         (self.drawing_tools_full_height() as f32 * self.drawing_tools.fraction()).round() as i32
     }
     pub fn drawing_tools_full_height(&self) -> i32 {
-        3 * (self.sb_btn() + 6)
+        4 * (self.sb_btn() + 6)
     }
     pub fn sb_page_h(&self) -> i32 {
         page_counter_height(self.sb_scale)
@@ -374,6 +379,13 @@ impl App {
         self.sidebar_anim_from = self.sidebar_retract();
         self.sidebar_anim_start = Some(std::time::Instant::now());
         self.collapsed = collapsed;
+        self.sidebar_collapsed_since = collapsed.then(std::time::Instant::now);
+    }
+
+    /// 手动收起两分钟后自动展开，避免课堂中把工具栏忘在贴边状态。
+    pub fn sidebar_expand_due(&self) -> bool {
+        self.collapsed && self.sidebar_collapsed_since.is_some_and(
+            |start| start.elapsed() >= std::time::Duration::from_secs(120))
     }
     pub fn finish_sidebar_animation(&mut self) -> bool {
         if self.sidebar_anim_start.is_some_and(|start| start.elapsed().as_millis() >= 180) {
@@ -521,6 +533,8 @@ impl App {
             || self.is_drawing || !self.stroke_pts.is_empty() {
             return None;
         }
+        // A cleared page keeps the drawer open so its restore action stays reachable.
+        if self.can_restore_cleared() { return Some(true); }
         // Erasing/undo can leave the conservative ink flag set. Inspect actual
         // alpha only at a requested transition, never on idle animation frames.
         self.page_has_ink = self.canvas.pixels().iter().any(|pixel| pixel.alpha() != 0);
@@ -532,6 +546,35 @@ impl App {
         self.canvas.fill(Color::TRANSPARENT);
         self.page_has_ink = false;
         self.clear_undo();
+    }
+
+    pub fn can_restore_cleared(&self) -> bool {
+        !self.page_has_ink && self.clear_history.available(self.current_slide, self.whiteboard)
+    }
+
+    /// 用户点“清除”前调用；空白页不记录，避免恢复出一张空快照。
+    pub fn remember_before_clear(&mut self) {
+        if !self.canvas.pixels().iter().any(|pixel| pixel.alpha() != 0) {
+            return;
+        }
+        let snapshot = clone_pixmap(&self.canvas);
+        self.clear_history.push(self.current_slide, self.whiteboard, snapshot);
+    }
+
+    pub fn restore_cleared(&mut self) -> bool {
+        if self.page_has_ink {
+            return false;
+        }
+        let Some(snapshot) = self.clear_history.take(self.current_slide, self.whiteboard) else {
+            return false;
+        };
+        self.stroke_pts.clear();
+        self.is_drawing = false;
+        self.reset_palm_gesture();
+        self.canvas = fit_pixmap(&snapshot, self.canvas_w(), self.canvas_h());
+        self.page_has_ink = true;
+        self.clear_undo();
+        true
     }
 
     /// 显示变化时按画面比例保留笔迹；物理像素撤回记录不能跨尺寸复用。
@@ -616,6 +659,7 @@ impl App {
         self.slide_cache.clear();
         self.saved_slide = 1;
         if self.whiteboard { return; }
+        self.clear_history.clear();
         self.current_slide = 1;
         self.is_drawing = false;
         self.clear_canvas();
@@ -639,8 +683,8 @@ impl App {
         self.is_drawing = false;
         self.stroke_pts.clear();
         self.reset_palm_gesture();
-        self.save_current_page();
         if !self.whiteboard {
+            self.save_current_page();
             self.saved_slide = self.current_slide;
             self.saved_mode = self.mode;
             self.saved_drawing_tools = self.drawing_tools.expanded();
@@ -649,7 +693,10 @@ impl App {
             self.drawing_tools.set_expanded(true);
             self.current_slide = self.whiteboard_slide;
         } else {
-            self.whiteboard_slide = self.current_slide;
+            // 手动切回普通模式时丢弃白板全部笔迹，但保留透明批注页缓存。
+            self.whiteboard_cache.clear();
+            self.clear_history.clear_whiteboard();
+            self.whiteboard_slide = 1;
             self.whiteboard = false;
             self.mode = self.saved_mode;
             self.drawing_tools.set_expanded(self.saved_drawing_tools);
@@ -661,11 +708,12 @@ impl App {
 }
 
 pub fn sb_height_of(scale: f64) -> i32 {
-    22 + 11 * (SB_BASE_BTN * scale) as i32 + 60 + page_counter_height(scale) + 6
+    let btn = (SB_BASE_BTN * scale) as i32;
+    22 + 12 * btn + 66 + page_counter_height(scale) + 6
 }
 
 fn sb_compact_height_of(scale: f64) -> i32 {
-    sb_height_of(scale) - 3 * ((SB_BASE_BTN * scale) as i32 + 6)
+    sb_height_of(scale) - 4 * ((SB_BASE_BTN * scale) as i32 + 6)
 }
 
 fn page_counter_height(scale: f64) -> i32 {
@@ -848,40 +896,35 @@ mod whiteboard_tests {
     }
 
     #[test]
-    fn reopening_restores_last_whiteboard_page_without_mixing_overlay_ink() {
+    fn switching_back_discards_whiteboard_ink_and_keeps_overlay() {
         let mut app = app_with_ink();
         let overlay = app.canvas.data().to_vec();
         app.toggle_whiteboard();
         assert_eq!(app.current_slide, 1);
         assert!(!app.page_has_ink);
         draw(&mut app, 40);
-        let first = app.canvas.data().to_vec();
         app.save_current_page();
         app.current_slide = 2;
         app.load_page(2);
-        app.cur_color = 1;
         draw(&mut app, 60);
-        let second = app.canvas.data().to_vec();
         app.whiteboard_bg_index = 0;
 
-        for _ in 0..3 {
-            app.toggle_whiteboard();
-            assert!(!app.whiteboard);
-            assert_eq!(app.current_slide, 7);
-            assert_eq!(app.canvas.data(), overlay.as_slice());
-            app.toggle_whiteboard();
-            assert!(app.whiteboard);
-            assert_eq!(app.current_slide, 2);
-            assert_eq!(app.canvas.data(), second.as_slice());
-            assert_eq!(app.whiteboard_bg_index, 0);
-            assert_eq!(app.whiteboard_cache.get(&1).unwrap().data(), first.as_slice());
-        }
-        draw(&mut app, 30);
-        let edited = app.canvas.data().to_vec();
-        assert_ne!(edited, second);
         app.toggle_whiteboard();
+        assert!(!app.whiteboard);
+        assert_eq!(app.current_slide, 7);
+        assert_eq!(app.canvas.data(), overlay.as_slice());
+        assert!(app.whiteboard_cache.is_empty());
+        assert_eq!(app.whiteboard_slide, 1);
+        assert_eq!(app.whiteboard_bg_index, 0);
+
+        // Re-entering starts from a blank whiteboard, not the previous session.
         app.toggle_whiteboard();
-        assert_eq!(app.canvas.data(), edited.as_slice());
+        assert!(app.whiteboard);
+        assert_eq!(app.current_slide, 1);
+        assert!(!app.page_has_ink);
+        assert!(app.canvas.data().iter().all(|&b| b == 0));
+        app.toggle_whiteboard();
+        assert_eq!(app.canvas.data(), overlay.as_slice());
     }
 
     #[test]
@@ -895,11 +938,7 @@ mod whiteboard_tests {
             app.current_slide = 2;
             app.load_page(2);
             draw(&mut app, 50);
-            app.toggle_whiteboard();
-            app.toggle_whiteboard(); // Page 2 now has an older cached snapshot.
             clear(&mut app);
-            app.toggle_whiteboard();
-            app.toggle_whiteboard();
             assert_eq!(app.current_slide, 2);
             assert!(!app.page_has_ink);
             assert!(app.canvas.data().iter().all(|&b| b == 0));
@@ -911,49 +950,139 @@ mod whiteboard_tests {
     }
 
     #[test]
-    fn slide_reset_preserves_visible_and_hidden_whiteboard() {
-        for visible in [true, false] {
-            let mut app = app_with_ink();
-            app.toggle_whiteboard();
-            app.current_slide = 3;
-            draw(&mut app, 40);
-            let board = app.canvas.data().to_vec();
-            if !visible { app.toggle_whiteboard(); }
-            app.clear_slide_pages();
-            assert!(app.slide_cache.is_empty());
-            if visible {
-                assert_eq!(app.current_slide, 3);
-                assert_eq!(app.canvas.data(), board.as_slice());
-                assert_eq!(app.undo.len(), 1);
-                app.toggle_whiteboard();
-            }
-            assert_eq!(app.current_slide, 1);
-            assert!(!app.page_has_ink);
-            assert!(app.canvas.data().iter().all(|&b| b == 0));
-            app.toggle_whiteboard();
-            assert_eq!(app.current_slide, 3);
-            assert_eq!(app.canvas.data(), board.as_slice());
-        }
-    }
-
-    #[test]
-    fn blank_last_page_and_pending_stroke_survive_mode_switch() {
+    fn slide_reset_preserves_visible_whiteboard() {
         let mut app = app_with_ink();
         app.toggle_whiteboard();
         app.current_slide = 3;
-        app.toggle_whiteboard();
-        app.toggle_whiteboard();
+        draw(&mut app, 40);
+        let board = app.canvas.data().to_vec();
+        app.clear_slide_pages();
+        assert!(app.slide_cache.is_empty());
         assert_eq!(app.current_slide, 3);
-        assert!(!app.page_has_ink);
+        assert_eq!(app.canvas.data(), board.as_slice());
+        assert_eq!(app.undo.len(), 1);
+    }
+
+    #[test]
+    fn pending_stroke_is_discarded_when_leaving_whiteboard() {
+        let mut app = app_with_ink();
+        let overlay = app.canvas.data().to_vec();
+        app.toggle_whiteboard();
+        app.current_slide = 3;
         app.is_drawing = true;
         app.stroke_pts = vec![(20.0, 40.0, 6.0), (80.0, 40.0, 6.0)];
         app.toggle_whiteboard();
         assert!(!app.is_drawing);
         assert!(app.stroke_pts.is_empty());
+        assert!(!app.whiteboard);
+        assert_eq!(app.current_slide, 7);
+        assert_eq!(app.canvas.data(), overlay.as_slice());
         app.toggle_whiteboard();
-        assert_eq!(app.current_slide, 3);
+        assert!(app.whiteboard);
+        assert_eq!(app.current_slide, 1);
+        assert!(!app.page_has_ink);
+        assert!(app.canvas.data().iter().all(|&b| b == 0));
+    }
+}
+
+#[cfg(test)]
+mod clear_restore_tests {
+    use super::*;
+
+    fn draw(app: &mut App, y: i32) {
+        app.begin_undo();
+        crate::paint::stroke_tapered(app, (20, y), (80, y), 6, 6);
+    }
+
+    #[test]
+    fn clearing_then_restoring_returns_the_exact_canvas_once() {
+        let mut app = App::new(Pixmap::new(100, 80).unwrap(), 100, 80);
+        app.current_slide = 3;
+        draw(&mut app, 30);
+        let before = app.canvas.data().to_vec();
+        app.remember_before_clear();
+        app.clear_current_strokes();
+        assert!(app.can_restore_cleared());
+        assert!(app.restore_cleared());
+        assert_eq!(app.canvas.data(), before.as_slice());
         assert!(app.page_has_ink);
-        assert!(app.canvas.pixel(50, 40).unwrap().alpha() > 0);
+        assert!(!app.can_restore_cleared());
+        assert!(!app.restore_cleared());
+    }
+
+    #[test]
+    fn new_ink_after_clearing_disables_restore_until_the_next_clear() {
+        let mut app = App::new(Pixmap::new(100, 80).unwrap(), 100, 80);
+        draw(&mut app, 30);
+        app.remember_before_clear();
+        app.clear_current_strokes();
+        draw(&mut app, 50);
+        assert!(!app.can_restore_cleared());
+        assert!(!app.restore_cleared());
+        let drawn = app.canvas.data().to_vec();
+        app.remember_before_clear();
+        app.clear_current_strokes();
+        assert!(app.restore_cleared());
+        assert_eq!(app.canvas.data(), drawn.as_slice());
+    }
+
+    #[test]
+    fn clearing_an_empty_page_keeps_the_previous_snapshot() {
+        let mut app = App::new(Pixmap::new(100, 80).unwrap(), 100, 80);
+        draw(&mut app, 30);
+        let before = app.canvas.data().to_vec();
+        app.remember_before_clear();
+        app.clear_current_strokes();
+        app.remember_before_clear(); // empty canvas must not replace the snapshot
+        assert!(app.restore_cleared());
+        assert_eq!(app.canvas.data(), before.as_slice());
+    }
+
+    #[test]
+    fn restore_is_bound_to_its_page_and_whiteboard_mode() {
+        let mut app = App::new(Pixmap::new(100, 80).unwrap(), 100, 80);
+        app.current_slide = 3;
+        draw(&mut app, 30);
+        app.remember_before_clear();
+        app.current_slide = 4;
+        assert!(!app.can_restore_cleared());
+        assert!(!app.restore_cleared());
+        app.current_slide = 3;
+        app.toggle_whiteboard();
+        assert!(!app.can_restore_cleared());
+        assert!(!app.restore_cleared());
+    }
+
+    #[test]
+    fn whiteboard_clear_can_be_restored_without_reaching_overlay_ink() {
+        let mut app = App::new(Pixmap::new(100, 80).unwrap(), 100, 80);
+        draw(&mut app, 20);
+        app.toggle_whiteboard();
+        draw(&mut app, 50);
+        let board = app.canvas.data().to_vec();
+        app.remember_before_clear();
+        app.clear_current_strokes();
+        assert!(app.restore_cleared());
+        assert!(app.whiteboard);
+        assert_eq!(app.canvas.data(), board.as_slice());
+    }
+}
+
+#[cfg(test)]
+mod sidebar_idle_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn collapsed_sidebar_becomes_due_after_two_minutes_and_resets_on_expand() {
+        let mut app = App::new(Pixmap::new(100, 100).unwrap(), 100, 100);
+        app.set_sidebar_collapsed(true);
+        assert!(!app.sidebar_expand_due());
+        app.sidebar_collapsed_since = Some(Instant::now() - Duration::from_secs(120));
+        assert!(app.sidebar_expand_due());
+        app.set_sidebar_collapsed(false);
+        assert!(!app.sidebar_expand_due());
+        assert!(app.sidebar_collapsed_since.is_none());
     }
 }
 

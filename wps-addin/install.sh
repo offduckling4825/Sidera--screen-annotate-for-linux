@@ -11,8 +11,7 @@ SRC="$(dirname "$(readlink -f "$0")")/publish.xml"
 if [ ! -f "$SRC" ]; then
   SRC="/usr/share/sidera/wps-addin/publish.xml"
 fi
-# Replace Bash so an automatic-registration timeout also stops the lock waiter.
-exec python3 - "$SRC" "$DST/publish.xml" <<'PY'
+python3 - "$SRC" "$DST/publish.xml" <<'PY'
 import os
 import fcntl
 from pathlib import Path
@@ -116,3 +115,11 @@ except (OSError, ValueError, ExpatError) as error:
 print("提示：请先启动“Sidera”并开启 设置→WPS联动，再重新打开 WPS 演示。")
 print("      放映时加载项会把真实页号回传，批注缓存随真实换页切换。")
 PY
+
+# 同一加载项目录里还残留 2.6/更早版本的登记与授权时一并清理。
+# 自动登记超时会结束整个进程组，因此这里保留子进程调用而不是 exec。
+CLEANUP="$(dirname "$(readlink -f "$0")")/cleanup-old.sh"
+[ -f "$CLEANUP" ] || CLEANUP="/usr/share/sidera/wps-addin/cleanup-old.sh"
+if [ -f "$CLEANUP" ]; then
+  bash "$CLEANUP" || true
+fi

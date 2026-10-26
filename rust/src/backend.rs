@@ -50,6 +50,8 @@ pub trait Backend: 'static {
     fn description(&self) -> &'static str { "X11" }
     /// 是否处于办公软件全屏放映
     fn is_presentation_fullscreen(&self) -> bool;
+    /// 办公软件/本覆盖层是否在前台。None 表示后端无法可靠判断。
+    fn presentation_foreground(&self) -> Option<bool> { None }
     /// 是否有合成器（透明是否可用）
     fn has_compositor(&self) -> bool;
     /// XShape/输入法扩展是否可用（诊断用）

@@ -27,6 +27,7 @@ tar xf %{SOURCE0} -C %{buildroot}
 %files
 /usr/bin/sidera
 /usr/bin/sidera-wps-addin-install
+/usr/bin/sidera-wps-addin-cleanup
 /usr/share/sidera
 /usr/share/applications/sidera.desktop
 /usr/share/icons/hicolor/scalable/apps/sidera.svg
@@ -42,9 +43,20 @@ tar xf %{SOURCE0} -C %{buildroot}
 modprobe uinput 2>/dev/null || :
 udevadm control --reload-rules 2>/dev/null || :
 udevadm trigger --subsystem-match=input 2>/dev/null || :
+# 清理旧版 WPS 加载项登记/授权；失败不阻断安装，应用启动时还会再清理一次。
+for home in /root /home/*; do
+  [ -d "$home" ] || continue
+  [ -x /usr/bin/sidera-wps-addin-cleanup ] || continue
+  HOME="$home" /usr/bin/sidera-wps-addin-cleanup >/dev/null 2>&1 || :
+done
 
 %postun
 udevadm control --reload-rules 2>/dev/null || :
+for home in /root /home/*; do
+  [ -d "$home" ] || continue
+  [ -x /usr/bin/sidera-wps-addin-cleanup ] || continue
+  HOME="$home" /usr/bin/sidera-wps-addin-cleanup >/dev/null 2>&1 || :
+done
 
 %changelog
 * Fri Oct 02 2026 Carl_Jin <user@localhost> - 3.0-1

@@ -42,6 +42,7 @@ package() {
   install -d "${pkgdir}/usr/share/sidera/wps-addin"
   cp -r wps-addin/. "${pkgdir}/usr/share/sidera/wps-addin/"
   install -Dm755 wps-addin/install.sh "${pkgdir}/usr/bin/sidera-wps-addin-install"
+  install -Dm755 wps-addin/cleanup-old.sh "${pkgdir}/usr/bin/sidera-wps-addin-cleanup"
 
   # 文档 / 许可
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/sidera/LICENSE"

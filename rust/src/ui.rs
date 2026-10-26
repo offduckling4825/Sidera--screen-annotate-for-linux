@@ -33,6 +33,7 @@ pub enum Btn {
     Pen,
     Eraser,
     Clear,
+    Restore,
     Undo,
     Prev,
     Next,
@@ -107,6 +108,7 @@ pub fn control_enabled(app: &App, control: Control) -> bool {
         return (delta < 0 && l.page > 0) || (delta > 0 && l.page + 1 < l.pages);
     }
     if matches!(control, Control::PageCount(_)) { return app.page_picker_context().is_some(); }
+    if matches!(control, Control::Sidebar(Btn::Restore, _)) { return app.can_restore_cleared(); }
     !(app.whiteboard && matches!(control, Control::Sidebar(Btn::Cursor, _)))
 }
 
@@ -486,7 +488,7 @@ fn expanded_sidebar_buttons(app: &App, right: bool) -> Vec<(Btn, R)> {
 fn drawing_tool_buttons(app: &App, right: bool) -> Vec<(Btn, R)> {
     let sb = expanded_sidebar_rect(app, right);
     let btn = app.sb_btn();
-    [Btn::Eraser, Btn::Clear, Btn::Undo].into_iter().enumerate().map(|(i, k)|
+    [Btn::Eraser, Btn::Clear, Btn::Restore, Btn::Undo].into_iter().enumerate().map(|(i, k)|
         (k, R { x: sb.x + (sb.w - btn) / 2, y: sb.y + 12 + (3 + i as i32) * (btn + 6),
             w: btn, h: btn })).collect()
 }
@@ -1426,6 +1428,7 @@ fn draw_btn(app: &App, fonts: &Fonts, ctx: &mut Ctx, k: Btn, r: R) {
             icons::draw(ctx, glyph, x, y, size, glyph_ink, app.pen_color());
         }
         Btn::Clear => ctx.text_center(fonts, r, "清除", (btn * 0.49).max(11.0), c(palette.danger)),
+        Btn::Restore => ctx.text_center(fonts, r, "恢复", (btn * 0.49).max(11.0), ink),
         Btn::Undo => ctx.text_center(fonts, r, "撤回", (btn * 0.49).max(11.0), ink),
         Btn::Whiteboard => ctx.text_center(fonts, r, "白板", (btn * 0.49).max(11.0), ink),
         Btn::Exit => {

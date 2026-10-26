@@ -36,6 +36,7 @@ pub struct X11 {
     pub cmap: Colormap,
     pub net_wm_state: Atom,
     pub net_wm_fullscreen: Atom,
+    pub net_active_window: Atom,
     pub net_wm_cm: Atom,
     pub key_escape: Keycode,
     pub key_up: Keycode,
@@ -83,6 +84,8 @@ impl X11 {
         let net_wm_state = xproto::intern_atom(&conn, false, b"_NET_WM_STATE")?.reply()?.atom;
         let net_wm_fullscreen =
             xproto::intern_atom(&conn, false, b"_NET_WM_STATE_FULLSCREEN")?.reply()?.atom;
+        let net_active_window =
+            xproto::intern_atom(&conn, false, b"_NET_ACTIVE_WINDOW")?.reply()?.atom;
         let net_wm_cm = xproto::intern_atom(&conn, false, b"_NET_WM_CM_S0")?.reply()?.atom;
         let atom_touch_major =
             xproto::intern_atom(&conn, false, b"Abs MT Touch Major")?.reply()?.atom;
@@ -102,6 +105,7 @@ impl X11 {
             cmap,
             net_wm_state,
             net_wm_fullscreen,
+            net_active_window,
             net_wm_cm,
             key_escape: 0,
             key_up: 0,
@@ -568,6 +572,29 @@ impl X11 {
         false
     }
 
+    /// 当前活动窗口是否属于 WPS 类办公软件或本覆盖层。
+    /// 用于避免后台放映窗口仍把 Sidera 切到放映模式。
+    pub fn is_office_foreground(&self, self_win: Window) -> Option<bool> {
+        let active = xproto::get_property(&self.conn, false, self.root, self.net_active_window,
+            AtomEnum::WINDOW, 0, 1).ok()?.reply().ok()?
+            .value32()?.next()?;
+        if active == x11rb::NONE {
+            return None;
+        }
+        let mut window = active;
+        for _ in 0..32 {
+            if window == self_win || self.is_office_window(window) {
+                return Some(true);
+            }
+            let parent = xproto::query_tree(&self.conn, window).ok()?.reply().ok()?.parent;
+            if parent == x11rb::NONE || parent == self.root {
+                break;
+            }
+            window = parent;
+        }
+        Some(false)
+    }
+
     fn is_office_window(&self, w: Window) -> bool {
         let prop = xproto::get_property(
             &self.conn,
@@ -982,6 +1009,9 @@ impl crate::backend::Backend for X11Plat {
     }
     fn is_presentation_fullscreen(&self) -> bool {
         self.x11.is_presentation_fullscreen(self.win)
+    }
+    fn presentation_foreground(&self) -> Option<bool> {
+        self.x11.is_office_foreground(self.win)
     }
     fn has_compositor(&self) -> bool {
         self.x11.has_compositor()

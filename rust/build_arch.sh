@@ -50,10 +50,19 @@ EOF
 
 # .INSTALL
 cat > "$STAGE/.INSTALL" <<'EOF'
+_sidera_cleanup_old_addin() {
+  # 只清理旧名称/同一本地桥的旧条目，保留当前 sidera-bridge。
+  for home in /root /home/*; do
+    [ -d "$home" ] || continue
+    [ -x /usr/bin/sidera-wps-addin-cleanup ] || continue
+    HOME="$home" /usr/bin/sidera-wps-addin-cleanup >/dev/null 2>&1 || true
+  done
+}
 post_install() {
   udevadm control --reload-rules 2>/dev/null || true
   udevadm trigger --subsystem-match=input 2>/dev/null || true
   modprobe uinput 2>/dev/null || true
+  _sidera_cleanup_old_addin
   echo ">>> Sidera: 触摸权限已配置，若刚安装请重新登录后再用触屏批注。"
 }
 post_upgrade() {
@@ -61,6 +70,7 @@ post_upgrade() {
 }
 post_remove() {
   udevadm control --reload-rules 2>/dev/null || true
+  _sidera_cleanup_old_addin
 }
 EOF
 

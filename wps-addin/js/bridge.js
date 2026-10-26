@@ -93,7 +93,7 @@ function bridgeState() {
         var v = context ? context.window.View : null
         var pages = bridgePageState(context, v)
         st.page = pages.page; st.total = pages.total
-        var jump = bridgeJumpTarget()
+        var jump = bridgeJumpTarget(context, pages)
         if (jump) { st.jump = 1; st.deck = jump.epoch }
         if (!v) { st.ready = bridgeStartTarget() ? 1 : 0; return st }
         var pos = v.CurrentShowPosition
@@ -102,14 +102,14 @@ function bridgeState() {
     } catch (e) {}
     return st
 }
-function bridgeJumpTarget() {
+function bridgeJumpTarget(context, pages) {
     try {
         var app = bridgeApplication()
-        var context = bridgeShowContext()
+        context = context || bridgeShowContext()
         var deck = context ? context.presentation : app && app.ActivePresentation
         var view = context ? context.window.View : app && app.ActiveWindow && app.ActiveWindow.View
         if (!deck || !view || typeof view.GotoSlide !== 'function') return null
-        var pages = bridgePageState(context, context ? view : null)
+        pages = pages || bridgePageState(context, context ? view : null)
         if (!(pages.page > 0 && pages.total >= pages.page)) return null
         var name = String(deck.FullName || deck.Name || '')
         if (!name) return null
@@ -224,7 +224,7 @@ var BridgeSlideEvents = ['SlideShowBegin', 'SlideShowEnd', 'SlideShowNextSlide',
 // （WPS 的 Next 会补发 NextClick/NextSlide，但 Previous 常只有 OnPrevious 且带旧 pos）
 // 仅记录收到成功回复的快照；同页重载脚本时保留确认状态和在途请求。
 var _lastState = window._sideraLastState || (window._sideraLastState = { pos: -1, click: -1, ready: 0, page: -1, total: -1, jump: 0, deck: -1 });
-function bridgePushIfChanged() {
+function bridgePushIfChanged(eventName) {
     try {
         if (window._sideraStateInFlight) return
         var st = bridgeState()
@@ -251,7 +251,7 @@ function bridgePushIfChanged() {
                 finish(false)
                 if (controller) controller.abort()
             }, 3000)
-            bridgeFetch('/push?m=' + encodeURIComponent(bridgeStateMessage('SlideShowState', st)),
+            bridgeFetch('/push?m=' + encodeURIComponent(bridgeStateMessage(eventName || 'SlideShowState', st)),
                 finish, controller ? controller.signal : null)
         }
     } catch (e) {}
@@ -321,8 +321,7 @@ function startBridge() {
                 var currentApi = current && (current.ApiEvent || (window.wps && window.wps.ApiEvent))
                 if (window._sideraEventOwner !== currentApi) startBridge()
             } catch (e) {}
-            bridgePoll()
-            bridgePushIfChanged()              // 状态变化即上报（前后翻都覆盖）
+            bridgePoll()                       // 轮询本身已携带完整状态
         }, 300)
     }
 }

@@ -12,6 +12,7 @@ stage_files() {
 
   install -Dm755 "$bin" "$root/usr/bin/sidera"
   install -Dm755 "$REPO/wps-addin/install.sh" "$root/usr/bin/sidera-wps-addin-install"
+  install -Dm755 "$REPO/wps-addin/cleanup-old.sh" "$root/usr/bin/sidera-wps-addin-cleanup"
 
   install -d "$root/usr/share/sidera/wps-addin"
   cp -a "$REPO/wps-addin/." "$root/usr/share/sidera/wps-addin/"

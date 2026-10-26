@@ -93,8 +93,10 @@ install -m 755 "$BIN" "$PKG_DIR/usr/bin/sidera"
 
 # ---------- WPS 加载项（放到固定路径，Rust 版会自动从 /usr/share/sidera/wps-addin 读取）----------
 cp -r "$REPO/wps-addin/." "$PKG_DIR/usr/share/sidera/wps-addin/"
-chmod 755 "$PKG_DIR/usr/share/sidera/wps-addin/install.sh"
+chmod 755 "$PKG_DIR/usr/share/sidera/wps-addin/install.sh" \
+          "$PKG_DIR/usr/share/sidera/wps-addin/cleanup-old.sh"
 install -m 755 "$REPO/wps-addin/install.sh" "$PKG_DIR/usr/bin/sidera-wps-addin-install"
+install -m 755 "$REPO/wps-addin/cleanup-old.sh" "$PKG_DIR/usr/bin/sidera-wps-addin-cleanup"
 
 # GNOME's native overlay needs a per-user Shell extension. Package its source,
 # but do not enable it or restart sessions from the root post-install script.
@@ -140,6 +142,13 @@ modprobe uinput 2>/dev/null || true
 udevadm control --reload-rules 2>/dev/null || true
 udevadm trigger --name-match=uinput 2>/dev/null || true
 udevadm trigger --subsystem-match=input 2>/dev/null || true
+# 删除旧版 WPS 加载项登记/授权；只清理已知旧名称和同一本地桥，保留当前条目。
+# 逐用户执行并保留文件原所有者；失败不阻断安装，应用启动时还会再清理一次。
+for home in /root /home/*; do
+  [ -d "$home" ] || continue
+  [ -x /usr/bin/sidera-wps-addin-cleanup ] || continue
+  HOME="$home" /usr/bin/sidera-wps-addin-cleanup >/dev/null 2>&1 || true
+done
 exit 0
 EOF
 chmod 755 "$PKG_DIR/DEBIAN/postinst"

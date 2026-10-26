@@ -2,6 +2,7 @@
 """Run the real installer with an isolated home; requires Linux and bubblewrap."""
 
 from pathlib import Path
+import json
 import shutil
 import subprocess
 import tempfile
@@ -42,6 +43,8 @@ class InstallTests(unittest.TestCase):
         self.script.write_text((ADDIN / "install.sh").read_text(encoding="utf-8"), encoding="utf-8")
         self.template = (ADDIN / "publish.xml").read_bytes()
         (self.source / "publish.xml").write_bytes(self.template)
+        self.cleanup = self.source / "cleanup-old.sh"
+        self.cleanup.write_text((ADDIN / "cleanup-old.sh").read_text(encoding="utf-8"), encoding="utf-8")
         # Supply the complete mount subtree. A clean host has no /usr/share/sidera
         # and bwrap cannot create that parent below the read-only system root.
         self.system_share = self.scratch / "system-share"
@@ -198,6 +201,27 @@ class InstallTests(unittest.TestCase):
         self.assert_preserved_failure(result, original)
         self.assertEqual(len(self.backups()), 1)
         self.assertEqual(self.backups()[0].read_bytes(), original)
+
+    def test_install_cleans_legacy_auth_and_enables_the_current_addin(self):
+        self.existing('<jsplugins><jspluginonline name="other" url="https://example.test/"/>'
+                      '<jspluginonline name="screen-annotate-bridge" url="http://127.0.0.1:16666/"/>'
+                      '<jspluginonline name="sidera-bridge" url="http://127.0.0.1:16666/"/></jsplugins>')
+        auth = self.target.parent / "authaddin.json"
+        auth.write_text(json.dumps({"wpp": {
+            "old": {"enable": True, "isload": False, "name": "screen-annotate-bridge",
+                    "path": "http://127.0.0.1:16666"},
+            "current": {"enable": False, "isload": True, "name": "sidera-bridge",
+                        "path": "http://127.0.0.1:16666"},
+            "other": {"enable": True, "isload": True, "name": "other", "path": "https://example.test"},
+            "namelist": "old;current;other",
+        }}, indent=4), encoding="utf-8")
+        self.assert_installed(self.run_install())
+        data = json.loads(auth.read_text(encoding="utf-8"))["wpp"]
+        self.assertNotIn("old", data)
+        self.assertEqual(data["current"]["enable"], True)
+        self.assertEqual(data["current"]["isload"], True)
+        self.assertEqual(data["namelist"], "current;other")
+        self.assertEqual(len(list(auth.parent.glob("authaddin.json.sidera-legacy-backup-*"))), 1)
 
     def test_missing_python_reports_error_without_modification(self):
         original = b'<jsplugins><jspluginonline name="other"/></jsplugins>'
