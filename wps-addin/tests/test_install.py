@@ -55,7 +55,7 @@ class InstallTests(unittest.TestCase):
         self.target.parent.mkdir(parents=True, exist_ok=True)
         self.target.write_bytes(contents.encode("utf-8") if isinstance(contents, str) else contents)
 
-    def run_install(self, *, readonly=False, env=None):
+    def run_install(self, *, readonly=False, env=None, args=()):
         command = [
             "bwrap", "--die-with-parent", "--ro-bind", "/", "/",
             "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
@@ -67,7 +67,7 @@ class InstallTests(unittest.TestCase):
             command += ["--ro-bind", str(self.target.parent), str((Path.home() / REGISTRATION).parent)]
         for key, value in (env or {}).items():
             command += ["--setenv", key, str(value)]
-        return subprocess.run(command + ["/bin/bash", str(self.script)], text=True,
+        return subprocess.run(command + ["/bin/bash", str(self.script), *args], text=True,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15)
 
     def assert_installed(self, result):
@@ -153,6 +153,47 @@ class InstallTests(unittest.TestCase):
                 self.existing(original)
                 self.assert_preserved_failure(self.run_install(), original)
                 self.assertEqual(self.backups(), [])
+
+    def test_cleanup_remove_current_keeps_valid_xml_and_other_plugins(self):
+        home = self.scratch / "cleanup-home"
+        js = home / ".local/share/Kingsoft/wps/jsaddons"
+        js.mkdir(parents=True)
+        publish = js / "publish.xml"
+        publish.write_text('<jsplugins>\n'
+                           '<jspluginonline name="other" url="https://example.test/"/>\n'
+                           '<jspluginonline name="sidera-bridge" url="http://127.0.0.1:16666/"/>\n'
+                           '</jsplugins>\n', encoding="utf-8")
+        auth = js / "authaddin.json"
+        auth.write_text(json.dumps({"wpp": {
+            "current": {"enable": True, "isload": True, "name": "sidera-bridge",
+                        "path": "http://127.0.0.1:16666"},
+            "other": {"enable": True, "isload": True, "name": "other", "path": "https://example.test"},
+            "namelist": "current;other",
+        }}, indent=4), encoding="utf-8")
+        result = subprocess.run(["bash", str(self.cleanup), "--home", str(home), "--remove-current"],
+                                text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        document = minidom.parseString(publish.read_bytes())
+        names = [node.getAttribute("name") for node in document.documentElement.childNodes
+                 if node.nodeType == node.ELEMENT_NODE]
+        self.assertEqual(names, ["other"])
+        data = json.loads(auth.read_text(encoding="utf-8"))["wpp"]
+        self.assertNotIn("current", data)
+        self.assertEqual(data["namelist"], "other")
+
+    def test_repair_rebuilds_a_truncated_registration_and_keeps_other_plugins(self):
+        original = ('<?xml version="1.0" encoding="UTF-8"?><jsplugins>\n'
+                    '<jspluginonline name="other" url="https://example.test/"/>\n'
+                    '<jspluginonline name="sidera-bridge" url="old"/>\n')
+        self.existing(original)
+        result = self.run_install(args=["--repair"])
+        document = self.assert_installed(result)
+        names = [node.getAttribute("name") for node in document.documentElement.childNodes
+                 if node.nodeType == node.ELEMENT_NODE]
+        self.assertEqual(names, ["other", "sidera-bridge"])
+        self.assertIn("登记文件损坏", result.stdout)
+        self.assertEqual(len(self.backups()), 1)
+        self.assertEqual(self.backups()[0].read_bytes(), original.encode())
 
     def test_invalid_template_is_rejected_before_modification(self):
         original = b'<jsplugins><jspluginonline name="other"/></jsplugins>'

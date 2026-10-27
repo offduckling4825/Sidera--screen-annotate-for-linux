@@ -7,6 +7,10 @@
 // ============================================================
 var BRIDGE_URL = 'http://127.0.0.1:16666';
 var BRIDGE_START_COMMAND = 'SlideShowFromCurrent';
+// false = 默认低负载模式：只读 pos/click、只执行 NEXT/PREV。
+// 测试模式由 Sidera 的 /config 打开，额外提供页码、跳页和开始放映。
+var BRIDGE_FULL = window._sideraFullMode === true;
+var BRIDGE_MODE_LOCKED = typeof window._sideraFullMode === 'boolean';
 
 function OnAddinLoad(ribbonUI) {
     var app = bridgeApplication()
@@ -91,6 +95,13 @@ function bridgeState() {
     try {
         var context = bridgeShowContext()
         var v = context ? context.window.View : null
+        if (!BRIDGE_FULL) {
+            if (v) {
+                st.pos = v.CurrentShowPosition
+                st.click = (typeof v.GetClickIndex == 'function') ? v.GetClickIndex() : -1
+            }
+            return st
+        }
         var pages = bridgePageState(context, v)
         st.page = pages.page; st.total = pages.total
         var jump = bridgeJumpTarget(context, pages)
@@ -101,6 +112,18 @@ function bridgeState() {
         st.pos = pos; st.click = click
     } catch (e) {}
     return st
+}
+function bridgeSyncConfig() {
+    if (BRIDGE_MODE_LOCKED) return
+    bridgeFetch('/config', null, null, function (text) {
+        var full = text === 'mode=full'
+        if (full === BRIDGE_FULL) return
+        BRIDGE_FULL = full
+        // Force the next state push to report the new field set.
+        _lastState.pos = -2; _lastState.click = -2; _lastState.page = -2
+        _lastState.total = -2; _lastState.jump = -2; _lastState.deck = -2
+        bridgePushIfChanged()
+    })
 }
 function bridgeJumpTarget(context, pages) {
     try {
@@ -170,6 +193,7 @@ function bridgeFetch(path, onResult, signal, onText) {
 function bridgeCmd(cmd) {
     var jump = /^GOTO ([1-9][0-9]{0,9}) ([1-9][0-9]{0,9})$/.exec(cmd)
     if (!jump && cmd !== 'START' && cmd !== 'NEXT' && cmd !== 'PREV' && cmd !== 'EXIT') return
+    if (!BRIDGE_FULL && cmd !== 'NEXT' && cmd !== 'PREV') return
     try {
         var v = bridgeView()
         if (jump) {
@@ -199,7 +223,13 @@ function bridgeCmd(cmd) {
 }
 function bridgePoll() {
     if (window._sideraPollInFlight) return
+    var started = (typeof performance === 'object' && performance.now) ? performance.now() : Date.now()
     var st = bridgeState()
+    var elapsed = ((typeof performance === 'object' && performance.now) ? performance.now() : Date.now()) - started
+    if (elapsed > 200 && Date.now() >= (window._sideraSlowUntil || 0)) {
+        window._sideraSlowUntil = Date.now() + 5000
+        bridgeFetch('/push?m=' + encodeURIComponent('SLOW state ' + Math.round(elapsed) + 'ms'))
+    }
     var controller = typeof AbortController == 'function' ? new AbortController() : null
     var pending = { timer: null }
     window._sideraPollInFlight = pending
@@ -315,12 +345,15 @@ function startBridge() {
     if (!window._sideraTimerStarted) {
         window._sideraTimerStarted = true
         bridgeFetch('/hello?m=sidera-bridge')
+        bridgeSyncConfig()
         setInterval(function () {
             try {
                 var current = bridgeApplication()
                 var currentApi = current && (current.ApiEvent || (window.wps && window.wps.ApiEvent))
                 if (window._sideraEventOwner !== currentApi) startBridge()
             } catch (e) {}
+            window._sideraConfigTick = (window._sideraConfigTick || 0) + 1
+            if (window._sideraConfigTick % 7 === 0) bridgeSyncConfig()
             bridgePoll()                       // 轮询本身已携带完整状态
         }, 300)
     }

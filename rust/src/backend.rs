@@ -36,6 +36,8 @@ pub trait Backend: 'static {
     fn set_input_region(&self, rects: &[IRect], full: bool);
     /// 注入一次按键（翻页/退出）
     fn fake_key(&self, key: Key);
+    /// 用演示软件快捷键从当前页开始放映。false 表示当前后端无法注入。
+    fn start_presentation(&self) -> bool { false }
     /// 当前后端能否直接注入按键，而不触发桌面远程控制授权。
     fn can_inject_keys_without_prompt(&self) -> bool {
         false

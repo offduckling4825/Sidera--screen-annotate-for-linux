@@ -19,7 +19,7 @@ function fixture({ abort = true } = {}) {
     Exit() { commands.push('EXIT'); state.pos = -1; },
   };
   const context = vm.createContext({
-    window: { Application: { ActivePresentation: {
+    window: { _sideraFullMode: true, Application: { ActivePresentation: {
       get SlideShowWindow() { return state.pos > 0 ? { View: view } : null; },
     } } },
     AbortController: abort ? AbortController : undefined,
@@ -461,4 +461,18 @@ test('missing or inconsistent counters never replace navigation state with guess
   assert.equal(f.context.bridgeState().pos, 2);
   f.context.bridgeCmd('NEXT');
   assert.deepEqual(f.commands, ['NEXT']);
+});
+
+test('default mode reads only position and refuses START/GOTO commands', () => {
+  const f = fixture();
+  f.context.BRIDGE_FULL = false;
+  const st = f.context.bridgeState();
+  assert.equal(st.pos, 1);
+  assert.equal(st.page, -1);
+  assert.equal(st.total, -1);
+  assert.equal(st.jump, 0);
+  assert.equal(st.ready, 0);
+  f.context.bridgeCmd('START');
+  f.context.bridgeCmd(`GOTO 2 ${Date.now() % 1000 + 1}`);
+  assert.deepEqual(f.commands, []);
 });

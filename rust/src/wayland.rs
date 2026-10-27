@@ -439,6 +439,22 @@ impl Backend for WlPlat {
             log::warn!("[WARN] 无可用的按键注入（虚拟键盘/uinput 均不可用）");
         }
     }
+    fn start_presentation(&self) -> bool {
+        if let Some(kb) = self.vk.borrow().clone() {
+            let t = (crate::app::now_ms() & 0xffff_ffff) as u32;
+            kb.key(t, 42, KeyState::Pressed);       // KEY_LEFTSHIFT
+            kb.key(t + 1, 63, KeyState::Pressed);   // KEY_F5
+            kb.key(t + 2, 63, KeyState::Released);
+            kb.key(t + 3, 42, KeyState::Released);
+            let _ = self.conn.flush();
+            return true;
+        }
+        if let Some(u) = self.uinput.borrow_mut().as_mut() {
+            u.start_presentation();
+            return true;
+        }
+        false
+    }
     fn can_inject_keys_without_prompt(&self) -> bool {
         self.vk.borrow().is_some() || self.uinput.borrow().is_some()
     }

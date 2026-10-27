@@ -187,6 +187,11 @@ impl Backend for GnomePlat {
     fn fake_key(&self, key: Key) {
         if self.keyboard { self.command(json!({"type":"key", "key":format!("{key:?}")})); }
     }
+    fn start_presentation(&self) -> bool {
+        if !self.keyboard { return false; }
+        self.command(json!({"type":"key", "key":"StartShow"}));
+        true
+    }
     fn virtual_right_click(&self, x: i32, y: i32) { self.command(json!({"type":"rightClick", "x":x, "y":y})); }
     fn can_forward_right_click(&self) -> bool { true }
     fn set_input_region(&self, rects: &[IRect], full: bool) {

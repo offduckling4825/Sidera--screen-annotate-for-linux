@@ -113,7 +113,7 @@ mod tests {
 struct Controls {
     mode: i32, saved_mode: i32, collapsed: bool, whiteboard: bool, whiteboard_bg: i32,
     drawing_tools: bool, saved_drawing_tools: bool,
-    page: i32, color: usize, pen: usize, eraser: usize, wps: bool, linked_show: bool,
+    page: i32, color: usize, pen: usize, eraser: usize, wps: bool, wps_test: bool, linked_show: bool,
     alpha: u8, scale: f64, right_click: bool, fingers: bool,
     threshold: f64, erase_scale: i32,
     theme: crate::ui_theme::Theme,
@@ -124,7 +124,7 @@ impl Controls {
             drawing_tools: app.drawing_tools.expanded(), saved_drawing_tools: app.saved_drawing_tools,
             whiteboard_bg: app.whiteboard_bg_index, page: app.current_slide,
             color: app.cur_color, pen: app.cur_pen, eraser: app.cur_eraser,
-            wps: app.wps_debug, alpha: app.sidebar_alpha, scale: app.sb_scale,
+            wps: app.wps_debug, wps_test: app.wps_test_mode, alpha: app.sidebar_alpha, scale: app.sb_scale,
             linked_show: app.wps_debug && app.wps_connected && app.wps_real_pos > 0,
             right_click: app.right_click_cursor_on, fingers: app.erase_by_finger,
             theme: app.theme,
@@ -149,7 +149,8 @@ impl Controls {
         a.whiteboard_bg_index = self.whiteboard_bg;
         a.apply_theme(self.theme);
         a.cur_color = self.color; a.cur_pen = self.pen; a.cur_eraser = self.eraser;
-        a.wps_debug = self.wps; a.sidebar_alpha = self.alpha; a.sb_scale = self.scale;
+        a.wps_debug = self.wps; a.wps_test_mode = self.wps_test;
+        a.sidebar_alpha = self.alpha; a.sb_scale = self.scale;
         a.right_click_cursor_on = self.right_click; a.erase_by_finger = self.fingers;
         a.large_touch_threshold = self.threshold; a.large_erase_scale10 = self.erase_scale;
         crate::apply_input_shape(&output.rt, a);
@@ -316,7 +317,7 @@ impl Desktop {
     }
     pub fn tick(&mut self) {
         if self.outputs.values().any(|o| !o.launch_pending && o.app.canvas.width() > 1) { self.starting = false; }
-        let update = crate::poll_wps(self.controls.wps, self.controls.whiteboard, &mut self.wps);
+        let update = crate::poll_wps(self.controls.wps, self.controls.whiteboard, self.controls.wps_test, &mut self.wps);
         for output in self.outputs.values_mut() {
             crate::tick_shared(&output.rt, &mut output.app, &mut output.ip, self.wps.as_ref(), &update, &mut output.timers);
         }

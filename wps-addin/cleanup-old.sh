@@ -7,10 +7,16 @@
 set -eu
 
 HOME_DIR="${HOME:-}"
-if [ "${1:-}" = "--home" ]; then
-  [ -n "${2:-}" ] || { echo "用法: $0 [--home <目录>]" >&2; exit 2; }
-  HOME_DIR="$2"
-fi
+REMOVE_CURRENT=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --home)
+      [ -n "${2:-}" ] || { echo "用法: $0 [--home <目录>] [--remove-current]" >&2; exit 2; }
+      HOME_DIR="$2"; shift 2 ;;
+    --remove-current) REMOVE_CURRENT=1; shift ;;
+    *) echo "用法: $0 [--home <目录>] [--remove-current]" >&2; exit 2 ;;
+  esac
+done
 [ -n "$HOME_DIR" ] || { echo "错误：HOME 为空" >&2; exit 2; }
 [ -d "$HOME_DIR" ] || exit 0
 
@@ -45,12 +51,19 @@ clean_publish() {
   [ -f "$file" ] || return 0
   [ -L "$file" ] && return 0
   tmp="$(mktemp "$(dirname "$file")/.sidera-cleanup.XXXXXX")" || return 0
-  if ! awk -v legacy="$OLD_NAME" -v current="$CURRENT_NAME" -v our="$OUR_URL" '
+  if ! awk -v legacy="$OLD_NAME" -v current="$CURRENT_NAME" -v our="$OUR_URL" -v remove_current="$REMOVE_CURRENT" '
     function xml_value(text, key, parts, count, i) {
       count = split(text, parts, "\"")
       for (i = 1; i < count; i++) {
         if (parts[i] ~ (key "[[:space:]]*=[[:space:]]*$")) return parts[i + 1]
       }
+      return ""
+    }
+    function tail_after_element(record, at) {
+      at = index(record, "/>")
+      if (at > 0) return substr(record, at + 2)
+      at = index(record, "</jspluginonline>")
+      if (at > 0) return substr(record, at + length("</jspluginonline>"))
       return ""
     }
     BEGIN { RS = "<jspluginonline"; first = 1 }
@@ -61,8 +74,11 @@ clean_publish() {
       name = xml_value(segment, "name")
       url = xml_value(segment, "url")
       sub(/\/+$/, "", url)
-      if (name == legacy) next
-      if (tolower(url) == our && name != current) next
+      if (name == legacy) { printf "%s", tail_after_element($0); next }
+      if (tolower(url) == our && name != current) { printf "%s", tail_after_element($0); next }
+      if (remove_current == 1 && name == current && tolower(url) == our) {
+        printf "%s", tail_after_element($0); next
+      }
       printf "<jspluginonline%s", $0
     }
   ' "$file" > "$tmp"; then
@@ -84,7 +100,7 @@ clean_auth() {
   [ -f "$file" ] || return 0
   [ -L "$file" ] && return 0
   tmp="$(mktemp "$(dirname "$file")/.sidera-cleanup.XXXXXX")" || return 0
-  if ! awk -v legacy="$OLD_NAME" -v current="$CURRENT_NAME" -v our="$OUR_URL" '
+  if ! awk -v legacy="$OLD_NAME" -v current="$CURRENT_NAME" -v our="$OUR_URL" -v remove_current="$REMOVE_CURRENT" '
     function json_value(text, key, parts, count, i) {
       count = split(text, parts, "\"")
       for (i = 1; i < count; i++) {
@@ -125,7 +141,8 @@ clean_auth() {
           normalized_path = tolower(entry_path)
           sub(/\/+$/, "", normalized_path)
           if (!(entry_name == legacy ||
-                (normalized_path == our && entry_name != current))) {
+                (normalized_path == our && entry_name != current) ||
+                (remove_current == 1 && normalized_path == our && entry_name == current))) {
             if (entry_name == current && normalized_path == our) {
               # WPS 可能把当前加载项保留成 enable:false，导致每次重启都再次询问。
               gsub(/"enable"[[:space:]]*:[[:space:]]*false/, "\"enable\": true", buffer)

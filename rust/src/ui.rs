@@ -62,6 +62,9 @@ pub enum SetHit {
     ResetSlider(SliderId),
     Autostart,
     WpsDebug,
+    WpsTest,
+    WpsRemove,
+    WpsRegister,
     RightClick,
     EraseTrig,
     ClearLog,
@@ -707,13 +710,13 @@ fn settings_row_y(app: &App, row: i32) -> i32 {
     settings_rect(app).y + 84 + (row - (l.page * l.rows) as i32) * l.stride
 }
 
+fn settings_wps_test_row(app: &App) -> i32 {
+    if app.erase_by_finger { 6 } else { 8 }
+}
+
 /// 大触点相关行起始（手背模式才有阈值/倍率，动作键随之移位）
 fn settings_action_start(app: &App) -> i32 {
-    if app.erase_by_finger {
-        6
-    } else {
-        8
-    }
+    settings_wps_test_row(app) + 3
 }
 
 pub fn settings_sliders(app: &App) -> Vec<SliderDef> {
@@ -783,9 +786,13 @@ pub fn settings_controls(app: &App) -> Vec<(SetHit, R)> {
         h: 38,
     };
     let a = settings_action_start(app);
+    let test_row = settings_wps_test_row(app);
     let mut controls = vec![
         (SetHit::Autostart, full(2)),
         (SetHit::WpsDebug, full(3)),
+        (SetHit::WpsTest, full(test_row)),
+        (SetHit::WpsRemove, full(test_row + 1)),
+        (SetHit::WpsRegister, full(test_row + 2)),
         (SetHit::RightClick, full(4)),
         (SetHit::EraseTrig, full(5)),
         (SetHit::ClearLog, full(a)),
@@ -793,8 +800,10 @@ pub fn settings_controls(app: &App) -> Vec<(SetHit, R)> {
         (SetHit::Quit, full(a + 2)),
     ];
     controls.retain(|(hit, _)| settings_row_visible(app, match hit {
-        SetHit::Autostart => 2, SetHit::WpsDebug => 3, SetHit::RightClick => 4,
-        SetHit::EraseTrig => 5, SetHit::ClearLog => a, SetHit::SysInfo => a + 1,
+        SetHit::Autostart => 2, SetHit::WpsDebug => 3, SetHit::WpsTest => test_row,
+        SetHit::WpsRemove => test_row + 1, SetHit::WpsRegister => test_row + 2,
+        SetHit::RightClick => 4, SetHit::EraseTrig => 5,
+        SetHit::ClearLog => a, SetHit::SysInfo => a + 1,
         SetHit::Quit => a + 2, _ => unreachable!(),
     }));
     let theme_x = p.x + if p.w < 420 { 18 } else { 84 };
@@ -883,8 +892,8 @@ pub fn draw_confirm(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
 }
 
 pub fn diag_rect(app: &App) -> R {
-    let w = 520.min((app.screen_w - 16).max(1));
-    let h = 420.min((app.screen_h - 16).max(1));
+    let w = 620.min((app.screen_w - 16).max(1));
+    let h = 620.min((app.screen_h - 16).max(1));
     R {
         x: (app.screen_w - w) / 2,
         y: ((app.screen_h - h) / 2).max(8),
@@ -906,7 +915,7 @@ pub fn draw_diag(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
     ctx.text_center(
         fonts,
         R { x: p.x, y: p.y + 12, w: p.w, h: 30 },
-        "系统诊断信息",
+        "诊断信息与日志",
         18.0,
         c(palette.text),
     );
@@ -922,7 +931,10 @@ pub fn draw_diag(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
             }
             visible.push('…');
         }
-        ctx.text(fonts, &visible, (p.x + 20) as f32, yy as f32, 13.0, c(palette.muted));
+        let ink = if visible.contains("[ERROR]") { c(palette.danger) }
+            else if visible.contains("[WARN]") { c(palette.warning) }
+            else { c(palette.muted) };
+        ctx.text(fonts, &visible, (p.x + 20) as f32, yy as f32, 13.0, ink);
         yy += 17;
     }
     let close = R { x: p.x + 20, y: p.y + p.h - 52, w: p.w - 40, h: 38 };
@@ -1683,10 +1695,11 @@ fn draw_settings(app: &App, fonts: &Fonts, ctx: &mut Ctx, icon: Option<&Pixmap>)
                 surface(ctx, r, 8.0, c(palette.paper), c(palette.accent_line));
                 ctx.text_center(fonts, r, "默认", 18.0, c(palette.accent));
             }
-            SetHit::Autostart | SetHit::WpsDebug | SetHit::RightClick => {
+            SetHit::Autostart | SetHit::WpsDebug | SetHit::WpsTest | SetHit::RightClick => {
                 let (label, on) = match hit {
                     SetHit::Autostart => ("开机自启动", is_autostart()),
                     SetHit::WpsDebug => ("WPS 联动", app.wps_debug),
+                    SetHit::WpsTest => ("WPS 测试模式", app.wps_test_mode),
                     _ => ("右键切回光标", app.right_click_cursor_on),
                 };
                 ctx.text(fonts, label, (r.x + 14) as f32, (r.y + 27) as f32, 22.0, c(palette.text));
@@ -1697,6 +1710,16 @@ fn draw_settings(app: &App, fonts: &Fonts, ctx: &mut Ctx, icon: Option<&Pixmap>)
                 ctx.text_center(fonts, R { x: toggle.x - 50, y: r.y, w: 42, h: r.h },
                     if on { "开启" } else { "关闭" }, 17.0, c(palette.muted));
             }
+            SetHit::WpsRemove => {
+                surface(ctx, r, 10.0, c(palette.danger_light), alpha(palette.danger, 65));
+                ctx.text(fonts, "清除 WPS 加载项", (r.x + 14) as f32, (r.y + 27) as f32,
+                    22.0, c(palette.danger));
+            }
+            SetHit::WpsRegister => {
+                surface(ctx, r, 10.0, c(palette.accent_light), c(palette.accent_line));
+                ctx.text(fonts, "重新登记 WPS 加载项", (r.x + 14) as f32, (r.y + 27) as f32,
+                    22.0, c(palette.accent));
+            }
             SetHit::EraseTrig => {
                 ctx.text(fonts, "橡皮触发方式", (r.x + 14) as f32, (r.y + 27) as f32, 22.0, c(palette.text));
                 let badge = R { x: r.x + r.w - 88, y: r.y + 5, w: 74, h: 28 };
@@ -1704,7 +1727,7 @@ fn draw_settings(app: &App, fonts: &Fonts, ctx: &mut Ctx, icon: Option<&Pixmap>)
                 ctx.text_center(fonts, badge, if app.erase_by_finger { "多指" } else { "手背" }, 18.0, c(palette.accent));
             }
             SetHit::ClearLog | SetHit::SysInfo => {
-                let label = if hit == SetHit::SysInfo { "系统诊断信息" }
+                let label = if hit == SetHit::SysInfo { "诊断信息 / 日志" }
                     else if crate::app::now_ms() < app.log_cleared_until { "日志已清空" } else { "清空调试日志" };
                 let glyph = if hit == SetHit::SysInfo { Glyph::Info } else { Glyph::Document };
                 icons::draw(ctx, glyph, (r.x + 13) as f32, (r.y + 8) as f32, 22.0, c(palette.muted), c(palette.muted));
@@ -1787,7 +1810,8 @@ mod tests {
                         if !sliders.contains(&s.id) { sliders.push(s.id); }
                     }
                 }
-                for expected in [SetHit::Autostart, SetHit::WpsDebug, SetHit::RightClick, SetHit::EraseTrig,
+                for expected in [SetHit::Autostart, SetHit::WpsDebug, SetHit::WpsTest,
+                    SetHit::WpsRemove, SetHit::WpsRegister, SetHit::RightClick, SetHit::EraseTrig,
                     SetHit::ClearLog, SetHit::SysInfo, SetHit::Quit, SetHit::Done] {
                     assert!(reached.contains(&expected), "unreachable {expected:?} at {w}x{h}");
                 }

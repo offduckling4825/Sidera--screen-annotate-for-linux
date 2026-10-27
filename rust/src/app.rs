@@ -131,6 +131,7 @@ pub struct App {
     // WPS
     pub wps_fullscreen: bool,
     pub wps_debug: bool,
+    pub wps_test_mode: bool,
     pub wps_connected: bool,
     pub wps_real_pos: i32,
     pub wps_page_index: i32,
@@ -254,6 +255,7 @@ impl App {
             hotkey_ok: false,
             wps_fullscreen: false,
             wps_debug: true,
+            wps_test_mode: false,
             wps_connected: false,
             wps_real_pos: -1,
             wps_page_index: -1,
@@ -753,6 +755,7 @@ fn parse_settings(app: &mut App, content: &str) {
                 }
             }
             "wpsDebug" => app.wps_debug = v == "1",
+            "wpsTestMode" => app.wps_test_mode = v == "1",
             "sbScale" => {
                 if let Ok(f) = v.parse::<f64>() {
                     if f.is_finite() { app.sb_scale = f.clamp(0.6, 1.4); }
@@ -789,8 +792,9 @@ pub fn save_settings(app: &App) {
 
 fn serialize_settings(app: &App) -> String {
     format!(
-        "wpsDebug={}\nsbScale={:.2}\nsidebarAlpha={}\nrightClickCursor={}\neraseByFinger={}\nlargeTouchThreshold={}\nlargeEraseScale10={}\ntheme={}\n",
+        "wpsDebug={}\nwpsTestMode={}\nsbScale={:.2}\nsidebarAlpha={}\nrightClickCursor={}\neraseByFinger={}\nlargeTouchThreshold={}\nlargeEraseScale10={}\ntheme={}\n",
         if app.wps_debug { 1 } else { 0 },
+        if app.wps_test_mode { 1 } else { 0 },
         app.sb_scale,
         app.sidebar_alpha,
         if app.right_click_cursor_on { 1 } else { 0 },

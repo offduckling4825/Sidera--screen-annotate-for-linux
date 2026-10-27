@@ -27,7 +27,7 @@ function fixture({ ready = true, withEvents = true, failingEvent = null } = {}) 
   };
   if (withEvents) app.ApiEvent = api;
   const context = vm.createContext({
-    window: { Application: ready ? app : undefined },
+    window: { _sideraFullMode: true, Application: ready ? app : undefined },
     fetch(url) {
       requests.push(url);
       return Promise.resolve({ ok: true, text: () => Promise.resolve('OK') });

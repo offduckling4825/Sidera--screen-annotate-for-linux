@@ -15,6 +15,8 @@ impl KeyInjector {
         keys.insert(KeyCode::KEY_UP);
         keys.insert(KeyCode::KEY_DOWN);
         keys.insert(KeyCode::KEY_ESC);
+        keys.insert(KeyCode::KEY_LEFTSHIFT);
+        keys.insert(KeyCode::KEY_F5);
         let dev = VirtualDevice::builder()
             .ok()?
             .name("Sidera Virtual Keyboard")
@@ -22,7 +24,7 @@ impl KeyInjector {
             .ok()?
             .build()
             .ok()?;
-        log::info!("[INFO] uinput 虚拟键盘已就绪（翻页/退出）");
+        log::info!("[INFO] uinput 虚拟键盘已就绪（翻页/退出/开始放映）");
         Some(KeyInjector { dev })
     }
 
@@ -32,6 +34,20 @@ impl KeyInjector {
             InputEvent::new(EventType::KEY.0, code, 1),
             InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
             InputEvent::new(EventType::KEY.0, code, 0),
+            InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
+        ]);
+    }
+
+    /// 演示软件通用的“从当前页开始放映”快捷键：Shift+F5。
+    pub fn start_presentation(&mut self) {
+        let shift = KeyCode::KEY_LEFTSHIFT.code();
+        let f5 = KeyCode::KEY_F5.code();
+        let _ = self.dev.emit(&[
+            InputEvent::new(EventType::KEY.0, shift, 1),
+            InputEvent::new(EventType::KEY.0, f5, 1),
+            InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
+            InputEvent::new(EventType::KEY.0, f5, 0),
+            InputEvent::new(EventType::KEY.0, shift, 0),
             InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
         ]);
     }

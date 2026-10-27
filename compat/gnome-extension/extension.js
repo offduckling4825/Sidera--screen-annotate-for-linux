@@ -454,9 +454,19 @@ export default class SideraNative extends Extension {
         case 'input': output?.input(message.rects, message.full); break;
         case 'screenshot': if (this.active()) this.screenshot(); break;
         case 'key': {
+            if (!this.active()) break;
+            const time = GLib.get_monotonic_time();
+            if (message.key === 'StartShow') {
+                const shift = Clutter.KEY_Shift_L;
+                const f5 = Clutter.KEY_F5;
+                this.keyboard.notify_keyval(time, shift, Clutter.KeyState.PRESSED);
+                this.keyboard.notify_keyval(time + 10, f5, Clutter.KeyState.PRESSED);
+                this.keyboard.notify_keyval(time + 20, f5, Clutter.KeyState.RELEASED);
+                this.keyboard.notify_keyval(time + 30, shift, Clutter.KeyState.RELEASED);
+                break;
+            }
             const key = {Up: Clutter.KEY_Up, Down: Clutter.KEY_Down, Escape: Clutter.KEY_Escape}[message.key];
-            if (key && this.active()) {
-                const time = GLib.get_monotonic_time();
+            if (key) {
                 this.keyboard.notify_keyval(time, key, Clutter.KeyState.PRESSED);
                 this.keyboard.notify_keyval(time, key, Clutter.KeyState.RELEASED);
             }

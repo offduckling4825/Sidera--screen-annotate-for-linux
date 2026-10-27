@@ -29,6 +29,7 @@ pub struct WpsShared {
     pub can_start: bool,
     pub start_pending_until: i64,
     pub whiteboard: bool,
+    pub test_mode: bool,
     pub queue: VecDeque<(i64, String)>,
     pub command_failed_until: i64,
     pub events: Vec<WpsEvent>,
@@ -48,6 +49,7 @@ impl Default for WpsShared {
             can_start: false,
             start_pending_until: 0,
             whiteboard: false,
+            test_mode: cfg!(test),
             queue: VecDeque::new(),
             command_failed_until: 0,
             events: Vec::new(),
@@ -118,22 +120,47 @@ fn addin_dir() -> Option<std::path::PathBuf> {
 }
 
 pub fn ensure_addin_registered() {
+    crate::diag_log::info("开始登记 WPS 加载项");
     // 与手动安装复用同一条安全合并路径：修复 enable_dev，保留其他加载项，
     // 备份后原子替换；遇到损坏的 XML 不覆盖原文件。
-    let Some(dir) = addin_dir() else { return };
-    match run_registration(&dir.join("install.sh"), Duration::from_secs(5)) {
-        Ok(output) if output.status.success() => {
-            wps_log(String::from_utf8_lossy(&output.stdout).trim());
+    match register_addin() {
+        Ok(text) => {
+            wps_log(&text);
+            crate::diag_log::info(&format!("WPS 加载项登记成功：{text}"));
         }
-        Ok(output) => wps_log(&format!("加载项登记失败：{}", String::from_utf8_lossy(&output.stderr).trim())),
-        Err(error) => wps_log(&format!("无法运行加载项登记：{}", error)),
+        Err(text) => {
+            wps_log(&text);
+            crate::diag_log::error(&text);
+        }
     }
 }
 
-fn run_registration(script: &std::path::Path, timeout: Duration) -> std::io::Result<std::process::Output> {
+pub fn register_addin() -> Result<String, String> {
+    let dir = addin_dir().ok_or_else(|| "未找到 wps-addin 目录".to_string())?;
+    let output = run_script(&dir.join("install.sh"), &["--repair"], Duration::from_secs(5))
+        .map_err(|error| format!("无法运行加载项登记：{error}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(format!("加载项登记失败：{}", String::from_utf8_lossy(&output.stderr).trim()))
+    }
+}
+
+pub fn remove_addin_registration() -> Result<String, String> {
+    let dir = addin_dir().ok_or_else(|| "未找到 wps-addin 目录".to_string())?;
+    let output = run_script(&dir.join("cleanup-old.sh"), &["--remove-current"], Duration::from_secs(5))
+        .map_err(|error| format!("无法运行加载项清除：{error}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(format!("加载项清除失败：{}", String::from_utf8_lossy(&output.stderr).trim()))
+    }
+}
+
+fn run_script(script: &std::path::Path, args: &[&str], timeout: Duration) -> std::io::Result<std::process::Output> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
-    let mut child = Command::new("bash").arg(script).process_group(0)
+    let mut child = Command::new("bash").arg(script).args(args).process_group(0)
         .stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     let deadline = std::time::Instant::now() + timeout;
     loop {
@@ -244,6 +271,10 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
     if line.is_empty() {
         return;
     }
+    if line.starts_with("SLOW ") {
+        crate::diag_log::warn(line);
+        return;
+    }
     if line.starts_with("COMMAND_FAILED ") {
         let mut s = shared.lock().unwrap();
         s.command_failed_until = now_ms() + 3000;
@@ -268,15 +299,24 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
     let changed_deck = name == "SlideShowState" && pos > 0 && s.real_pos > 0
         && next_deck > 0 && s.deck_epoch > 0 && next_deck != s.deck_epoch;
     if name == "SlideShowState" {
-        // Old add-ins do not send ready=; they must never advertise Start.
-        s.can_start = pos < 1 && extract_num(line, "ready=") == 1;
-        // Missing fields (including older add-ins) clear stale document data.
-        let page = extract_num(line, "page=");
-        let total = extract_num(line, "total=");
-        s.page_total = if total > 0 { total } else { -1 };
-        s.page_index = if page > 0 && (total < 1 || page <= total) { page } else { -1 };
-        s.deck_epoch = extract_num(line, "deck=");
-        s.can_jump = extract_num(line, "jump=") == 1 && s.deck_epoch > 0 && page > 0 && total >= page;
+        if s.test_mode {
+            // Old add-ins do not send ready=; they must never advertise Start.
+            s.can_start = pos < 1 && extract_num(line, "ready=") == 1;
+            // Missing fields (including older add-ins) clear stale document data.
+            let page = extract_num(line, "page=");
+            let total = extract_num(line, "total=");
+            s.page_total = if total > 0 { total } else { -1 };
+            s.page_index = if page > 0 && (total < 1 || page <= total) { page } else { -1 };
+            s.deck_epoch = extract_num(line, "deck=");
+            s.can_jump = extract_num(line, "jump=") == 1 && s.deck_epoch > 0 && page > 0 && total >= page;
+        } else {
+            // Default mode: only API paging and page/animation position.
+            s.can_start = false;
+            s.page_index = -1;
+            s.page_total = -1;
+            s.deck_epoch = -1;
+            s.can_jump = false;
+        }
         let (can_jump, epoch) = (s.can_jump, s.deck_epoch);
         s.queue.retain(|(_, cmd)| !cmd.starts_with("GOTO ") || (can_jump && jump_command(cmd).is_some_and(|(_, id)| id == epoch)));
     }
@@ -336,7 +376,7 @@ fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>) {
     }
 
     if method == "OPTIONS" {
-        if !matches!(path, "/hello" | "/push" | "/poll") && crate::bridge_http::static_path(path).is_none() {
+        if !matches!(path, "/hello" | "/push" | "/poll" | "/config") && crate::bridge_http::static_path(path).is_none() {
             crate::bridge_http::reply(stream, 404, "text/plain", b"Not found"); return;
         }
         reply(stream, b"");
@@ -353,6 +393,10 @@ fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>) {
         "/hello" => {
             wps_log(&format!("加载项问候: {}", m.unwrap_or_default()));
             reply(stream, b"OK sidera");
+        }
+        "/config" => {
+            let full = shared.lock().unwrap().test_mode;
+            reply(stream, if full { b"mode=full" } else { b"mode=default" });
         }
         "/push" => {
             if let Some(m) = m {
@@ -398,6 +442,7 @@ impl WpsBridge {
         let listener = TcpListener::bind(("127.0.0.1", 16666)).ok()?;
         let bridge = Self::from_listener(listener);
         wps_log("WPS 桥已启动，监听 127.0.0.1:16666");
+        crate::diag_log::info("WPS 桥已启动，监听 127.0.0.1:16666");
         match addin_dir() {
             Some(d) => wps_log(&format!("加载项目录: {}", d.display())),
             None => wps_log("警告: 未找到 wps-addin 目录（请设置 WPS_ADDIN_DIR）"),
@@ -458,12 +503,12 @@ impl WpsBridge {
 
     pub fn start_available(&self) -> bool {
         let s = self.shared.lock().unwrap();
-        s.connected && now_ms() - s.last_seen <= 3000 && s.can_start && s.real_pos < 1 && !s.whiteboard
+        s.test_mode && s.connected && now_ms() - s.last_seen <= 3000 && s.can_start && s.real_pos < 1 && !s.whiteboard
     }
 
     pub fn page_progress(&self) -> (i32, i32) {
         let s = self.shared.lock().unwrap();
-        if s.connected && now_ms() - s.last_seen <= 3000 && !s.whiteboard {
+        if s.test_mode && s.connected && now_ms() - s.last_seen <= 3000 && !s.whiteboard {
             (s.page_index, s.page_total)
         } else {
             (-1, -1)
@@ -475,6 +520,7 @@ impl WpsBridge {
         let start = cmd == "START";
         if !matches!(cmd, "START" | "NEXT" | "PREV" | "EXIT") || !s.connected
             || now_ms() - s.last_seen > 3000 || s.whiteboard
+            || (!s.test_mode && !matches!(cmd, "NEXT" | "PREV"))
             || (start && (!s.can_start || s.real_pos > 0 || now_ms() < s.start_pending_until))
             || (!start && s.real_pos < 1)
             || now_ms() < s.command_failed_until {
@@ -490,13 +536,13 @@ impl WpsBridge {
 
     pub fn jump_epoch(&self) -> Option<i32> {
         let s = self.shared.lock().unwrap();
-        (s.connected && now_ms() - s.last_seen <= 3000 && !s.whiteboard && s.can_jump
+        (s.test_mode && s.connected && now_ms() - s.last_seen <= 3000 && !s.whiteboard && s.can_jump
             && now_ms() >= s.command_failed_until).then_some(s.deck_epoch)
     }
 
     pub fn enqueue_jump(&self, page: i32, epoch: i32) -> bool {
         let mut s = self.shared.lock().unwrap();
-        if !s.connected || now_ms() - s.last_seen > 3000 || s.whiteboard || !s.can_jump
+        if !s.test_mode || !s.connected || now_ms() - s.last_seen > 3000 || s.whiteboard || !s.can_jump
             || epoch != s.deck_epoch || page < 1 || page > s.page_total || now_ms() < s.command_failed_until {
             return false;
         }
@@ -517,6 +563,24 @@ impl WpsBridge {
         }
     }
 
+    pub fn set_test_mode(&self, on: bool) {
+        let mut s = self.shared.lock().unwrap();
+        if s.test_mode == on { return; }
+        s.test_mode = on;
+        crate::diag_log::info(if on { "WPS 模式切换：测试模式" } else { "WPS 模式切换：默认模式" });
+        s.start_pending_until = 0;
+        if on {
+            s.queue.clear();
+        } else {
+            s.page_index = -1;
+            s.page_total = -1;
+            s.can_jump = false;
+            s.deck_epoch = -1;
+            s.can_start = false;
+            s.queue.retain(|(_, cmd)| matches!(cmd.as_str(), "NEXT" | "PREV"));
+        }
+    }
+
     pub fn take_events(&self) -> Vec<WpsEvent> {
         let mut s = self.shared.lock().unwrap();
         std::mem::take(&mut s.events)
@@ -534,6 +598,7 @@ impl WpsBridge {
             // 保留已知页号，短暂断线后重连同一页不清除已有墨迹。
             drop(s);
             wps_log("客户端离线（3s 无请求）");
+            crate::diag_log::warn("WPS 加载项 3 秒无请求，判定离线");
             return true;
         }
         false
@@ -550,12 +615,12 @@ mod tests {
         std::fs::create_dir_all(&directory).unwrap();
         let script = directory.join("install.sh");
         std::fs::write(&script, "printf registered").unwrap();
-        let output = run_registration(&script, Duration::from_secs(1)).unwrap();
+        let output = run_script(&script, &[], Duration::from_secs(1)).unwrap();
         assert!(output.status.success());
         assert_eq!(output.stdout, b"registered");
         std::fs::write(&script, "exec sleep 30").unwrap();
         let start = std::time::Instant::now();
-        assert_eq!(run_registration(&script, Duration::from_millis(100)).unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(run_script(&script, &[], Duration::from_millis(100)).unwrap_err().kind(), std::io::ErrorKind::TimedOut);
         assert!(start.elapsed() < Duration::from_secs(2));
         std::fs::remove_dir_all(directory).unwrap();
     }
@@ -756,6 +821,25 @@ mod tests {
             assert!(!bridge.connected());
             assert!(!bridge.ready());
         }
+    }
+
+    #[test]
+    fn default_mode_keeps_only_position_and_api_paging() {
+        let bridge = WpsBridge::from_listener(TcpListener::bind(("127.0.0.1", 0)).unwrap());
+        {
+            let mut s = bridge.shared.lock().unwrap();
+            s.connected = true; s.last_seen = now_ms(); s.test_mode = false;
+        }
+        handle_line(&bridge.shared,
+            "EVENT SlideShowState pos=3 ready=1 page=5 total=10 jump=1 deck=9");
+        assert_eq!(bridge.position(), Some(3));
+        assert_eq!(bridge.page_progress(), (-1, -1));
+        assert!(!bridge.start_available());
+        assert!(!bridge.enqueue("START"));
+        assert!(!bridge.enqueue("EXIT"));
+        assert!(!bridge.enqueue_jump(5, 9));
+        assert!(bridge.enqueue("NEXT"));
+        assert!(bridge.enqueue("PREV"));
     }
 
     #[test]

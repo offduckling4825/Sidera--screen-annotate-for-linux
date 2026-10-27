@@ -22,6 +22,8 @@ pub const XK_ESCAPE: u32 = 0xff1b;
 pub const XK_UP: u32 = 0xff52;
 pub const XK_DOWN: u32 = 0xff54;
 pub const XK_D: u32 = 0x0064;
+pub const XK_F5: u32 = 0xffc2;
+pub const XK_SHIFT_L: u32 = 0xffe1;
 
 pub struct X11 {
     pub conn: RustConnection,
@@ -42,6 +44,8 @@ pub struct X11 {
     pub key_up: Keycode,
     pub key_down: Keycode,
     pub key_d: Keycode,
+    pub key_f5: Keycode,
+    pub key_shift: Keycode,
     pub atom_touch_major: Atom,
     pub atom_touch_minor: Atom,
     pub atom_pos_x: Atom,
@@ -111,6 +115,8 @@ impl X11 {
             key_up: 0,
             key_down: 0,
             key_d: 0,
+            key_f5: 0,
+            key_shift: 0,
             atom_touch_major,
             atom_touch_minor,
             atom_pos_x,
@@ -119,6 +125,8 @@ impl X11 {
         x.key_up = x.keysym_to_keycode(XK_UP);
         x.key_down = x.keysym_to_keycode(XK_DOWN);
         x.key_d = x.keysym_to_keycode(XK_D);
+        x.key_f5 = x.keysym_to_keycode(XK_F5);
+        x.key_shift = x.keysym_to_keycode(XK_SHIFT_L);
         x.conn.flush()?;
         Ok(x)
     }
@@ -338,17 +346,10 @@ impl X11 {
         ids
     }
 
-    /// 接受触摸所有权（XIAllowEvents + ACCEPT_TOUCH）。
-    /// 不接受的话，多数驱动/服务器只会投递第一个触点，后续手指/手背收不到事件。
-    pub fn allow_touch(&self, deviceid: u16, touchid: u32, window: Window) {
-        let _ = xinput::xi_allow_events(
-            &self.conn,
-            0u32,
-            deviceid,
-            xinput::EventMode::ACCEPT_TOUCH,
-            touchid,
-            window,
-        );
+    /// 接受或拒绝触摸所有权。拒绝时让触摸继续交给下层窗口（例如 WPS）。
+    pub fn allow_touch(&self, deviceid: u16, touchid: u32, window: Window, accept: bool) {
+        let mode = if accept { xinput::EventMode::ACCEPT_TOUCH } else { xinput::EventMode::REJECT_TOUCH };
+        let _ = xinput::xi_allow_events(&self.conn, 0u32, deviceid, mode, touchid, window);
         let _ = self.conn.flush();
     }
 
@@ -376,6 +377,21 @@ impl X11 {
             0,
             0,
         );
+        let _ = self.conn.flush();
+    }
+
+    /// 演示软件“从当前页开始”的快捷键：Shift+F5。
+    pub fn fake_start_show(&self) {
+        for (kind, code) in [
+            (xproto::KEY_PRESS_EVENT, self.key_shift),
+            (xproto::KEY_PRESS_EVENT, self.key_f5),
+            (xproto::KEY_RELEASE_EVENT, self.key_f5),
+            (xproto::KEY_RELEASE_EVENT, self.key_shift),
+        ] {
+            if code != 0 {
+                let _ = xtest::fake_input(&self.conn, kind, code, 0, self.root, 0, 0, 0);
+            }
+        }
         let _ = self.conn.flush();
     }
 
@@ -985,6 +1001,17 @@ impl crate::backend::Backend for X11Plat {
             Key::Escape => self.x11.key_escape,
         };
         self.x11.fake_key(kc);
+    }
+    fn start_presentation(&self) -> bool {
+        if self.x11.is_xwayland {
+            if let Some(injector) = self.key_injector.borrow_mut().as_mut() {
+                injector.start_presentation();
+                return true;
+            }
+            return false;
+        }
+        self.x11.fake_start_show();
+        true
     }
     fn can_inject_keys_without_prompt(&self) -> bool {
         // Xwayland 的 XTEST 可能经 libei 请求 RemoteDesktop 权限。

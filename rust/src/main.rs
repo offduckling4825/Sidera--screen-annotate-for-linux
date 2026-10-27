@@ -7,6 +7,7 @@ mod backend;
 mod bridge_http;
 mod clear_history;
 mod desktop;
+mod diag_log;
 mod clipboard;
 mod gnome;
 mod gesture;
@@ -129,6 +130,7 @@ pub(crate) struct Ip {
     pub(crate) pending_right_click: Option<(i32, i32)>,
     pub(crate) pending_ui: Option<ui::Control>,
     pub(crate) ui_touch: Option<i32>,
+    pub(crate) rejected_touch: HashSet<i32>,
 }
 
 impl Default for Ip {
@@ -152,6 +154,7 @@ impl Default for Ip {
             pending_right_click: None,
             pending_ui: None,
             ui_touch: None,
+            rejected_touch: HashSet::new(),
         }
     }
 }
@@ -606,6 +609,20 @@ pub(crate) fn exit_presentation(rt: &Rt, app: &mut App, wps: Option<&WpsBridge>)
     if app.mode != 0 {
         switch_to_cursor(rt, app);
     }
+    if app.wps_debug && !app.wps_test_mode {
+        // Default mode deliberately avoids the WPS command queue for entering
+        // or leaving a show. Keyboard shortcuts still work when the add-in is
+        // slow or its API is blocked.
+        if wps.is_some_and(|w| w.showing()) {
+            rt.fake_key(Key::Escape);
+        } else if !rt.backend.start_presentation() {
+            crate::diag_log::warn("WPS 默认模式无法注入 Shift+F5，开始放映失败");
+        } else {
+            crate::diag_log::info("WPS 默认模式已发送 Shift+F5 开始放映");
+        }
+        rt.redraw_full(app);
+        return;
+    }
     if app.wps_debug && wps.is_some_and(|w| w.start_available()) {
         // START has its own guard against duplicate taps; never send Esc here.
         if let Some(w) = wps { w.enqueue("START"); }
@@ -697,6 +714,12 @@ pub(crate) fn collect_system_info(rt: &Rt, app: &App) -> String {
     ));
     s.push_str(&format!("WPS 全屏: {}\n", app.wps_fullscreen));
     s.push_str(&format!("WPS 已连接: {}\n", app.wps_connected));
+    s.push_str(&format!("WPS 模式: {}\n", if app.wps_test_mode { "测试（页码/跳页/开始）" } else { "默认（API 翻页 + 快捷键）" }));
+    if let Some(path) = diag_log::path() {
+        s.push_str(&format!("诊断日志: {}\n", path.display()));
+    }
+    s.push_str("\n最近日志：\n");
+    for line in diag_log::tail(10) { s.push_str(&line); s.push('\n'); }
     s
 }
 
@@ -744,6 +767,30 @@ pub(crate) fn handle_settings_hit(rt: &Rt, app: &mut App, hit: SetHit) {
             app.wps_debug = !app.wps_debug;
             app::save_settings(app);
         }
+        SetHit::WpsTest => {
+            app.wps_test_mode = !app.wps_test_mode;
+            app::save_settings(app);
+        }
+        SetHit::WpsRemove => {
+            let (message, ok) = match wps::remove_addin_registration() {
+                Ok(text) => (format!("已清除当前用户的 WPS 加载项。\n请重启 WPS 使改动生效。\n{text}"), true),
+                Err(error) => (format!("清除 WPS 加载项失败：\n{error}"), false),
+            };
+            if ok { diag_log::info(&message); } else { diag_log::error(&message); }
+            app.diag_text = format!("{message}\n\n日志：{}", diag_log::path()
+                .map(|p| p.display().to_string()).unwrap_or_default());
+            app.show_diag = true;
+        }
+        SetHit::WpsRegister => {
+            let (message, ok) = match wps::register_addin() {
+                Ok(text) => (format!("已重新登记 WPS 加载项。\n请重启 WPS 使改动生效。\n{text}"), true),
+                Err(error) => (format!("重新登记 WPS 加载项失败：\n{error}"), false),
+            };
+            if ok { diag_log::info(&message); } else { diag_log::error(&message); }
+            app.diag_text = format!("{message}\n\n日志：{}", diag_log::path()
+                .map(|p| p.display().to_string()).unwrap_or_default());
+            app.show_diag = true;
+        }
         SetHit::RightClick => {
             app.right_click_cursor_on = !app.right_click_cursor_on;
             app::save_settings(app);
@@ -755,6 +802,7 @@ pub(crate) fn handle_settings_hit(rt: &Rt, app: &mut App, hit: SetHit) {
         }
         SetHit::ClearLog => {
             let _ = std::fs::remove_file(wps::log_file());
+            diag_log::clear();
             app.log_cleared_until = now_ms() + 1200;
         }
         SetHit::SysInfo => {
@@ -1351,8 +1399,12 @@ pub(crate) fn handle_touch(
         }
         return;
     }
+    let wants_touch = app.launch.active() || app.whiteboard || app.mode != 0
+        || app.settings_open || app.confirm_quit || app.show_diag || app.show_input_group_prompt
+        || over_ui(app, x, y);
     match kind {
         TouchKind::Begin => {
+            if !wants_touch { return; }
             ip.touch_ids.insert(id);
             if over_ui(app, x, y) || ip.ui_touch.is_some() {
                 ip.touch_over_ui.insert(id, true);
@@ -1375,6 +1427,8 @@ pub(crate) fn handle_touch(
             }
         }
         TouchKind::Update => {
+            if ip.rejected_touch.contains(&id) { return; }
+            if !ip.touch_ids.contains(&id) { return; }
             if ip.ui_touch == Some(id) {
                 on_motion(rt, app, ip, x, y);
                 return;
@@ -1391,6 +1445,8 @@ pub(crate) fn handle_touch(
             }
         }
         TouchKind::End => {
+            if ip.rejected_touch.remove(&id) { return; }
+            if !ip.touch_ids.contains(&id) { return; }
             ip.touch_ids.remove(&id);
             let over = ip.touch_over_ui.remove(&id).unwrap_or(false);
             if over {
@@ -1518,35 +1574,56 @@ fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev
                     .map(|xp| xp.touch_diameter(touch_dev(e.deviceid, e.sourceid), &e.valuator_mask, &e.axisvalues))
                     .unwrap_or(0.0)
             });
-            // 关键诊断：无条件打印触摸起始（两指应是两条不同 id）
-            log::info!("[TOUCH] begin id={} ({},{}) d={:.1}", e.detail, x, y, d);
-            // 接受触摸所有权，否则后续触点可能收不到
+            let id = e.detail as i32;
+            let wants_touch = app.launch.active() || app.whiteboard || app.mode != 0
+                || app.settings_open || app.confirm_quit || app.show_diag || app.show_input_group_prompt
+                || over_ui(app, x, y);
+            log::info!("[TOUCH] begin id={} ({},{}) d={:.1} mode={} want={}",
+                e.detail, x, y, d, app.mode, wants_touch);
             if let Some(xp) = rt.backend.as_any().downcast_ref::<x11::X11Plat>() {
-                xp.x11.allow_touch(e.deviceid, e.detail, e.event);
+                // Cursor mode must stay click-through: rejecting ownership lets
+                // WPS receive the touch instead of the full-screen overlay.
+                xp.x11.allow_touch(e.deviceid, e.detail, e.event, wants_touch);
             }
-            handle_touch(rt, app, ip, wps, e.detail as i32, x, y, TouchKind::Begin, d);
+            if wants_touch {
+                handle_touch(rt, app, ip, wps, id, x, y, TouchKind::Begin, d);
+            } else {
+                if ip.rejected_touch.len() > 64 { ip.rejected_touch.clear(); }
+                ip.rejected_touch.insert(id);
+                use std::sync::atomic::{AtomicI64, Ordering};
+                static LAST: AtomicI64 = AtomicI64::new(0);
+                let now = now_ms();
+                if now - LAST.load(Ordering::Relaxed) > 2000 {
+                    LAST.store(now, Ordering::Relaxed);
+                    diag_log::info(&format!("光标模式触摸穿透：id={id} ({x},{y})"));
+                }
+            }
         }
         Event::XinputTouchUpdate(e) => {
+            let id = e.detail as i32;
+            if ip.rejected_touch.contains(&id) { return; }
             let x = to_logical(rt, (e.event_x as f64 / 65536.0).round() as i32);
             let y = to_logical(rt, (e.event_y as f64 / 65536.0).round() as i32);
-            let d = ip.touch_shape.get(&(e.detail as i32)).copied().unwrap_or_else(|| {
+            let d = ip.touch_shape.get(&id).copied().unwrap_or_else(|| {
                 rt.backend
                     .as_any()
                     .downcast_ref::<x11::X11Plat>()
                     .map(|xp| xp.touch_diameter(touch_dev(e.deviceid, e.sourceid), &e.valuator_mask, &e.axisvalues))
                     .unwrap_or(0.0)
             });
-            handle_touch(rt, app, ip, wps, e.detail as i32, x, y, TouchKind::Update, d);
+            handle_touch(rt, app, ip, wps, id, x, y, TouchKind::Update, d);
         }
         Event::XinputTouchEnd(e) => {
+            let id = e.detail as i32;
+            if ip.rejected_touch.remove(&id) { return; }
             let x = to_logical(rt, (e.event_x as f64 / 65536.0).round() as i32);
             let y = to_logical(rt, (e.event_y as f64 / 65536.0).round() as i32);
-            handle_touch(rt, app, ip, wps, e.detail as i32, x, y, TouchKind::End, 0.0);
+            handle_touch(rt, app, ip, wps, id, x, y, TouchKind::End, 0.0);
         }
         Event::XinputTouchOwnership(e) => {
-            // 服务器要求确认触摸所有权：接受，确保多指后续事件继续投递
+            let accept = !ip.rejected_touch.contains(&(e.touchid as i32));
             if let Some(xp) = rt.backend.as_any().downcast_ref::<x11::X11Plat>() {
-                xp.x11.allow_touch(e.deviceid, e.touchid, e.event);
+                xp.x11.allow_touch(e.deviceid, e.touchid, e.event, accept);
             }
         }
         _ => {}
@@ -1615,12 +1692,18 @@ fn single_instance() -> Result<Option<UnixListener>, Box<dyn std::error::Error>>
 
 pub(crate) struct Timers {
     last_wps: Instant,
+    last_foreground: Instant,
+    foreground: Option<bool>,
+    foreground_false: u8,
 }
 
 impl Timers {
     pub(crate) fn new() -> Self {
         Timers {
             last_wps: Instant::now() - Duration::from_secs(10),
+            last_foreground: Instant::now() - Duration::from_secs(10),
+            foreground: None,
+            foreground_false: 0,
         }
     }
 }
@@ -1633,7 +1716,7 @@ pub(crate) fn tick(
     wps_bridge: &mut Option<WpsBridge>,
     t: &mut Timers,
 ) {
-    let update = poll_wps(app.wps_debug, app.whiteboard, wps_bridge);
+    let update = poll_wps(app.wps_debug, app.whiteboard, app.wps_test_mode, wps_bridge);
     tick_shared(rt, app, ip, wps_bridge.as_ref(), &update, t);
     resolve_drawing_tools_auto_update(rt, app);
 }
@@ -1697,7 +1780,7 @@ fn tick_launch(rt: &Rt, app: &mut App, bridge: Option<&WpsBridge>, connected: bo
     }
 }
 
-pub(crate) fn poll_wps(enabled: bool, whiteboard: bool, wps_bridge: &mut Option<WpsBridge>) -> WpsUpdate {
+pub(crate) fn poll_wps(enabled: bool, whiteboard: bool, test_mode: bool, wps_bridge: &mut Option<WpsBridge>) -> WpsUpdate {
     // 静止触点没有 Motion 事件，不按闲置时长猜测已经抬手。
     // 取消、设备移除和输出移除由后端明确调用 cancel_input。
     // WPS 桥存在性与设置同步
@@ -1708,6 +1791,7 @@ pub(crate) fn poll_wps(enabled: bool, whiteboard: bool, wps_bridge: &mut Option<
     }
     if let Some(w) = wps_bridge.as_ref() {
         w.set_whiteboard(whiteboard);
+        w.set_test_mode(test_mode);
         w.tick();
         WpsUpdate { connected: w.connected(), events: w.take_events() }
     } else {
@@ -1720,10 +1804,34 @@ pub(crate) fn tick_shared(rt: &Rt, app: &mut App, _ip: &mut Ip,
     if app.update_system_theme(system_theme::dark()) { rt.redraw_full(app); }
     tick_launch(rt, app, wps_bridge, update.connected);
     if app.sidebar_expand_due() { expand_sidebars(rt, app); }
-    // X11 can tell whether WPS/our overlay is focused. When another app is in
-    // front, keep the background slideshow from driving presentation UI/pages.
-    let wps_foreground = rt.wps_foreground();
-    let wps_visible = wps_foreground != Some(false);
+    // Sample foreground at a low rate. Doing this every 4ms caused hundreds of
+    // X11 round trips per second and made the page/mode state flutter on slow
+    // classroom machines. Require two consecutive "not foreground" samples so
+    // a transient focus change cannot leave presentation mode.
+    let had_foreground_sample = t.foreground.is_some();
+    let was_visible = match t.foreground {
+        Some(false) => had_foreground_sample && t.foreground_false < 2,
+        _ => true,
+    };
+    if t.last_foreground.elapsed() >= Duration::from_millis(500) {
+        t.last_foreground = Instant::now();
+        let sample = rt.wps_foreground();
+        if sample == Some(false) { t.foreground_false = t.foreground_false.saturating_add(1); }
+        else { t.foreground_false = 0; }
+        t.foreground = sample;
+        let now_visible = match t.foreground {
+            Some(false) => had_foreground_sample && t.foreground_false < 2,
+            _ => true,
+        };
+        if now_visible != was_visible {
+            if now_visible { diag_log::info("WPS/覆盖层进入前台，恢复放映 UI"); }
+            else { diag_log::warn("WPS/覆盖层离开前台，隐藏放映 UI"); }
+        }
+    }
+    let wps_visible = match t.foreground {
+        Some(false) => had_foreground_sample && t.foreground_false < 2,
+        _ => true,
+    };
     let jump_epoch = if app.wps_debug && wps_visible { wps_bridge.and_then(WpsBridge::jump_epoch) } else { None };
     let jump_changed = app.wps_can_jump != jump_epoch.is_some() || app.wps_deck_epoch != jump_epoch.unwrap_or(-1);
     app.wps_can_jump = jump_epoch.is_some();
@@ -1841,10 +1949,13 @@ pub(crate) fn tick_shared(rt: &Rt, app: &mut App, _ip: &mut Ip,
     }
     let navigation_ready = navigation_route(linked_show, wps_bridge.is_some_and(|w| w.ready()),
         rt.backend.can_inject_keys_without_prompt()) != NavigationRoute::Unavailable;
-    let action = if app.wps_debug && wps_visible && wps_bridge.is_some_and(|w| w.start_available()) {
-        ui::PresentationAction::Start
-    } else if linked_show {
+    let action = if linked_show {
         ui::PresentationAction::End
+    } else if app.wps_debug && wps_visible && (
+        (!app.wps_test_mode && update.connected)
+            || (app.wps_test_mode && wps_bridge.is_some_and(|w| w.start_available()))
+    ) {
+        ui::PresentationAction::Start
     } else {
         ui::PresentationAction::Escape
     };
@@ -1922,6 +2033,7 @@ fn run_application() -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("LIBGL_ALWAYS_SOFTWARE", "1");
 
     let backend = startup::detect_backend()?;
+    diag_log::info(&format!("Sidera {} 启动，后端：{:?}", app::VERSION, backend));
 
     let single = single_instance()?;
     if single.is_none() {
@@ -2343,6 +2455,13 @@ fn run_application() -> Result<(), Box<dyn std::error::Error>> {
         // 一帧结束：合并相交脏区，保留左右工具栏独立刷新。
         rt.end_batch(&app);
 
-        std::thread::sleep(Duration::from_millis(4));
+        // Keep the low-latency frame rate while drawing or animating, but let
+        // low-end classroom CPUs idle between frames. This also reduces X11
+        // traffic while WPS is presenting and Sidera has no input.
+        let busy = app.is_drawing || ip.dragging || ip.slider.is_some()
+            || ip.pending_ui.is_some() || app.press.is_some()
+            || app.launch.active() || ui::sidebar_animating(&app)
+            || app.open_anim != 0 || app.page_picker.is_some();
+        std::thread::sleep(Duration::from_millis(if busy { 4 } else { 12 }));
     }
 }

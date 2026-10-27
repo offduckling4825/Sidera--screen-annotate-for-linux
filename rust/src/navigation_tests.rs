@@ -9,6 +9,7 @@ impl Backend for TestBackend {
     fn present(&self, _: &Pixmap, _: i32, _: i32) {}
     fn set_input_region(&self, rects: &[IRect], _: bool) { *self.input.borrow_mut() = rects.to_vec(); }
     fn fake_key(&self, _: Key) { self.keys.set(self.keys.get() + 1); }
+    fn start_presentation(&self) -> bool { self.keys.set(self.keys.get() + 1); true }
     fn can_inject_keys_without_prompt(&self) -> bool { self.direct_keys }
     fn virtual_right_click(&self, _: i32, _: i32) {}
     fn screenshot(&self) -> Option<(Vec<u8>, u32, u32)> { None }
@@ -28,7 +29,9 @@ fn fixture_with_foreground(direct_keys: bool, foreground: Option<bool>) -> (Rt, 
         fonts: Fonts::load(), icon: None, icon_big: None,
         batching: Cell::new(true), dirty: RefCell::new(Vec::new()),
     };
-    (rt, App::new(Pixmap::new(100, 100).unwrap(), 100, 100), keys)
+    let mut app = App::new(Pixmap::new(100, 100).unwrap(), 100, 100);
+    app.wps_test_mode = true;
+    (rt, app, keys)
 }
 
 #[test]
@@ -105,6 +108,25 @@ fn background_wps_does_not_enter_presentation_or_switch_pages() {
     assert!(!app.wps_can_jump);
     assert!(!app.sidebar_page_visible());
     assert_eq!(app.presentation_action, ui::PresentationAction::Escape);
+}
+
+#[test]
+fn default_wps_mode_uses_shift_f5_to_start_and_escape_to_exit() {
+    let (rt, mut app, keys) = fixture(false);
+    app.wps_test_mode = false;
+    let bridge = WpsBridge::from_listener(std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap());
+    {
+        let mut s = bridge.shared.lock().unwrap();
+        s.connected = true; s.last_seen = now_ms(); s.real_pos = -1;
+    }
+    exit_presentation(&rt, &mut app, Some(&bridge));
+    assert_eq!(keys.get(), 1, "default start must inject Shift+F5");
+    {
+        let mut s = bridge.shared.lock().unwrap();
+        s.real_pos = 3;
+    }
+    exit_presentation(&rt, &mut app, Some(&bridge));
+    assert_eq!(keys.get(), 2, "default exit must inject Escape");
 }
 
 #[test]

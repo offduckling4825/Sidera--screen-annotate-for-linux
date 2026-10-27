@@ -11,7 +11,11 @@ SRC="$(dirname "$(readlink -f "$0")")/publish.xml"
 if [ ! -f "$SRC" ]; then
   SRC="/usr/share/sidera/wps-addin/publish.xml"
 fi
-python3 - "$SRC" "$DST/publish.xml" <<'PY'
+REPAIR=0
+for arg in "$@"; do
+  [ "$arg" = "--repair" ] && REPAIR=1
+done
+python3 - "$SRC" "$DST/publish.xml" "$REPAIR" <<'PY'
 import os
 import fcntl
 from pathlib import Path
@@ -20,6 +24,7 @@ import sys
 import tempfile
 from xml.dom import minidom
 from xml.parsers.expat import ExpatError
+import re
 
 
 def parse_registration(data):
@@ -37,6 +42,24 @@ def project_entries(document):
             and node.getAttribute("name") in ("sidera-bridge", "screen-annotate-bridge")]
 
 
+def salvage_registration(data):
+    """Rebuild from complete <jspluginonline> elements when the wrapper is damaged."""
+    text = data.decode("utf-8-sig", errors="replace")
+    elements = re.findall(
+        r"<jspluginonline\b[^>]*?/>|<jspluginonline\b[^>]*?>.*?</jspluginonline>",
+        text, re.DOTALL)
+    valid = []
+    for element in elements:
+        try:
+            node = minidom.parseString(element).documentElement
+            if node.tagName == "jspluginonline" and not node.namespaceURI:
+                valid.append(element)
+        except ExpatError:
+            continue
+    rebuilt = '<?xml version="1.0" encoding="UTF-8"?><jsplugins>' + "".join(valid) + "</jsplugins>"
+    return parse_registration(rebuilt.encode("utf-8")), len(valid)
+
+
 def write_temp(destination, contents, prefix, mode):
     # Same directory guarantees os.replace stays on the same filesystem.
     with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=prefix, delete=False) as stream:
@@ -52,7 +75,7 @@ def write_temp(destination, contents, prefix, mode):
     return path
 
 
-def install(source, destination):
+def install(source, destination, repair):
     template = parse_registration(source.read_bytes())
     entries = project_entries(template)
     if len(entries) != 1 or entries[0].getAttribute("name") != "sidera-bridge":
@@ -64,8 +87,19 @@ def install(source, destination):
         original = destination.read_bytes()
     except FileNotFoundError:
         original = None
-    document = parse_registration(original) if original is not None else template
-    changed = original is None
+    if original is None:
+        document = template
+        changed = True
+    else:
+        try:
+            document = parse_registration(original)
+            changed = False
+        except ExpatError as error:
+            if not repair:
+                raise
+            document, recovered = salvage_registration(original)
+            changed = True
+            print(f"登记文件损坏，已备份并从 {recovered} 个可恢复条目重建：{error}")
     entries = project_entries(document)
     if entries:
         for key, value in expected.attributes.items():
@@ -101,6 +135,7 @@ def install(source, destination):
 
 try:
     destination = Path(sys.argv[2])
+    repair = len(sys.argv) > 3 and sys.argv[3] == "1"
     destination.parent.mkdir(parents=True, exist_ok=True)
     # Serialize our manual/automatic registration paths before reading XML.
     # Keep the lock inode in place; unlinking it would let a third writer bypass it.
@@ -108,7 +143,7 @@ try:
                          os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, "r+b") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        install(Path(sys.argv[1]), destination)
+        install(Path(sys.argv[1]), destination, repair)
 except (OSError, ValueError, ExpatError) as error:
     print(f"错误：WPS 加载项登记失败，原文件未替换：{error}", file=sys.stderr)
     sys.exit(1)
