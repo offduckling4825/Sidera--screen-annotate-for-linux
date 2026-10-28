@@ -5,9 +5,9 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io::Write;
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::app::now_ms;
 
@@ -30,6 +30,7 @@ pub struct WpsShared {
     pub start_pending_until: i64,
     pub whiteboard: bool,
     pub test_mode: bool,
+    pub sse_clients: usize,
     pub queue: VecDeque<(i64, String)>,
     pub command_failed_until: i64,
     pub events: Vec<WpsEvent>,
@@ -50,6 +51,7 @@ impl Default for WpsShared {
             start_pending_until: 0,
             whiteboard: false,
             test_mode: cfg!(test),
+            sse_clients: 0,
             queue: VecDeque::new(),
             command_failed_until: 0,
             events: Vec::new(),
@@ -275,6 +277,14 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
         crate::diag_log::warn(line);
         return;
     }
+    if line.starts_with("SSE ") {
+        if line.contains("fallback") || line.contains("unavailable") || line.contains("failed") {
+            crate::diag_log::warn(line);
+        } else {
+            crate::diag_log::info(line);
+        }
+        return;
+    }
     if line.starts_with("COMMAND_FAILED ") {
         let mut s = shared.lock().unwrap();
         s.command_failed_until = now_ms() + 3000;
@@ -359,7 +369,96 @@ fn jump_command(cmd: &str) -> Option<(i32, i32)> {
     (page > 0 && epoch > 0 && words.next().is_none()).then_some((page, epoch))
 }
 
-fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>) {
+fn take_command(s: &mut WpsShared) -> Option<String> {
+    s.queue.retain(|(created, _)| now_ms() - created <= 1500);
+    let playing = s.real_pos > 0;
+    let can_start = s.can_start;
+    let (can_jump, epoch, total) = (s.can_jump, s.deck_epoch, s.page_total);
+    if s.whiteboard {
+        s.queue.clear();
+    } else {
+        s.queue.retain(|(_, cmd)| {
+            if let Some((page, id)) = jump_command(cmd) { can_jump && epoch == id && page <= total }
+            else if cmd == "START" { can_start && !playing } else { playing }
+        });
+    }
+    s.queue.pop_front().map(|(_, cmd)| cmd)
+}
+
+fn take_poll_command(shared: &Arc<Mutex<WpsShared>>) -> Option<String> {
+    let mut s = shared.lock().unwrap();
+    if !s.connected { wps_log("WPS 加载项已就绪"); }
+    s.connected = true;
+    s.last_seen = now_ms();
+    take_command(&mut s)
+}
+
+fn sse_headers(stream: &mut TcpStream) -> std::io::Result<()> {
+    let port = stream.local_addr().map(|address| address.port()).unwrap_or(16666);
+    let header = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\n         Cache-Control: no-cache, no-store\r\nConnection: keep-alive\r\n         Access-Control-Allow-Origin: http://127.0.0.1:{port}\r\nVary: Origin\r\n         X-Accel-Buffering: no\r\n\r\n");
+    stream.write_all(header.as_bytes())?;
+    stream.flush()
+}
+
+fn sse_send(stream: &mut TcpStream, payload: &str) -> std::io::Result<()> {
+    stream.write_all(payload.as_bytes())?;
+    stream.flush()
+}
+
+fn handle_sse(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>, shutdown: &Arc<AtomicBool>) {
+    if sse_headers(stream).is_err() { return; }
+    let clients = {
+        let mut s = shared.lock().unwrap();
+        s.sse_clients = s.sse_clients.saturating_add(1);
+        s.connected = true;
+        s.last_seen = now_ms();
+        s.sse_clients
+    };
+    crate::diag_log::info(&format!("SSE 已连接（clients={clients}）"));
+    let mut last_mode: Option<bool> = None;
+    let mut last_beat = Instant::now();
+    loop {
+        if shutdown.load(Ordering::Relaxed) { break; }
+        let (mode, command) = {
+            let mut s = shared.lock().unwrap();
+            s.connected = true;
+            s.last_seen = now_ms();
+            (s.test_mode, take_command(&mut s))
+        };
+        let mut wrote = false;
+        if last_mode != Some(mode) {
+            let data = format!("event: mode\ndata: {}\n\n", if mode { "full" } else { "default" });
+            if sse_send(stream, &data).is_err() { break; }
+            last_mode = Some(mode);
+            wrote = true;
+        }
+        if let Some(command) = command {
+            wps_log(&format!("加载项取走 {}", command));
+            if sse_send(stream, &format!("data: {command}\n\n")).is_err() { break; }
+            wrote = true;
+        }
+        if !wrote && last_beat.elapsed() >= Duration::from_secs(2) {
+            if sse_send(stream, ": keepalive\n\n").is_err() { break; }
+            last_beat = Instant::now();
+        }
+        if wrote { last_beat = Instant::now(); }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let clients = {
+        let mut s = shared.lock().unwrap();
+        s.sse_clients = s.sse_clients.saturating_sub(1);
+        s.last_seen = now_ms();
+        s.sse_clients
+    };
+    if shutdown.load(Ordering::Relaxed) {
+        crate::diag_log::info(&format!("SSE 已关闭（程序退出，clients={clients}）"));
+    } else {
+        crate::diag_log::warn(&format!("SSE 已断开（clients={clients}）"));
+    }
+}
+
+fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>, shutdown: &Arc<AtomicBool>) {
     let request = match crate::bridge_http::read(stream) {
         Ok(request) => request,
         Err(status) => { crate::bridge_http::reply(stream, status, "text/plain", b"Request rejected"); return; }
@@ -376,7 +475,7 @@ fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>) {
     }
 
     if method == "OPTIONS" {
-        if !matches!(path, "/hello" | "/push" | "/poll" | "/config") && crate::bridge_http::static_path(path).is_none() {
+        if !matches!(path, "/hello" | "/push" | "/poll" | "/config" | "/events") && crate::bridge_http::static_path(path).is_none() {
             crate::bridge_http::reply(stream, 404, "text/plain", b"Not found"); return;
         }
         reply(stream, b"");
@@ -390,6 +489,13 @@ fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>) {
         }
     }
     match path {
+        "/events" => {
+            if method != "GET" {
+                crate::bridge_http::reply(stream, 405, "text/plain", b"Method not allowed");
+                return;
+            }
+            handle_sse(stream, shared, shutdown);
+        }
         "/hello" => {
             wps_log(&format!("加载项问候: {}", m.unwrap_or_default()));
             reply(stream, b"OK sidera");
@@ -412,26 +518,17 @@ fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>) {
                 return;
             };
             handle_line(shared, &state);
-            let cmd = {
-                let mut s = shared.lock().unwrap();
-                if !s.connected { wps_log("WPS 加载项已就绪"); }
-                s.connected = true;
-                s.last_seen = now_ms();
-                s.queue.retain(|(created, _)| now_ms() - created <= 1500);
-                let playing = s.real_pos > 0;
-                let can_start = s.can_start;
-                let (can_jump, epoch, total) = (s.can_jump, s.deck_epoch, s.page_total);
-                if s.whiteboard { s.queue.clear(); }
-                else { s.queue.retain(|(_, cmd)| {
-                    if let Some((page, id)) = jump_command(cmd) { can_jump && epoch == id && page <= total }
-                    else if cmd == "START" { can_start && !playing } else { playing }
-                }); }
-                s.queue.pop_front().map(|(_, cmd)| cmd)
-            };
-            if let Some(c) = &cmd {
-                wps_log(&format!("加载项取走 {}", c));
+            let wait = query.split('&').any(|part| part == "wait=1");
+            let deadline = Instant::now() + Duration::from_millis(900);
+            loop {
+                let cmd = take_poll_command(shared);
+                if cmd.is_some() || !wait || Instant::now() >= deadline {
+                    if let Some(c) = &cmd { wps_log(&format!("加载项取走 {}", c)); }
+                    reply(stream, cmd.unwrap_or_default().as_bytes());
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(20));
             }
-            reply(stream, cmd.unwrap_or_default().as_bytes());
         }
         _ => reply_file(stream, path),
     }
@@ -455,14 +552,26 @@ impl WpsBridge {
         let _ = listener.set_nonblocking(true);
         let shared = Arc::new(Mutex::new(WpsShared::default()));
         let shutdown = Arc::new(AtomicBool::new(false));
+        let active = Arc::new(AtomicUsize::new(0));
         let s2 = shared.clone();
         let sd = shutdown.clone();
         let handle = std::thread::spawn(move || {
             while !sd.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((mut st, _)) => {
+                        if active.fetch_add(1, Ordering::Relaxed) >= 8 {
+                            active.fetch_sub(1, Ordering::Relaxed);
+                            drop(st);
+                            continue;
+                        }
                         let _ = st.set_read_timeout(Some(Duration::from_secs(1)));
-                        handle_conn(&mut st, &s2);
+                        let s3 = s2.clone();
+                        let sd3 = sd.clone();
+                        let active3 = active.clone();
+                        std::thread::spawn(move || {
+                            handle_conn(&mut st, &s3, &sd3);
+                            active3.fetch_sub(1, Ordering::Relaxed);
+                        });
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(5));
@@ -675,6 +784,60 @@ mod tests {
         let mut buf = String::new();
         let _ = s.read_to_string(&mut buf);
         buf
+    }
+
+    #[test]
+    fn sse_stream_sends_mode_then_commands() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let bridge = WpsBridge::from_listener(listener);
+        {
+            let mut s = bridge.shared.lock().unwrap();
+            s.connected = true; s.last_seen = now_ms(); s.real_pos = 1; s.test_mode = true;
+        }
+        let client = std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            stream.write_all(format!(
+                "GET /events HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: keep-alive\r\n\r\n"
+            ).as_bytes()).unwrap();
+            let mut text = String::new();
+            let mut buffer = [0u8; 4096];
+            while !text.contains("data: full") {
+                let n = stream.read(&mut buffer).unwrap();
+                if n == 0 { break; }
+                text.push_str(&String::from_utf8_lossy(&buffer[..n]));
+            }
+            stream
+        });
+        let mut stream = client.join().unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(bridge.enqueue("NEXT"));
+        let mut text = String::new();
+        let mut buffer = [0u8; 4096];
+        while !text.contains("data: NEXT") {
+            let n = stream.read(&mut buffer).unwrap();
+            if n == 0 { break; }
+            text.push_str(&String::from_utf8_lossy(&buffer[..n]));
+        }
+        assert!(text.contains("data: NEXT"), "SSE command missing: {text:?}");
+    }
+
+    #[test]
+    fn long_poll_delivers_a_command_before_its_deadline() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let bridge = WpsBridge::from_listener(listener);
+        {
+            let mut s = bridge.shared.lock().unwrap();
+            s.connected = true; s.last_seen = now_ms(); s.real_pos = 1; s.test_mode = true;
+        }
+        let poll = std::thread::spawn(move || request(port,
+            "GET /poll?wait=1&m=EVENT%20SlideShowState%20pos=1 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+        std::thread::sleep(Duration::from_millis(120));
+        assert!(bridge.enqueue("NEXT"));
+        let response = poll.join().unwrap();
+        assert!(response.contains("NEXT"), "long poll missed command: {response:?}");
     }
 
     #[test]

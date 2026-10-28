@@ -11,6 +11,10 @@ var BRIDGE_START_COMMAND = 'SlideShowFromCurrent';
 // 测试模式由 Sidera 的 /config 打开，额外提供页码、跳页和开始放映。
 var BRIDGE_FULL = window._sideraFullMode === true;
 var BRIDGE_MODE_LOCKED = typeof window._sideraFullMode === 'boolean';
+var BRIDGE_SSE_STARTED = false;
+var BRIDGE_SSE_OPEN = false;
+var BRIDGE_SSE = null;
+var BRIDGE_POLL_STARTED = false;
 
 function OnAddinLoad(ribbonUI) {
     var app = bridgeApplication()
@@ -243,7 +247,7 @@ function bridgePoll() {
         finish()
         if (controller) controller.abort()
     }, 1500)
-    bridgeFetch('/poll?m=' + encodeURIComponent(bridgeStateMessage('SlideShowState', st)),
+    bridgeFetch('/poll?wait=1&m=' + encodeURIComponent(bridgeStateMessage('SlideShowState', st)),
         finish, controller ? controller.signal : null, function (cmd) {
             // 已过期轮询的迟到回复不得在下一次放映中执行。
             if (finish() && cmd) bridgeCmd(cmd)
@@ -254,11 +258,11 @@ var BridgeSlideEvents = ['SlideShowBegin', 'SlideShowEnd', 'SlideShowNextSlide',
 // （WPS 的 Next 会补发 NextClick/NextSlide，但 Previous 常只有 OnPrevious 且带旧 pos）
 // 仅记录收到成功回复的快照；同页重载脚本时保留确认状态和在途请求。
 var _lastState = window._sideraLastState || (window._sideraLastState = { pos: -1, click: -1, ready: 0, page: -1, total: -1, jump: 0, deck: -1 });
-function bridgePushIfChanged(eventName) {
+function bridgePushIfChanged(eventName, force) {
     try {
         if (window._sideraStateInFlight) return
         var st = bridgeState()
-        if (st.pos !== _lastState.pos || st.click !== _lastState.click || st.ready !== _lastState.ready ||
+        if (force || st.pos !== _lastState.pos || st.click !== _lastState.click || st.ready !== _lastState.ready ||
             st.page !== _lastState.page || st.total !== _lastState.total || st.jump !== _lastState.jump || st.deck !== _lastState.deck) {
             var controller = typeof AbortController == 'function' ? new AbortController() : null
             var pending = { timer: null }
@@ -286,6 +290,80 @@ function bridgePushIfChanged(eventName) {
         }
     } catch (e) {}
 }
+function bridgeSseLog(message) {
+    if (BRIDGE_MODE_LOCKED) return
+    bridgeFetch('/push?m=' + encodeURIComponent('SSE ' + message))
+}
+
+function bridgeStartPolling() {
+    if (window._sideraPollStarted) return
+    window._sideraPollStarted = true
+    bridgeFetch('/hello?m=sidera-bridge')
+    bridgeSyncConfig()
+    setInterval(function () {
+        try {
+            var current = bridgeApplication()
+            var currentApi = current && (current.ApiEvent || (window.wps && window.wps.ApiEvent))
+            if (window._sideraEventOwner !== currentApi) startBridge()
+        } catch (e) {}
+        window._sideraConfigTick = (window._sideraConfigTick || 0) + 1
+        if (window._sideraConfigTick % 30 === 0) bridgeSyncConfig()
+        bridgePoll()
+    }, 300)
+}
+
+function bridgeStartSse() {
+    if (window._sideraSseStarted) return
+    window._sideraSseStarted = true
+    if (typeof EventSource !== 'function') {
+        bridgeSseLog('unavailable')
+        bridgeStartPolling()
+        return
+    }
+    try {
+        var es = new EventSource(BRIDGE_URL + '/events')
+        BRIDGE_SSE = es
+        var opened = false
+        var failTimer = setTimeout(function () {
+            if (opened) return
+            try { es.close() } catch (e) {}
+            BRIDGE_SSE_OPEN = false
+            bridgeSseLog('fallback timeout')
+            bridgeStartPolling()
+        }, 3000)
+        es.onopen = function () {
+            opened = true
+            clearTimeout(failTimer)
+            BRIDGE_SSE_OPEN = true
+            // Server sends the mode event immediately; push once now and again
+            // after it arrives so page/state is available before the first turn.
+            bridgePushIfChanged('SlideShowState', true)
+        }
+        es.onmessage = function (event) {
+            var data = (event && event.data ? event.data : '').trim()
+            if (!data) return
+            if (data.indexOf('MODE ') === 0) {
+                var full = data.slice(5) === 'full'
+                if (full !== BRIDGE_FULL) {
+                    BRIDGE_FULL = full
+                    _lastState.pos = -2; _lastState.click = -2; _lastState.page = -2
+                    _lastState.total = -2; _lastState.jump = -2; _lastState.deck = -2
+                }
+                bridgePushIfChanged('SlideShowState', true)
+                return
+            }
+            bridgeCmd(data)
+        }
+        es.onerror = function () {
+            BRIDGE_SSE_OPEN = false
+        }
+    } catch (e) {
+        BRIDGE_SSE_OPEN = false
+        bridgeSseLog('failed')
+        bridgeStartPolling()
+    }
+}
+
 function scheduleBridgeStart() {
     if (window._sideraStartRetry != null) return
     window._sideraStartRetry = setTimeout(function () {
@@ -330,6 +408,9 @@ function startBridge() {
                             if (window._sideraEventOwner !== api) return
                             var st = bridgeState()
                             bridgeFetch('/push?m=' + encodeURIComponent(bridgeStateMessage(ev, st)))
+                            if (BRIDGE_SSE_OPEN) {
+                                setTimeout(function () { bridgePushIfChanged(ev) }, 180)
+                            }
                         }
                         api.AddApiEventListener(ev, handler)
                         handlers[ev] = handler
@@ -341,20 +422,7 @@ function startBridge() {
         }
     } catch (e) { eventsReady = false }
     if (!eventsReady) scheduleBridgeStart()
-    // 轮询同时带当前状态：重启批注程序也能恢复页号，不依赖 WPS 事件顺序。
-    if (!window._sideraTimerStarted) {
-        window._sideraTimerStarted = true
-        bridgeFetch('/hello?m=sidera-bridge')
-        bridgeSyncConfig()
-        setInterval(function () {
-            try {
-                var current = bridgeApplication()
-                var currentApi = current && (current.ApiEvent || (window.wps && window.wps.ApiEvent))
-                if (window._sideraEventOwner !== currentApi) startBridge()
-            } catch (e) {}
-            window._sideraConfigTick = (window._sideraConfigTick || 0) + 1
-            if (window._sideraConfigTick % 7 === 0) bridgeSyncConfig()
-            bridgePoll()                       // 轮询本身已携带完整状态
-        }, 300)
-    }
+    // SSE is the default command channel. If EventSource is unavailable or
+    // cannot open, fall back to the bounded long-poll below.
+    bridgeStartSse()
 }

@@ -2,7 +2,7 @@
 
 加载项把 WPS 的放映位置和状态回传给批注程序，使批注只在真换页时切换，页内动画不切缓存。内容由 Sidera 的 `http://127.0.0.1:16666/` 提供。
 
-默认模式只读取 `pos`/`click` 并执行 `NEXT/PREV`，开始/退出放映由 Sidera 注入 Shift+F5/Esc；设置里的“WPS 测试模式”会通过 `/config` 打开页码、跳页和 API 开始放映。测试模式仍保留给需要完整联动的教室，默认模式优先保证低性能机器和触摸屏可用。
+默认模式只读取 `pos`/`click` 并执行 `NEXT/PREV`，开始/退出放映由 Sidera 注入 Shift+F5/Esc；设置里的“WPS 测试模式”会通过 SSE 的 `MODE` 事件打开页码、跳页和 API 开始放映。命令通道默认使用 `/events` SSE 单连接；WPS 不支持 EventSource 或 3 秒内无法建立连接时，自动回退到约 900ms 长轮询。测试模式仍保留给需要完整联动的教室，默认模式优先保证低性能机器和触摸屏可用。
 
 ## 部署与使用
 
@@ -44,8 +44,9 @@ C++ 旧版共用此加载项与新桥，但界面仍以 NEXT/PREV/EXIT 为主，
 
 - `/hello`：健康问候，不标记放映已联动。
 - `/push?m=EVENT ...`：事件和状态上报。
-- `/poll?m=EVENT SlideShowState ...`：状态快照及一条待执行命令；默认模式只含 `pos/click`，测试模式含页码/跳页字段。
-- `/config`：返回 `mode=default` 或 `mode=full`，加载项据此降低或恢复 WPS API 读取。
+- `/events`：SSE 命令通道；连接时先下发 `MODE default/full`，之后推送 `NEXT/PREV/START/EXIT/GOTO`，空闲时发送注释心跳。
+- `/poll?m=EVENT SlideShowState ...`：SSE 不可用时的长轮询回退；默认模式只含 `pos/click`，测试模式含页码/跳页字段。
+- `/config`：回退模式使用，返回 `mode=default` 或 `mode=full`。
 - 静态白名单：manifest.xml、index.html、main.js、js/bridge.js、ribbon.xml；未知资源返回 404。
 
 `pos` 是放映位置，用于批注分页；`page` 是 Slide.SlideIndex，`total` 是 Slides.Count，不用显示页码替代放映导航位置。自定义放映的两种编号可能不同。旧加载项缺少新字段时保持基本翻页，不伪造总页数。
@@ -56,7 +57,7 @@ C++ 旧版共用此加载项与新桥，但界面仍以 NEXT/PREV/EXIT 为主，
 
 ## 重试与边界
 
-状态上报收到成功 HTTP 和 OK 才确认；失败/3 秒超时后重试最新快照，等待期间合并变化，迟到回复不能覆盖新状态。轮询每 300ms 调度，最多一个逻辑在途请求；支持 AbortController 时取消超时请求。服务端命令队列最多 8 条、有效期 1.5 秒，断线、结束放映或白板切换清待执行命令。
+状态上报收到成功 HTTP 和 OK 才确认；失败/3 秒超时后重试最新快照，等待期间合并变化，迟到回复不能覆盖新状态。命令通道默认使用 SSE；回退长轮询时服务端最多保持约 900ms，空闲时请求频率约 1 次/秒，最多一个逻辑在途请求；支持 AbortController 时取消超时请求。服务端命令队列最多 8 条、有效期 1.5 秒，断线、结束放映或白板切换清待执行命令。
 
 HTTP 请求头最多 8 KiB、请求行最多 4 KiB，有读取时限、Host/Origin 和方法校验；只监听回环地址。**sid/seq 和回环地址不是身份认证**，多加载项竞争、完整放映会话及命令 ID/执行确认仍见 [S12](../docs/ISSUES.md#s12--http-会话与资源边界不足)。不要转发端口到外网。
 

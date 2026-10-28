@@ -201,3 +201,40 @@ test('absolute page jump works in show and edit views and rejects a replaced doc
     assert.deepEqual(calls, [10, 8]);
   }
 });
+
+test('SSE opens one event stream and handles mode and commands', () => {
+  const requests = [], commands = [];
+  let eventSource = null;
+  class FakeEventSource {
+    constructor(url) { this.url = url; eventSource = this; }
+    close() { this.closed = true; }
+  }
+  const view = {
+    CurrentShowPosition: 1,
+    GetClickIndex() { return 0; },
+    Next() { commands.push('NEXT'); },
+  };
+  const app = {
+    ActivePresentation: { SlideShowWindow: { View: view } },
+    ApiEvent: { AddApiEventListener() {} },
+  };
+  const context = vm.createContext({
+    window: { _sideraFullMode: true, Application: app },
+    EventSource: FakeEventSource,
+    fetch(url) {
+      requests.push(url);
+      return Promise.resolve({ ok: true, text: () => Promise.resolve('OK') });
+    },
+    setTimeout() { return 1; },
+    clearTimeout() {},
+    encodeURIComponent,
+  });
+  vm.runInContext(source, context);
+  context.startBridge();
+  assert.ok(eventSource && eventSource.url.endsWith('/events'));
+  eventSource.onopen();
+  eventSource.onmessage({ data: 'MODE default' });
+  eventSource.onmessage({ data: 'NEXT' });
+  assert.deepEqual(commands, ['NEXT']);
+  assert.equal(context.BRIDGE_FULL, false);
+});

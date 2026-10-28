@@ -615,10 +615,13 @@ pub(crate) fn exit_presentation(rt: &Rt, app: &mut App, wps: Option<&WpsBridge>)
         // slow or its API is blocked.
         if wps.is_some_and(|w| w.showing()) {
             rt.fake_key(Key::Escape);
-        } else if !rt.backend.start_presentation() {
-            crate::diag_log::warn("WPS 默认模式无法注入 Shift+F5，开始放映失败");
-        } else {
-            crate::diag_log::info("WPS 默认模式已发送 Shift+F5 开始放映");
+        } else if now_ms() >= app.wps_start_sent_until {
+            if !rt.backend.start_presentation() {
+                crate::diag_log::warn("WPS 默认模式无法注入 Shift+F5，开始放映失败");
+            } else {
+                app.wps_start_sent_until = now_ms() + 2500;
+                crate::diag_log::info("WPS 默认模式已发送 Shift+F5 开始放映");
+            }
         }
         rt.redraw_full(app);
         return;
