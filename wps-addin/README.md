@@ -44,7 +44,7 @@ C++ 旧版共用此加载项与新桥，但界面仍以 NEXT/PREV/EXIT 为主，
 
 - `/hello`：健康问候，不标记放映已联动。
 - `/push?m=EVENT ...`：事件和状态上报。
-- `/events`：SSE 命令通道；连接时先下发 `MODE default/full`，之后推送 `NEXT/PREV/START/EXIT/GOTO`，空闲时发送注释心跳。
+- `/events`：SSE 命令通道；连接时先下发 `MODE default/full`，之后推送 `NEXT/PREV/START/EXIT/GOTO`；空闲时每 2 秒注释心跳，并每 5 秒发送一次 `STATE`，让加载项主动推送最新页/放映状态。
 - `/poll?m=EVENT SlideShowState ...`：SSE 不可用时的长轮询回退；默认模式只含 `pos/click`，测试模式含页码/跳页字段。
 - `/config`：回退模式使用，返回 `mode=default` 或 `mode=full`。
 - 静态白名单：manifest.xml、index.html、main.js、js/bridge.js、ribbon.xml；未知资源返回 404。

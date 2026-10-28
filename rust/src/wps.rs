@@ -31,6 +31,7 @@ pub struct WpsShared {
     pub whiteboard: bool,
     pub test_mode: bool,
     pub sse_clients: usize,
+    pub negative_since: i64,
     pub queue: VecDeque<(i64, String)>,
     pub command_failed_until: i64,
     pub events: Vec<WpsEvent>,
@@ -52,6 +53,7 @@ impl Default for WpsShared {
             whiteboard: false,
             test_mode: cfg!(test),
             sse_clients: 0,
+            negative_since: 0,
             queue: VecDeque::new(),
             command_failed_until: 0,
             events: Vec::new(),
@@ -331,6 +333,16 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
         s.queue.retain(|(_, cmd)| !cmd.starts_with("GOTO ") || (can_jump && jump_command(cmd).is_some_and(|(_, id)| id == epoch)));
     }
     if name == "SlideShowEnd" || (name == "SlideShowState" && pos < 1) {
+        let transient_end = name == "SlideShowState" && pos < 1 && s.real_pos > 0;
+        if transient_end {
+            if s.negative_since == 0 { s.negative_since = now_ms(); }
+            if now_ms() - s.negative_since < 1200 {
+                // WPS can briefly return pos=-1 during a slide transition.
+                // Do not tear down the presentation UI on a single sample.
+                return;
+            }
+        }
+        s.negative_since = 0;
         if s.real_pos > 0 {
             s.events.push(WpsEvent::SlideshowEnd);
             wps_log("放映结束");
@@ -342,6 +354,7 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
         return;
     }
     if pos > 0 && (pos != s.real_pos || changed_deck) {
+        s.negative_since = 0;
         s.can_start = false;
         s.start_pending_until = 0;
         s.queue.retain(|(_, cmd)| cmd != "START");
@@ -395,15 +408,30 @@ fn take_poll_command(shared: &Arc<Mutex<WpsShared>>) -> Option<String> {
 
 fn sse_headers(stream: &mut TcpStream) -> std::io::Result<()> {
     let port = stream.local_addr().map(|address| address.port()).unwrap_or(16666);
-    let header = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\n         Cache-Control: no-cache, no-store\r\nConnection: keep-alive\r\n         Access-Control-Allow-Origin: http://127.0.0.1:{port}\r\nVary: Origin\r\n         X-Accel-Buffering: no\r\n\r\n");
+    let header = format!(concat!(
+        "HTTP/1.1 200 OK\r\n",
+        "Content-Type: text/event-stream; charset=utf-8\r\n",
+        "Cache-Control: no-cache, no-store\r\n",
+        "Connection: keep-alive\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "Access-Control-Allow-Origin: http://127.0.0.1:{port}\r\n",
+        "Vary: Origin\r\n",
+        "X-Accel-Buffering: no\r\n",
+        "\r\n"
+    ), port = port);
     stream.write_all(header.as_bytes())?;
     stream.flush()
 }
 
 fn sse_send(stream: &mut TcpStream, payload: &str) -> std::io::Result<()> {
-    stream.write_all(payload.as_bytes())?;
+    let chunk = format!("{:x}\r\n{}\r\n", payload.as_bytes().len(), payload);
+    stream.write_all(chunk.as_bytes())?;
     stream.flush()
+}
+
+fn sse_end(stream: &mut TcpStream) {
+    let _ = stream.write_all(b"0\r\n\r\n");
+    let _ = stream.flush();
 }
 
 fn handle_sse(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>, shutdown: &Arc<AtomicBool>) {
@@ -418,6 +446,7 @@ fn handle_sse(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>, shutdown: 
     crate::diag_log::info(&format!("SSE 已连接（clients={clients}）"));
     let mut last_mode: Option<bool> = None;
     let mut last_beat = Instant::now();
+    let mut last_state = Instant::now();
     loop {
         if shutdown.load(Ordering::Relaxed) { break; }
         let (mode, command) = {
@@ -428,7 +457,7 @@ fn handle_sse(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>, shutdown: 
         };
         let mut wrote = false;
         if last_mode != Some(mode) {
-            let data = format!("event: mode\ndata: {}\n\n", if mode { "full" } else { "default" });
+            let data = format!("data: MODE {}\n\n", if mode { "full" } else { "default" });
             if sse_send(stream, &data).is_err() { break; }
             last_mode = Some(mode);
             wrote = true;
@@ -438,13 +467,21 @@ fn handle_sse(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>, shutdown: 
             if sse_send(stream, &format!("data: {command}\n\n")).is_err() { break; }
             wrote = true;
         }
+        if last_state.elapsed() >= Duration::from_secs(5) {
+            // Ask the add-in to push a fresh page/show snapshot over /push.
+            // This catches a missed End event without recreating a polling loop.
+            if sse_send(stream, "data: STATE\n\n").is_err() { break; }
+            last_state = Instant::now();
+            wrote = true;
+        }
         if !wrote && last_beat.elapsed() >= Duration::from_secs(2) {
             if sse_send(stream, ": keepalive\n\n").is_err() { break; }
             last_beat = Instant::now();
         }
-        if wrote { last_beat = Instant::now(); }
+        if wrote { last_beat = Instant::now(); last_state = Instant::now(); }
         std::thread::sleep(Duration::from_millis(20));
     }
+    sse_end(stream);
     let clients = {
         let mut s = shared.lock().unwrap();
         s.sse_clients = s.sse_clients.saturating_sub(1);
@@ -803,11 +840,12 @@ mod tests {
             ).as_bytes()).unwrap();
             let mut text = String::new();
             let mut buffer = [0u8; 4096];
-            while !text.contains("data: full") {
+            while !text.contains("data: MODE full") {
                 let n = stream.read(&mut buffer).unwrap();
                 if n == 0 { break; }
                 text.push_str(&String::from_utf8_lossy(&buffer[..n]));
             }
+            assert!(text.contains("Transfer-Encoding: chunked"), "SSE must be chunked: {text:?}");
             stream
         });
         let mut stream = client.join().unwrap();
@@ -888,7 +926,7 @@ mod tests {
         bridge.shared.lock().unwrap().queue.front_mut().unwrap().0 -= 1600;
         assert!(!request(port, poll_request).contains("PREV"), "过期指令不得补执行");
         assert!(bridge.enqueue("EXIT"));
-        request(port, "GET /poll?m=EVENT%20SlideShowState%20pos=-1%20click=-1 HTTP/1.1\r\nHost: x\r\n\r\n");
+        request(port, "GET /push?m=EVENT%20SlideShowEnd%20pos=-1%20click=-1 HTTP/1.1\r\nHost: x\r\n\r\n");
         assert!(!bridge.ready());
         assert!(bridge.shared.lock().unwrap().queue.is_empty());
         assert!(bridge.take_events().iter().any(|e| matches!(e, WpsEvent::SlideshowEnd)));
@@ -956,6 +994,7 @@ mod tests {
         handle_line(&bridge.shared, "EVENT SlideShowState pos=2 click=1 page=9 total=31");
         assert_eq!(bridge.page_progress(), (9, 31));
         assert!(bridge.take_events().is_empty(), "counter changes must not clear annotation pages");
+        handle_line(&bridge.shared, "EVENT SlideShowEnd pos=-1 click=-1 ready=1 page=6 total=31");
         handle_line(&bridge.shared, "EVENT SlideShowState pos=-1 click=-1 ready=1 page=6 total=31");
         assert_eq!(bridge.page_progress(), (6, 31), "editing still has a real current slide");
         assert_eq!(bridge.position(), None);
@@ -1024,6 +1063,7 @@ mod tests {
         assert!(!bridge.start_available());
         assert!(bridge.ready());
         assert!(!bridge.enqueue("START"));
+        handle_line(&bridge.shared, "EVENT SlideShowEnd pos=-1 click=-1 ready=1");
         handle_line(&bridge.shared, "EVENT SlideShowState pos=-1 click=-1 ready=1");
         assert!(bridge.enqueue("START"));
         request(port, "GET /poll?m=EVENT%20SlideShowState%20pos=-1%20click=-1 HTTP/1.1\r\nHost: x\r\n\r\n");

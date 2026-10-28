@@ -94,26 +94,42 @@ function bridgePageState(context, view) {
     } catch (e) {}
     return result
 }
-function bridgeState() {
+var _lastShowPos = window._sideraLastShowPos || (window._sideraLastShowPos = -1)
+var _lastShowAt = window._sideraLastShowAt || 0
+function bridgeState(allowEnd) {
+    var hold = allowEnd === false
     var st = { pos: -1, click: -1, ready: 0, page: -1, total: -1, jump: 0, deck: -1 }
     try {
         var context = bridgeShowContext()
         var v = context ? context.window.View : null
-        if (!BRIDGE_FULL) {
-            if (v) {
-                st.pos = v.CurrentShowPosition
+        if (v) {
+            try {
+                var raw = Number(v.CurrentShowPosition)
+                if (isFinite(raw) && raw > 0) {
+                    st.pos = raw
+                    _lastShowPos = raw
+                    _lastShowAt = Date.now()
+                } else if (!hold || _lastShowPos < 1 || Date.now() - _lastShowAt > 2500) {
+                    st.pos = isFinite(raw) ? raw : -1
+                } else {
+                    st.pos = _lastShowPos
+                }
                 st.click = (typeof v.GetClickIndex == 'function') ? v.GetClickIndex() : -1
-            }
-            return st
+            } catch (e) {}
+        } else if (hold && _lastShowPos > 0 && Date.now() - _lastShowAt <= 2500) {
+            // WPS briefly drops SlideShowWindow during transitions; reporting
+            // -1 immediately made the toolbar flap between Start and End.
+            st.pos = _lastShowPos
         }
+        if (!BRIDGE_FULL) { return st }
         var pages = bridgePageState(context, v)
         st.page = pages.page; st.total = pages.total
         var jump = bridgeJumpTarget(context, pages)
         if (jump) { st.jump = 1; st.deck = jump.epoch }
-        if (!v) { st.ready = bridgeStartTarget() ? 1 : 0; return st }
-        var pos = v.CurrentShowPosition
-        var click = (typeof v.GetClickIndex == 'function') ? v.GetClickIndex() : -1
-        st.pos = pos; st.click = click
+        if (!v) {
+            st.ready = st.pos > 0 ? 0 : (bridgeStartTarget() ? 1 : 0)
+            return st
+        }
     } catch (e) {}
     return st
 }
@@ -258,10 +274,10 @@ var BridgeSlideEvents = ['SlideShowBegin', 'SlideShowEnd', 'SlideShowNextSlide',
 // （WPS 的 Next 会补发 NextClick/NextSlide，但 Previous 常只有 OnPrevious 且带旧 pos）
 // 仅记录收到成功回复的快照；同页重载脚本时保留确认状态和在途请求。
 var _lastState = window._sideraLastState || (window._sideraLastState = { pos: -1, click: -1, ready: 0, page: -1, total: -1, jump: 0, deck: -1 });
-function bridgePushIfChanged(eventName, force) {
+function bridgePushIfChanged(eventName, force, allowEnd) {
     try {
         if (window._sideraStateInFlight) return
-        var st = bridgeState()
+        var st = bridgeState(allowEnd)
         if (force || st.pos !== _lastState.pos || st.click !== _lastState.click || st.ready !== _lastState.ready ||
             st.page !== _lastState.page || st.total !== _lastState.total || st.jump !== _lastState.jump || st.deck !== _lastState.deck) {
             var controller = typeof AbortController == 'function' ? new AbortController() : null
@@ -330,18 +346,24 @@ function bridgeStartSse() {
             BRIDGE_SSE_OPEN = false
             bridgeSseLog('fallback timeout')
             bridgeStartPolling()
-        }, 3000)
-        es.onopen = function () {
+        }, 5000)
+        function markOpen() {
+            if (opened) return
             opened = true
             clearTimeout(failTimer)
             BRIDGE_SSE_OPEN = true
-            // Server sends the mode event immediately; push once now and again
-            // after it arrives so page/state is available before the first turn.
+            // Some CEF/EventSource builds omit the open event; receiving any
+            // SSE data also proves the stream is live.
             bridgePushIfChanged('SlideShowState', true)
         }
-        es.onmessage = function (event) {
+        function handleMessage(event) {
+            markOpen()
             var data = (event && event.data ? event.data : '').trim()
             if (!data) return
+            if (data === 'STATE') {
+                bridgePushIfChanged('SlideShowState', true)
+                return
+            }
             if (data.indexOf('MODE ') === 0) {
                 var full = data.slice(5) === 'full'
                 if (full !== BRIDGE_FULL) {
@@ -353,6 +375,13 @@ function bridgeStartSse() {
                 return
             }
             bridgeCmd(data)
+        }
+        es.onopen = markOpen
+        if (typeof es.addEventListener === 'function') {
+            es.addEventListener('open', markOpen)
+            es.addEventListener('message', handleMessage)
+        } else {
+            es.onmessage = handleMessage
         }
         es.onerror = function () {
             BRIDGE_SSE_OPEN = false
@@ -406,10 +435,11 @@ function startBridge() {
                     try {
                         var handler = function () {
                             if (window._sideraEventOwner !== api) return
-                            var st = bridgeState()
+                            var allowEnd = ev === 'SlideShowEnd'
+                            var st = bridgeState(allowEnd)
                             bridgeFetch('/push?m=' + encodeURIComponent(bridgeStateMessage(ev, st)))
                             if (BRIDGE_SSE_OPEN) {
-                                setTimeout(function () { bridgePushIfChanged(ev) }, 180)
+                                setTimeout(function () { bridgePushIfChanged(ev, false, allowEnd) }, 180)
                             }
                         }
                         api.AddApiEventListener(ev, handler)
