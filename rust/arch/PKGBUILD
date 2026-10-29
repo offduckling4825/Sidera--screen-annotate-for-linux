@@ -9,7 +9,7 @@
 #       若要部署到较老的发行版（如 Ubuntu 20.04），仍请用 rust/build_*.sh 的容器交叉构建。
 
 pkgname=sidera
-pkgver=3.0_electro_stable
+pkgver=3.1_electro_testing
 pkgrel=1
 pkgdesc="Linux 屏幕批注与教学演示工具（Rust，X11/Wayland，WPS 联动）"
 arch=('x86_64' 'aarch64')
@@ -49,11 +49,12 @@ package() {
   install -Dm644 README.classroom.md "${pkgdir}/usr/share/doc/sidera/README.classroom.md"
 
   # 图标：内容寻址路径用于刷新桌面图标缓存
-  icon_sha="$(sha256sum sidera.svg | cut -c1-12)"
-  icon_path="/usr/share/pixmaps/sidera-${icon_sha}.svg"
+  icon_sha="$(sha256sum sidera.png | cut -c1-12)"
+  icon_path="/usr/share/pixmaps/sidera-${icon_sha}.png"
   install -Dm644 sidera.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/sidera.svg"
   install -Dm644 sidera.svg "${pkgdir}/usr/share/pixmaps/sidera.svg"
-  install -Dm644 sidera.svg "${pkgdir}${icon_path}"
+  install -Dm644 sidera.png "${pkgdir}/usr/share/pixmaps/sidera.png"
+  install -Dm644 sidera.png "${pkgdir}${icon_path}"
   install -Dm644 sidera.png "${pkgdir}/usr/share/icons/hicolor/256x256/apps/sidera.png"
 
   # desktop 入口（默认、GNOME 原生、X11/XWayland 兼容）

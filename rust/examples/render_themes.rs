@@ -23,7 +23,7 @@ use ui_theme::{c, Preference, Theme};
 
 fn fresh(preference: Preference) -> app::App {
     let mut a = app::App::new(Pixmap::new(1280, 900).unwrap(), 1280, 900);
-    a.apply_theme(Theme { preference, system_dark: false });
+    a.apply_theme(Theme { preference, system_dark: false, ..Default::default() });
     a.mode = 1;
     a.cur_color = 8;
     a.drawing_tools.set_expanded(true);
@@ -65,7 +65,7 @@ fn main() {
         for preference in [Preference::Light, Preference::Dark] {
             for (w, h) in [(980, 512), (640, 360), (320, 240), (1280, 900)] {
                 let mut a = app::App::new(Pixmap::new(w, h).unwrap(), w as i32, h as i32);
-                a.apply_theme(Theme { preference, system_dark: false });
+                a.apply_theme(Theme { preference, system_dark: false, ..Default::default() });
                 a.settings_open = true;
                 for page in 0..ui::settings_layout(&a).pages {
                     a.settings_page = page;
@@ -78,7 +78,7 @@ fn main() {
     }
 
     for preference in [Preference::Light, Preference::Dark] {
-        let theme = Theme { preference, system_dark: false };
+        let theme = Theme { preference, system_dark: false, ..Default::default() };
         let palette = theme.palette();
         let mut sheet = Pixmap::new(1760, 1100).unwrap();
         sheet.fill(c(palette.surface));

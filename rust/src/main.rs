@@ -5,6 +5,7 @@
 mod app;
 mod backend;
 mod bridge_http;
+mod bridge_ws;
 mod clear_history;
 mod desktop;
 mod diag_log;
@@ -758,7 +759,7 @@ pub(crate) fn handle_settings_hit(rt: &Rt, app: &mut App, hit: SetHit) {
     if std::env::var("SIDERA_TRACE").is_ok() { log::info!("[SETTINGS] 命中 {:?}", hit); }
     match hit {
         SetHit::Theme(preference) => {
-            app.apply_theme(ui_theme::Theme { preference, system_dark: system_theme::dark() });
+            app.apply_theme(ui_theme::Theme { preference, system_dark: system_theme::dark(), ..app.theme });
             app::save_settings(app);
         }
         SetHit::ResetSlider(id) => {
@@ -783,6 +784,11 @@ pub(crate) fn handle_settings_hit(rt: &Rt, app: &mut App, hit: SetHit) {
             app.diag_text = format!("{message}\n\n日志：{}", diag_log::path()
                 .map(|p| p.display().to_string()).unwrap_or_default());
             app.show_diag = true;
+        }
+        SetHit::ThemeAccent => {
+            app.theme.accent = app.theme.accent.next();
+            app.apply_theme(app.theme);
+            app::save_settings(app);
         }
         SetHit::WpsRegister => {
             let (message, ok) = match wps::register_addin() {

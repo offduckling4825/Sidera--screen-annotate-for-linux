@@ -65,6 +65,7 @@ pub enum SetHit {
     WpsTest,
     WpsRemove,
     WpsRegister,
+    ThemeAccent,
     RightClick,
     EraseTrig,
     ClearLog,
@@ -295,7 +296,7 @@ fn rounded_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Pat
 pub struct Ctx<'a> {
     pub pm: &'a mut Pixmap,
     pub tr: Transform,
-    pub palette: &'static theme::Palette,
+    pub palette: theme::Palette,
 }
 
 impl<'a> Ctx<'a> {
@@ -715,8 +716,12 @@ fn settings_wps_test_row(app: &App) -> i32 {
 }
 
 /// 大触点相关行起始（手背模式才有阈值/倍率，动作键随之移位）
-fn settings_action_start(app: &App) -> i32 {
+fn settings_accent_row(app: &App) -> i32 {
     settings_wps_test_row(app) + 3
+}
+
+fn settings_action_start(app: &App) -> i32 {
+    settings_accent_row(app) + 1
 }
 
 pub fn settings_sliders(app: &App) -> Vec<SliderDef> {
@@ -786,6 +791,7 @@ pub fn settings_controls(app: &App) -> Vec<(SetHit, R)> {
         h: 38,
     };
     let a = settings_action_start(app);
+    let accent_row = settings_accent_row(app);
     let test_row = settings_wps_test_row(app);
     let mut controls = vec![
         (SetHit::Autostart, full(2)),
@@ -793,6 +799,7 @@ pub fn settings_controls(app: &App) -> Vec<(SetHit, R)> {
         (SetHit::WpsTest, full(test_row)),
         (SetHit::WpsRemove, full(test_row + 1)),
         (SetHit::WpsRegister, full(test_row + 2)),
+        (SetHit::ThemeAccent, full(accent_row)),
         (SetHit::RightClick, full(4)),
         (SetHit::EraseTrig, full(5)),
         (SetHit::ClearLog, full(a)),
@@ -802,6 +809,7 @@ pub fn settings_controls(app: &App) -> Vec<(SetHit, R)> {
     controls.retain(|(hit, _)| settings_row_visible(app, match hit {
         SetHit::Autostart => 2, SetHit::WpsDebug => 3, SetHit::WpsTest => test_row,
         SetHit::WpsRemove => test_row + 1, SetHit::WpsRegister => test_row + 2,
+        SetHit::ThemeAccent => accent_row,
         SetHit::RightClick => 4, SetHit::EraseTrig => 5,
         SetHit::ClearLog => a, SetHit::SysInfo => a + 1,
         SetHit::Quit => a + 2, _ => unreachable!(),
@@ -1078,8 +1086,9 @@ pub fn is_autostart() -> bool {
 }
 
 fn autostart_icon() -> String {
-    for path in ["/usr/share/pixmaps/sidera.svg",
-                 "/usr/share/icons/hicolor/256x256/apps/sidera.png"] {
+    for path in ["/usr/share/pixmaps/sidera.png",
+                 "/usr/share/icons/hicolor/256x256/apps/sidera.png",
+                 "/usr/share/pixmaps/sidera.svg"] {
         if std::path::Path::new(path).is_file() {
             return path.to_string();
         }
@@ -1720,6 +1729,15 @@ fn draw_settings(app: &App, fonts: &Fonts, ctx: &mut Ctx, icon: Option<&Pixmap>)
                 ctx.text(fonts, "重新登记 WPS 加载项", (r.x + 14) as f32, (r.y + 27) as f32,
                     22.0, c(palette.accent));
             }
+            SetHit::ThemeAccent => {
+                ctx.text(fonts, "主题强调色", (r.x + 14) as f32, (r.y + 27) as f32,
+                    22.0, c(palette.text));
+                let badge = R { x: r.x + r.w - 130, y: r.y + 5, w: 116, h: 28 };
+                ctx.fill_round(badge, 8.0, c(palette.accent_light));
+                ctx.fill_circle((badge.x + 16) as f32, (badge.y + 14) as f32, 8.0, c(palette.accent));
+                ctx.text(fonts, app.theme.accent.label(), (badge.x + 30) as f32,
+                    (badge.y + 20) as f32, 17.0, c(palette.accent));
+            }
             SetHit::EraseTrig => {
                 ctx.text(fonts, "橡皮触发方式", (r.x + 14) as f32, (r.y + 27) as f32, 22.0, c(palette.text));
                 let badge = R { x: r.x + r.w - 88, y: r.y + 5, w: 74, h: 28 };
@@ -1811,7 +1829,8 @@ mod tests {
                     }
                 }
                 for expected in [SetHit::Autostart, SetHit::WpsDebug, SetHit::WpsTest,
-                    SetHit::WpsRemove, SetHit::WpsRegister, SetHit::RightClick, SetHit::EraseTrig,
+                    SetHit::WpsRemove, SetHit::WpsRegister, SetHit::ThemeAccent,
+                    SetHit::RightClick, SetHit::EraseTrig,
                     SetHit::ClearLog, SetHit::SysInfo, SetHit::Quit, SetHit::Done] {
                     assert!(reached.contains(&expected), "unreachable {expected:?} at {w}x{h}");
                 }
@@ -1845,7 +1864,7 @@ mod tests {
             a.set_scale(scale);
             a.settings_open = true;
             for preference in [theme::Preference::Light, theme::Preference::Dark] {
-                a.apply_theme(theme::Theme { preference, system_dark: false });
+                a.apply_theme(theme::Theme { preference, system_dark: false, ..Default::default() });
                 for page in 0..settings_layout(&a).pages {
                     a.settings_page = page;
                     let r = settings_rect(&a);
@@ -1932,7 +1951,7 @@ mod tests {
             let mut a = App::new(Pixmap::new(1280, 900).unwrap(), 1280, 900);
             a.set_scale(scale);
             for preference in [theme::Preference::Light, theme::Preference::Dark] {
-                a.apply_theme(theme::Theme { preference, system_dark: false });
+                a.apply_theme(theme::Theme { preference, system_dark: false, ..Default::default() });
                 for panel in 0..7 {
                     a.settings_open = panel == 0;
                     a.pen_popup_visible = panel == 1;
@@ -1957,7 +1976,7 @@ mod tests {
             // Render the real cached startup, then change theme while it is visible.
             a.launch = crate::launch::Launch::begin("isolated".into(), true, true, std::time::Instant::now());
             for preference in [theme::Preference::Light, theme::Preference::Dark, theme::Preference::Light] {
-                a.apply_theme(theme::Theme { preference, system_dark: false });
+                a.apply_theme(theme::Theme { preference, system_dark: false, ..Default::default() });
                 let r = launch_rect(&a);
                 let pixels = render_region(&a, &fonts, None, r.x, r.y, r.w, r.h).unwrap();
                 assert_eq!(pixels.pixel((4.0 * scale) as u32, pixels.height() / 2).unwrap(),

@@ -29,7 +29,7 @@ fn status(ctx: &mut Ctx, y: i32, state: u8) {
     }
 }
 
-pub fn draw(fonts: &Fonts, icon: Option<&Pixmap>, launch: &Launch, w: u32, h: u32, palette: &'static theme::Palette) -> Pixmap {
+pub fn draw(fonts: &Fonts, icon: Option<&Pixmap>, launch: &Launch, w: u32, h: u32, palette: theme::Palette) -> Pixmap {
     let mut pm = Pixmap::new(w.max(1), h.max(1)).unwrap();
     let scale = (w as f32 / CARD_WIDTH as f32).min(h as f32 / CARD_HEIGHT as f32);
     let tr = Transform::from_scale(scale, scale);

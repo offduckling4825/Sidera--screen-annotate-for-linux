@@ -19,7 +19,7 @@ function fixture({ abort = true } = {}) {
     Exit() { commands.push('EXIT'); state.pos = -1; },
   };
   const context = vm.createContext({
-    window: { _sideraFullMode: true, Application: { ActivePresentation: {
+    window: { _sideraFullMode: true, _sideraAllowPoll: true, _sideraChannel: 'poll', Application: { ActivePresentation: {
       get SlideShowWindow() { return state.pos > 0 ? { View: view } : null; },
     } } },
     AbortController: abort ? AbortController : undefined,
@@ -461,6 +461,29 @@ test('missing or inconsistent counters never replace navigation state with guess
   assert.equal(f.context.bridgeState().pos, 2);
   f.context.bridgeCmd('NEXT');
   assert.deepEqual(f.commands, ['NEXT']);
+});
+
+test('stale SlideIndex falls back to show position for a full deck', () => {
+  const f = fixture();
+  f.state.pos = 1;
+  f.view.Slide = { SlideIndex: 1 };
+  assert.equal(f.context.bridgeState().page, 1);
+  f.state.pos = 2;
+  assert.equal(f.context.bridgeState().page, 1, 'one position change is not enough');
+  f.state.pos = 3;
+  assert.equal(f.context.bridgeState().page, 3, 'after two stale samples use show position');
+});
+
+test('named/custom shows never use show position as a deck page', () => {
+  const f = fixture();
+  f.state.pos = 1;
+  f.view.Slide = { SlideIndex: 1 };
+  f.view.IsNamedShow = 1;
+  assert.equal(f.context.bridgeState().page, 1);
+  f.state.pos = 2;
+  assert.equal(f.context.bridgeState().page, 1);
+  f.state.pos = 3;
+  assert.equal(f.context.bridgeState().page, 1);
 });
 
 test('default mode reads only position and refuses START/GOTO commands', () => {

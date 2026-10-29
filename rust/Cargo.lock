@@ -1652,7 +1652,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sidera"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "ab_glyph",
  "arboard",
@@ -1667,6 +1667,7 @@ dependencies = [
  "libc",
  "log",
  "serde_json",
+ "sha1",
  "smithay-client-toolkit",
  "tiny-skia",
  "url",

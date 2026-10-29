@@ -96,6 +96,7 @@ mod tests {
         let ink = output.app.canvas.data().to_vec();
         output.app.apply_theme(crate::ui_theme::Theme {
             preference: crate::ui_theme::Preference::Dark, system_dark: false,
+            ..Default::default()
         });
         desktop.synchronize("projector");
         assert!(desktop.outputs.values().all(|o| o.app.theme.dark()));

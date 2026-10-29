@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
-pub struct Request { pub method: String, pub target: String }
+pub struct Request { pub method: String, pub target: String, pub headers: Vec<(String, String)> }
 pub fn read(stream: &mut TcpStream) -> Result<Request, u16> {
     stream.set_read_timeout(Some(Duration::from_millis(100))).map_err(|_| 400u16)?;
     stream.set_write_timeout(Some(Duration::from_millis(200))).map_err(|_| 400u16)?;
@@ -37,11 +37,13 @@ fn parse(bytes: &[u8], port: u16) -> Result<Request, u16> {
     if !matches!(words[0], "GET" | "OPTIONS") { return Err(405); }
     let mut host = None;
     let mut origin = None;
+    let mut headers = Vec::new();
     for line in lines.take_while(|line| !line.is_empty()) {
         let (key, value) = line.split_once(':').ok_or(400u16)?;
         let value = value.trim();
         if value.chars().any(|c| c.is_control()) { return Err(400); }
-        match key.to_ascii_lowercase().as_str() {
+        let key = key.to_ascii_lowercase();
+        match key.as_str() {
             "host" => { if host.replace(value).is_some() { return Err(400); } }
             "origin" => { if origin.replace(value).is_some() { return Err(400); } }
             "content-length" if value != "0" => return Err(400),
@@ -49,13 +51,14 @@ fn parse(bytes: &[u8], port: u16) -> Result<Request, u16> {
             "sec-fetch-site" if value == "cross-site" => return Err(403),
             _ => (),
         }
+        headers.push((key, value.to_string()));
     }
     let hosts = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
     if !hosts.iter().any(|h| Some(h.as_str()) == host) { return Err(403); }
     if let Some(origin) = origin {
         if !hosts.iter().any(|h| origin == format!("http://{h}")) { return Err(403); }
     }
-    Ok(Request { method: words[0].into(), target: words[1].into() })
+    Ok(Request { method: words[0].into(), target: words[1].into(), headers })
 }
 pub fn reply(stream: &mut TcpStream, status: u16, content_type: &str, body: &[u8]) {
     let reason = match status { 200 => "OK", 400 => "Bad Request", 403 => "Forbidden", 404 => "Not Found",

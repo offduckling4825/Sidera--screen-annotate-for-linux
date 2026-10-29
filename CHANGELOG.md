@@ -2,18 +2,21 @@
 
 记录本仓库 `custom` 分支的用户可见变化。上游发行版请查看[原项目](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/releases)。
 
-## 未发布 · 课堂稳定版
+## 2026-10-29 · 3.1-Electro-testing
 
 - WPS 联动改为默认低负载模式：只保留 API 上下翻页和动画/换页位置轮询；开始放映用 Shift+F5，退出用 Esc，不再依赖 WPS 命令队列。
 - 设置新增“WPS 测试模式”，按需恢复页码、跳页、从当前页开始和 API 退出。
 - 加载项按 `/config` 切换字段：默认模式不读取 `Slides.Count`/`SlideIndex`/`FullName`，并上报慢调用；减少 D2000/麒麟/WPS 12 上的 UI 线程压力。
 - 光标模式触摸不再被覆盖层接管：非工具栏触摸明确拒绝所有权，避免和 WPS 抢触摸。
-- WPS 命令通道默认改为 `/events` SSE 单连接，使用 chunked 流并在日志记录 SSE 启动/断开；EventSource 不可用或建立失败时自动回退到约 900ms 长轮询。
-- SSE 每 5 秒下发一次 `STATE`，并缓存短暂丢失的放映位置，修复“开始放映/退出放映”来回闪烁。
-- 回退模式的 `/config` 从约 2 秒降到约 9 秒，减少成功 HTTP 请求和连接累积。
+- WPS 命令通道改为 `/ws` WebSocket 双向连接；状态和命令走同一条线，WebSocket 不可用时回退 SSE + `/push`，新加载项不再使用 `/poll`。
+- WebSocket/SSE 都记录连接、断开和回退日志；SSE 使用 chunked，短暂丢失放映位置时缓存，修复“开始放映/退出放映”闪烁。
+- 高级/演示模式下页码不再被编辑窗口页码覆盖；翻页事件也会更新页码，检测到陈旧 `SlideIndex` 时回退到放映位置。
 - 默认模式开始放映增加 2.5 秒防重复发送，避免连续注入多次 Shift+F5。
 - `wps_foreground` 改为 500ms 采样 + 迟滞；空闲主循环降频，减少 X11 往返和低性能机器负载。
-- 新增 `~/sidera-diagnostic.log`，在“设置 → 诊断信息 / 日志”中显示带严重程度的最近记录；记录加载项慢调用、断线、模式切换和触摸穿透。
+- 新增 `~/sidera-diagnostic.log`，在“设置 → 诊断信息 / 日志”中显示带严重程度的最近记录；记录加载项慢调用、断线、WebSocket/SSE 状态、模式切换和触摸穿透。
+- 设置新增主题强调色（青绿/蓝/绿/琥珀/紫/玫红），随主题保存；白板底色和笔迹不受影响。
+- DEB 桌面图标改为内容哈希 PNG 并修正 SVG 的 `xlink:href`，避免 Qt 5.12/UKUI 显示空白图标。
+- DEB 新增 `prerm`、RPM 新增 `%preun`、Arch 新增 `pre_remove`，卸载时按用户执行 `cleanup-old.sh --remove-current`；升级不会删除当前登记。
 
 ## 未发布 · 课堂修复
 

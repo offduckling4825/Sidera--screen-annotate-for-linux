@@ -21,13 +21,14 @@ stage_files() {
   install -Dm644 "$REPO/README.classroom.md" "$root/usr/share/doc/sidera/README.classroom.md"
 
   local icon_sha icon_path
-  icon_sha="$(sha256sum "$REPO/sidera.svg" | cut -c1-12)"
-  icon_path="/usr/share/pixmaps/sidera-$icon_sha.svg"
+  icon_sha="$(sha256sum "$REPO/sidera.png" | cut -c1-12)"
+  icon_path="/usr/share/pixmaps/sidera-$icon_sha.png"
   install -Dm644 "$REPO/sidera.svg" "$root/usr/share/icons/hicolor/scalable/apps/sidera.svg"
   install -Dm644 "$REPO/sidera.png" "$root/usr/share/icons/hicolor/256x256/apps/sidera.png"
   install -Dm644 "$REPO/sidera.svg" "$root/usr/share/pixmaps/sidera.svg"
+  install -Dm644 "$REPO/sidera.png" "$root/usr/share/pixmaps/sidera.png"
   # Content-addressed path invalidates stale desktop icon caches after upgrades.
-  install -Dm644 "$REPO/sidera.svg" "$root$icon_path"
+  install -Dm644 "$REPO/sidera.png" "$root$icon_path"
 
   install -Dm644 "$REPO/rust/arch/70-sidera-uinput.rules" "$root/usr/lib/udev/rules.d/70-sidera-uinput.rules"
   install -Dm644 "$REPO/rust/arch/70-sidera-input.rules" "$root/usr/lib/udev/rules.d/70-sidera-input.rules"

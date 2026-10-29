@@ -11,10 +11,11 @@ var BRIDGE_START_COMMAND = 'SlideShowFromCurrent';
 // 测试模式由 Sidera 的 /config 打开，额外提供页码、跳页和开始放映。
 var BRIDGE_FULL = window._sideraFullMode === true;
 var BRIDGE_MODE_LOCKED = typeof window._sideraFullMode === 'boolean';
-var BRIDGE_SSE_STARTED = false;
 var BRIDGE_SSE_OPEN = false;
 var BRIDGE_SSE = null;
-var BRIDGE_POLL_STARTED = false;
+var BRIDGE_WS = window._sideraWs || null;
+var BRIDGE_WS_OPEN = window._sideraWsOpen === true;
+var BRIDGE_CHANNEL = window._sideraChannel || 'none';
 
 function OnAddinLoad(ribbonUI) {
     var app = bridgeApplication()
@@ -70,6 +71,13 @@ function bridgeView() {
         return context ? context.window.View : null
     } catch (e) { return null }
 }
+var _lastShowPage = window._sideraLastShowPage || (window._sideraLastShowPage = -1)
+var _lastShowTotal = window._sideraLastShowTotal || (window._sideraLastShowTotal = -1)
+var _lastShowPageAt = window._sideraLastShowPageAt || 0
+var _lastPagePos = -1
+var _lastSlideIndex = -1
+var _pageStaleCount = 0
+
 function bridgePageState(context, view) {
     var result = { page: -1, total: -1 }
     function positive(value) {
@@ -88,7 +96,25 @@ function bridgePageState(context, view) {
         // Use the actual deck index, not the order within a custom slideshow.
         try {
             var current = view || (!context && app.ActiveWindow && app.ActiveWindow.View)
-            result.page = positive(current && current.Slide && current.Slide.SlideIndex)
+            var slideIndex = positive(current && current.Slide && current.Slide.SlideIndex)
+            var rawPos = positive(view && view.CurrentShowPosition)
+            var namedShow = !!(view && view.IsNamedShow)
+            if (slideIndex > 0) {
+                // Some WPS advanced/presenter windows keep returning the old
+                // SlideIndex while CurrentShowPosition advances. Only use the
+                // show position as a fallback for a full (non-named) deck.
+                if (!namedShow && rawPos > 0 && _lastPagePos > 0 && rawPos !== _lastPagePos
+                    && slideIndex === _lastSlideIndex) {
+                    _pageStaleCount++
+                } else {
+                    _pageStaleCount = 0
+                }
+                result.page = (!namedShow && _pageStaleCount >= 2) ? rawPos : slideIndex
+                _lastPagePos = rawPos
+                _lastSlideIndex = slideIndex
+            } else {
+                result.page = -1
+            }
         } catch (e) {}
         if (result.total > 0 && result.page > result.total) result.page = -1
     } catch (e) {}
@@ -122,8 +148,20 @@ function bridgeState(allowEnd) {
             st.pos = _lastShowPos
         }
         if (!BRIDGE_FULL) { return st }
-        var pages = bridgePageState(context, v)
+        var pages
+        if (v) {
+            pages = bridgePageState(context, v)
+        } else if (hold && _lastShowPage > 0 && Date.now() - _lastShowPageAt <= 2500) {
+            pages = { page: _lastShowPage, total: _lastShowTotal }
+        } else {
+            pages = bridgePageState(null, null)
+        }
         st.page = pages.page; st.total = pages.total
+        if (st.page > 0) {
+            _lastShowPage = st.page
+            _lastShowTotal = st.total
+            _lastShowPageAt = Date.now()
+        }
         var jump = bridgeJumpTarget(context, pages)
         if (jump) { st.jump = 1; st.deck = jump.epoch }
         if (!v) {
@@ -235,10 +273,10 @@ function bridgeCmd(cmd) {
             else if (cmd == 'PREV') v.Previous()
             else v.Exit()
         }
-        bridgeFetch('/push?m=' + encodeURIComponent('COMMAND_OK ' + cmd))
+        bridgeSend('COMMAND_OK ' + cmd)
         if (jump) bridgePushIfChanged()
     } catch (e) {
-        bridgeFetch('/push?m=' + encodeURIComponent('COMMAND_FAILED ' + cmd))
+        bridgeSend('COMMAND_FAILED ' + cmd)
     }
 }
 function bridgePoll() {
@@ -280,6 +318,11 @@ function bridgePushIfChanged(eventName, force, allowEnd) {
         var st = bridgeState(allowEnd)
         if (force || st.pos !== _lastState.pos || st.click !== _lastState.click || st.ready !== _lastState.ready ||
             st.page !== _lastState.page || st.total !== _lastState.total || st.jump !== _lastState.jump || st.deck !== _lastState.deck) {
+            var message = bridgeStateMessage(eventName || 'SlideShowState', st)
+            if (BRIDGE_CHANNEL === 'ws' && BRIDGE_WS && BRIDGE_WS.readyState === 1) {
+                if (bridgeSend(message)) bridgeRememberState(st)
+                return
+            }
             var controller = typeof AbortController == 'function' ? new AbortController() : null
             var pending = { timer: null }
             window._sideraStateInFlight = pending
@@ -301,11 +344,131 @@ function bridgePushIfChanged(eventName, force, allowEnd) {
                 finish(false)
                 if (controller) controller.abort()
             }, 3000)
-            bridgeFetch('/push?m=' + encodeURIComponent(bridgeStateMessage(eventName || 'SlideShowState', st)),
+            bridgeFetch('/push?m=' + encodeURIComponent(message),
                 finish, controller ? controller.signal : null)
         }
     } catch (e) {}
 }
+function bridgeSetChannel(channel) {
+    BRIDGE_CHANNEL = channel
+    window._sideraChannel = channel
+}
+
+function bridgeChannelLog(message) {
+    if (BRIDGE_MODE_LOCKED) return
+    if (BRIDGE_CHANNEL === 'ws' && BRIDGE_WS && BRIDGE_WS.readyState === 1) {
+        try { BRIDGE_WS.send('WS ' + message); return } catch (e) {}
+    }
+    bridgeFetch('/push?m=' + encodeURIComponent('CHANNEL ' + message))
+}
+
+function bridgeSend(message) {
+    if (BRIDGE_CHANNEL === 'ws' && BRIDGE_WS && BRIDGE_WS.readyState === 1) {
+        try { BRIDGE_WS.send(message); return true } catch (e) { return false }
+    }
+    if (BRIDGE_CHANNEL === 'sse' || BRIDGE_CHANNEL === 'poll') {
+        bridgeFetch('/push?m=' + encodeURIComponent(message))
+        return true
+    }
+    return false
+}
+
+function bridgeRememberState(st) {
+    _lastState.pos = st.pos
+    _lastState.click = st.click
+    _lastState.ready = st.ready
+    _lastState.page = st.page
+    _lastState.total = st.total
+    _lastState.jump = st.jump
+    _lastState.deck = st.deck
+}
+
+function bridgeHandleData(data) {
+    data = (data || '').trim()
+    if (!data) return
+    if (data === 'STATE') {
+        bridgePushIfChanged('SlideShowState', true)
+        return
+    }
+    if (data.indexOf('MODE ') === 0) {
+        var full = data.slice(5) === 'full'
+        if (full !== BRIDGE_FULL) {
+            BRIDGE_FULL = full
+            _lastState.pos = -2; _lastState.click = -2; _lastState.page = -2
+            _lastState.total = -2; _lastState.jump = -2; _lastState.deck = -2
+        }
+        bridgePushIfChanged('SlideShowState', true)
+        return
+    }
+    bridgeCmd(data)
+}
+
+function bridgeStartWs() {
+    if (window._sideraWsStarted) return
+    window._sideraWsStarted = true
+    if (typeof WebSocket !== 'function') {
+        bridgeChannelLog('WS unavailable')
+        bridgeStartSse()
+        return
+    }
+    try {
+        var ws = new WebSocket(BRIDGE_URL.replace(/^http/, 'ws') + '/ws')
+        BRIDGE_WS = ws
+        window._sideraWs = ws
+        var opened = false
+        var failTimer = setTimeout(function () {
+            if (opened) return
+            try { ws.close() } catch (e) {}
+            BRIDGE_WS_OPEN = false
+            window._sideraWsOpen = false
+            bridgeChannelLog('WS fallback timeout')
+            bridgeStartSse()
+        }, 5000)
+        function markOpen() {
+            if (opened) return
+            opened = true
+            clearTimeout(failTimer)
+            BRIDGE_WS_OPEN = true
+            window._sideraWsOpen = true
+            bridgeSetChannel('ws')
+            bridgeChannelLog('open')
+            bridgePushIfChanged('SlideShowState', true)
+        }
+        function handleMessage(event) {
+            markOpen()
+            bridgeHandleData(event && event.data ? event.data : '')
+        }
+        ws.onopen = markOpen
+        if (typeof ws.addEventListener === 'function') {
+            ws.addEventListener('open', markOpen)
+            ws.addEventListener('message', handleMessage)
+        } else {
+            ws.onmessage = handleMessage
+        }
+        ws.onclose = function () {
+            BRIDGE_WS_OPEN = false
+            window._sideraWsOpen = false
+            if (BRIDGE_CHANNEL === 'ws') {
+                bridgeSetChannel('none')
+                bridgeChannelLog('WS closed')
+                bridgeStartSse()
+            } else if (!opened && !window._sideraSseStarted) {
+                bridgeChannelLog('WS closed before open')
+                bridgeStartSse()
+            }
+        }
+        ws.onerror = function () {
+            if (!opened) {
+                BRIDGE_WS_OPEN = false
+                window._sideraWsOpen = false
+            }
+        }
+    } catch (e) {
+        bridgeChannelLog('WS failed')
+        bridgeStartSse()
+    }
+}
+
 function bridgeSseLog(message) {
     if (BRIDGE_MODE_LOCKED) return
     bridgeFetch('/push?m=' + encodeURIComponent('SSE ' + message))
@@ -314,6 +477,7 @@ function bridgeSseLog(message) {
 function bridgeStartPolling() {
     if (window._sideraPollStarted) return
     window._sideraPollStarted = true
+    bridgeSetChannel('poll')
     bridgeFetch('/hello?m=sidera-bridge')
     bridgeSyncConfig()
     setInterval(function () {
@@ -333,7 +497,8 @@ function bridgeStartSse() {
     window._sideraSseStarted = true
     if (typeof EventSource !== 'function') {
         bridgeSseLog('unavailable')
-        bridgeStartPolling()
+        if (window._sideraAllowPoll) bridgeStartPolling()
+        else bridgeSetChannel('none')
         return
     }
     try {
@@ -345,36 +510,23 @@ function bridgeStartSse() {
             try { es.close() } catch (e) {}
             BRIDGE_SSE_OPEN = false
             bridgeSseLog('fallback timeout')
-            bridgeStartPolling()
+            if (window._sideraAllowPoll) bridgeStartPolling()
+            else bridgeSetChannel('none')
         }, 5000)
         function markOpen() {
             if (opened) return
             opened = true
             clearTimeout(failTimer)
             BRIDGE_SSE_OPEN = true
+            bridgeSetChannel('sse')
+            bridgeSseLog('open')
             // Some CEF/EventSource builds omit the open event; receiving any
             // SSE data also proves the stream is live.
             bridgePushIfChanged('SlideShowState', true)
         }
         function handleMessage(event) {
             markOpen()
-            var data = (event && event.data ? event.data : '').trim()
-            if (!data) return
-            if (data === 'STATE') {
-                bridgePushIfChanged('SlideShowState', true)
-                return
-            }
-            if (data.indexOf('MODE ') === 0) {
-                var full = data.slice(5) === 'full'
-                if (full !== BRIDGE_FULL) {
-                    BRIDGE_FULL = full
-                    _lastState.pos = -2; _lastState.click = -2; _lastState.page = -2
-                    _lastState.total = -2; _lastState.jump = -2; _lastState.deck = -2
-                }
-                bridgePushIfChanged('SlideShowState', true)
-                return
-            }
-            bridgeCmd(data)
+            bridgeHandleData(event && event.data ? event.data : '')
         }
         es.onopen = markOpen
         if (typeof es.addEventListener === 'function') {
@@ -437,8 +589,8 @@ function startBridge() {
                             if (window._sideraEventOwner !== api) return
                             var allowEnd = ev === 'SlideShowEnd'
                             var st = bridgeState(allowEnd)
-                            bridgeFetch('/push?m=' + encodeURIComponent(bridgeStateMessage(ev, st)))
-                            if (BRIDGE_SSE_OPEN) {
+                            bridgeSend(bridgeStateMessage(ev, st))
+                            if (BRIDGE_CHANNEL !== 'none') {
                                 setTimeout(function () { bridgePushIfChanged(ev, false, allowEnd) }, 180)
                             }
                         }
@@ -452,7 +604,6 @@ function startBridge() {
         }
     } catch (e) { eventsReady = false }
     if (!eventsReady) scheduleBridgeStart()
-    // SSE is the default command channel. If EventSource is unavailable or
-    // cannot open, fall back to the bounded long-poll below.
-    bridgeStartSse()
+    // WebSocket is the primary bidirectional channel; SSE is the fallback.
+    bridgeStartWs()
 }

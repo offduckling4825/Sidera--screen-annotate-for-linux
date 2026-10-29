@@ -3,7 +3,7 @@ _sidera_cleanup_old_addin() {
   for home in /root /home/*; do
     [ -d "$home" ] || continue
     [ -x /usr/bin/sidera-wps-addin-cleanup ] || continue
-    HOME="$home" /usr/bin/sidera-wps-addin-cleanup >/dev/null 2>&1 || true
+    HOME="$home" /usr/bin/sidera-wps-addin-cleanup "$@" >/dev/null 2>&1 || true
   done
 }
 
@@ -13,6 +13,8 @@ post_install() {
   udevadm trigger --subsystem-match=input 2>/dev/null || true
   modprobe uinput 2>/dev/null || true
   _sidera_cleanup_old_addin
+  gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
+  update-desktop-database -q /usr/share/applications 2>/dev/null || true
   echo ">>> Sidera: 触摸权限已配置。若刚安装，请重新登录（或重新插拔触摸屏）后再用触屏批注。"
 }
 
@@ -20,7 +22,10 @@ post_upgrade() {
   post_install
 }
 
+pre_remove() {
+  _sidera_cleanup_old_addin --remove-current
+}
+
 post_remove() {
   udevadm control --reload-rules 2>/dev/null || true
-  _sidera_cleanup_old_addin
 }

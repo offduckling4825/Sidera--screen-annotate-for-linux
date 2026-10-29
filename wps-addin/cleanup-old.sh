@@ -142,7 +142,7 @@ clean_auth() {
           sub(/\/+$/, "", normalized_path)
           if (!(entry_name == legacy ||
                 (normalized_path == our && entry_name != current) ||
-                (remove_current == 1 && normalized_path == our && entry_name == current))) {
+                (remove_current == 1 && entry_name == current))) {
             if (entry_name == current && normalized_path == our) {
               # WPS 可能把当前加载项保留成 enable:false，导致每次重启都再次询问。
               gsub(/"enable"[[:space:]]*:[[:space:]]*false/, "\"enable\": true", buffer)

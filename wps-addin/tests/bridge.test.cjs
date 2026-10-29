@@ -27,7 +27,7 @@ function fixture({ ready = true, withEvents = true, failingEvent = null } = {}) 
   };
   if (withEvents) app.ApiEvent = api;
   const context = vm.createContext({
-    window: { _sideraFullMode: true, Application: ready ? app : undefined },
+    window: { _sideraFullMode: true, _sideraAllowPoll: true, _sideraChannel: 'poll', Application: ready ? app : undefined },
     fetch(url) {
       requests.push(url);
       return Promise.resolve({ ok: true, text: () => Promise.resolve('OK') });
@@ -219,7 +219,7 @@ test('SSE opens one event stream and handles mode and commands', () => {
     ApiEvent: { AddApiEventListener() {} },
   };
   const context = vm.createContext({
-    window: { _sideraFullMode: true, Application: app },
+    window: { _sideraFullMode: true, _sideraAllowPoll: true, _sideraChannel: 'poll', Application: app },
     EventSource: FakeEventSource,
     fetch(url) {
       requests.push(url);
@@ -237,4 +237,49 @@ test('SSE opens one event stream and handles mode and commands', () => {
   eventSource.onmessage({ data: 'NEXT' });
   assert.deepEqual(commands, ['NEXT']);
   assert.equal(context.BRIDGE_FULL, false);
+});
+
+test('WebSocket is the primary channel and commands use the same socket', () => {
+  const requests = [], commands = [];
+  class FakeWebSocket {
+    static instances = [];
+    constructor(url) { this.url = url; this.readyState = 0; this.sent = []; this.listeners = {}; FakeWebSocket.instances.push(this); }
+    addEventListener(type, callback) { (this.listeners[type] || (this.listeners[type] = [])).push(callback); }
+    send(message) { this.sent.push(message); }
+    close() { this.readyState = 3; }
+    open() { this.readyState = 1; if (this.onopen) this.onopen(); (this.listeners.open || []).forEach(callback => callback()); }
+    message(data) { (this.listeners.message || []).forEach(callback => callback({ data })); }
+  }
+  const view = {
+    CurrentShowPosition: 1,
+    GetClickIndex() { return 0; },
+    Next() { commands.push('NEXT'); },
+  };
+  const app = {
+    ActivePresentation: { SlideShowWindow: { View: view }, Slides: { Count: 20 } },
+    ApiEvent: { AddApiEventListener() {} },
+  };
+  const context = vm.createContext({
+    window: { _sideraFullMode: true, _sideraAllowPoll: false, _sideraChannel: 'none', Application: app },
+    WebSocket: FakeWebSocket,
+    fetch(url) {
+      requests.push(url);
+      return Promise.resolve({ ok: true, text: () => Promise.resolve('OK') });
+    },
+    setTimeout() { return 1; },
+    clearTimeout() {},
+    encodeURIComponent,
+  });
+  vm.runInContext(source, context);
+  context.startBridge();
+  const socket = FakeWebSocket.instances[0];
+  assert.ok(socket && socket.url.endsWith('/ws'));
+  socket.open();
+  socket.message('MODE full');
+  socket.message('NEXT');
+  assert.deepEqual(commands, ['NEXT']);
+  assert.equal(requests.filter(url => url.includes('/push')).length, 0,
+    'WS mode must not use HTTP /push');
+  assert.ok(socket.sent.some(message => message.startsWith('EVENT ')));
+  assert.ok(socket.sent.some(message => message.startsWith('COMMAND_OK')));
 });

@@ -22,7 +22,7 @@ BIN="$(pkg_find_bin)"
 [ -f "$BIN" ] || { echo "错误: 找不到二进制 $BIN，请先 ./build_container.sh $SRC_ARCH"; exit 1; }
 command -v bsdtar >/dev/null || { echo "错误: 缺少 bsdtar"; exit 1; }
 
-VER=3.0_electro_stable
+VER=3.1_electro_testing
 REL=1
 DIST="$HERE/dist"
 mkdir -p "$DIST"
@@ -57,7 +57,7 @@ _sidera_cleanup_old_addin() {
   for home in /root /home/*; do
     [ -d "$home" ] || continue
     [ -x /usr/bin/sidera-wps-addin-cleanup ] || continue
-    HOME="$home" /usr/bin/sidera-wps-addin-cleanup >/dev/null 2>&1 || true
+    HOME="$home" /usr/bin/sidera-wps-addin-cleanup "$@" >/dev/null 2>&1 || true
   done
 }
 post_install() {
@@ -65,14 +65,19 @@ post_install() {
   udevadm trigger --subsystem-match=input 2>/dev/null || true
   modprobe uinput 2>/dev/null || true
   _sidera_cleanup_old_addin
+  gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
+  update-desktop-database -q /usr/share/applications 2>/dev/null || true
   echo ">>> Sidera: 触摸权限已配置，若刚安装请重新登录后再用触屏批注。"
 }
 post_upgrade() {
   post_install
 }
+pre_remove() {
+  _sidera_cleanup_old_addin --remove-current
+}
+
 post_remove() {
   udevadm control --reload-rules 2>/dev/null || true
-  _sidera_cleanup_old_addin
 }
 EOF
 

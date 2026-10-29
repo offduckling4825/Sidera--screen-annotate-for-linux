@@ -9,7 +9,7 @@
 轻量、免费、开源：把注意力留给课堂。
 
 [![CI](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml/badge.svg)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml)
-[![阶段](https://img.shields.io/badge/3.0-Electro_stable-b98237?style=flat-square)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux)
+[![阶段](https://img.shields.io/badge/3.1-Electro_testing-b98237?style=flat-square)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux)
 [![平台](https://img.shields.io/badge/platform-Linux-5a6f69?style=flat-square)](#桌面与安装包兼容性)
 [![许可](https://img.shields.io/badge/license-GPL_v3-5a6f69?style=flat-square)](LICENSE)
 
@@ -27,8 +27,8 @@
 
 | 版本 | 技术栈 | 版本号 | 建议场景 |
 | --- | --- | --- | --- |
-| **Rust 版（主推，active）** | 纯 Rust，**不依赖 Qt / libX11**，tiny-skia 软件渲染 | `3.0-Electro-stable` | X11 与 Wayland 通吃；老机器、国产化教室机；追求轻量与无重量级依赖 |
-| **C++ / Qt5 版（legacy）** | C++17 + Qt5 | `3.0-Electro-stable` | 经典实现；长期在 X11 教室环境验证 |
+| **Rust 版（主推，active）** | 纯 Rust，**不依赖 Qt / libX11**，tiny-skia 软件渲染 | `3.1-Electro-testing` | X11 与 Wayland 通吃；老机器、国产化教室机；追求轻量与无重量级依赖 |
+| **C++ / Qt5 版（legacy）** | C++17 + Qt5 | `3.1-Electro-testing` | 经典实现；长期在 X11 教室环境验证 |
 
 > Rust 运行时只依赖 `libc6` 与 `libgcc-s1`。C++ 与 Rust 包使用相同的 `sidera` 包名，安装会替换已有版本，**二选一安装**。
 
@@ -45,7 +45,7 @@
 
 ![深色课堂界面：深灰绿面板、薄荷绿选中态、保留原色的画笔](docs/assets/preview/classroom-dark.png)
 
-在设置顶部选择 **浅色 / 深色 / 跟随系统**，立即生效并保存。工具栏、弹窗、设置和启动页统一适配；白板底色与实际笔迹保持原样。参见[主题使用与验证范围](docs/DARK_MODE.md)。
+在设置顶部选择 **浅色 / 深色 / 跟随系统**，并可选择青绿、蓝色、绿色、琥珀、紫色、玫红六种主题强调色，立即生效并保存。工具栏、弹窗、设置和启动页统一适配；白板底色与实际笔迹保持原样。参见[主题使用与验证范围](docs/DARK_MODE.md)。
 
 </details>
 
@@ -83,7 +83,7 @@
 - ✋ **手掌/大触点橡皮**：多点或大面积触点（如手背）自动临时当大号橡皮，单点恢复画笔；阈值与倍率可调。
 - ↩️ **撤回 / 恢复**：一键撤回最近一笔（最多 12 步）；手动清除后可用“恢复”找回刚才的整页笔迹。
 - 📸 **截图**：抓屏保存 PNG 到图片目录并复制到剪贴板（后端能力允许时）。
-- 📊 **WPS 演示联动**：默认低负载模式只保留 API 翻页和动画/换页判断，命令默认走 SSE 单连接，开始放映用 Shift+F5、退出用 Esc；测试模式再提供页码、跳页、从当前页开始。**仅在真实换页时切换批注缓存**，页内动画不丢笔迹。
+- 📊 **WPS 演示联动**：默认低负载模式只保留 API 翻页和动画/换页判断，命令默认走 WebSocket 双向连接，WebSocket 不可用时回退 SSE；开始放映用 Shift+F5、退出用 Esc；测试模式再提供页码、跳页、从当前页开始。**仅在真实换页时切换批注缓存**，页内动画不丢笔迹。
 - 🖥️ **跨架构**：原生支持 x86_64 (amd64) 与 aarch64 (arm64)，适配国产化 Linux 教室机。
 
 ### 为课堂准备的操作
@@ -135,13 +135,13 @@ getconf GNU_LIBC_VERSION
 Rust 版（主推）与 C++ / Qt5 版（legacy）现共用同一版本号与 `sidera` 包名，**二选一安装**：
 
 ```sh
-sudo apt install ./sidera_3.0-Electro-stable_amd64.deb   # amd64
-sudo apt install ./sidera_3.0-Electro-stable_arm64.deb   # arm64
+sudo apt install ./sidera_3.1-Electro-testing_amd64.deb   # amd64
+sudo apt install ./sidera_3.1-Electro-testing_arm64.deb   # arm64
 ```
 
 > 也可以直接用 `dpkg -i`，但推荐 `apt install ./xxx.deb` 以自动补齐依赖。不要跳过依赖检查或替换系统 libc。
 
-RPM / Arch 包可由源码构建（见下），分别产出 `sidera-3.0-Electro_stable.<arch>.rpm` 与 `sidera-3.0_electro_stable-1-<arch>.pkg.tar.zst`（这两种包格式不允许版本号里带 `-`，用 `_` 代替）。
+RPM / Arch 包可由源码构建（见下），分别产出 `sidera-3.1-Electro_testing.<arch>.rpm` 与 `sidera-3.1_electro_testing-1-<arch>.pkg.tar.zst`（这两种包格式不允许版本号里带 `-`，用 `_` 代替）。
 
 ### 2. 选择桌面入口
 
@@ -218,7 +218,7 @@ make -j$(nproc)            # 本机编译 → cpp/annotate_amd64
 └── README.md / LICENSE / LICENSES.md / NOTICE.md
 ```
 
-Rust 源码要点（`rust/src/`）：`main.rs`（入口/事件/触摸路由）、`app.rs`（状态/配置/分页缓存）、`ui.rs` 与 `ui_theme.rs`/`ui_icons.rs`（手绘 UI 与主题）、`paint.rs`（tiny-skia 笔迹）、`gesture.rs`（手背/多指 FSM）、`x11.rs`（覆盖层/XShape/XTest/触摸）、`wayland*.rs`（layer-shell/原生 Wayland）、`wps.rs`（本地 HTTP 桥）、`touch_evdev.rs`（evdev 触摸）、`uinput.rs`（内核虚拟键盘）等。
+Rust 源码要点（`rust/src/`）：`main.rs`（入口/事件/触摸路由）、`app.rs`（状态/配置/分页缓存）、`ui.rs` 与 `ui_theme.rs`/`ui_icons.rs`（手绘 UI 与主题）、`paint.rs`（tiny-skia 笔迹）、`gesture.rs`（手背/多指 FSM）、`x11.rs`（覆盖层/XShape/XTest/触摸）、`wayland*.rs`（layer-shell/原生 Wayland）、`wps.rs`（本地 HTTP/WebSocket 桥）、`touch_evdev.rs`（evdev 触摸）、`uinput.rs`（内核虚拟键盘）等。
 
 ## 路线规划与 Wayland 适配
 
@@ -226,7 +226,7 @@ Rust 源码要点（`rust/src/`）：`main.rs`（入口/事件/触摸路由）�
 - **X11 兼容**：`x11rb` 直连（ARGB 覆盖层 + XShape 穿透 + XTest 注入），不依赖 `libX11`/`libXtst`。
 - **触摸**：优先 XInput 2.2；无触摸类时用 evdev。
 - **截图**：X11 直接抓屏；Wayland 无 `wlr-screencopy` 时走 `xdg-desktop-portal`。
-- **WPS 联动解耦**：持续将按键模拟/窗口轮询迁移为加载项双向 HTTP/WebSocket 事件通知。
+- **WPS 联动解耦**：已完成加载项 WebSocket 双向通信，SSE 保留为回退通道。
 - **全局快捷键迁移**：接入现代 Linux `org.freedesktop.portal.GlobalShortcuts` 协议。
 
 ## 项目导航

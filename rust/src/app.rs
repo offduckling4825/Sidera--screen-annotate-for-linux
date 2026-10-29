@@ -9,7 +9,7 @@ use crate::page_cache::PageCache;
 use tiny_skia::{Color, Pixmap};
 
 // ---------------- 常量（与原 C++ app.h 对齐） ----------------
-pub const VERSION: &str = "3.0-Electro-stable";
+pub const VERSION: &str = "3.1-Electro-testing";
 // 侧边栏基准尺寸（与 C++ 版对齐：56/34/24/19；可在设置里用「侧边栏大小」缩放）
 pub const SB_BASE_W: f64 = 56.0;
 pub const SB_BASE_BTN: f64 = 34.0;
@@ -421,7 +421,7 @@ impl App {
 
     /// A theme switch only invalidates UI artwork, never canvas/undo/page caches.
     pub fn apply_theme(&mut self, theme: crate::ui_theme::Theme) -> bool {
-        let changed = self.theme.dark() != theme.dark();
+        let changed = self.theme.dark() != theme.dark() || self.theme.accent != theme.accent;
         self.theme = theme;
         if changed { self.launch.card.get_mut().take(); }
         changed
@@ -757,6 +757,9 @@ fn parse_settings(app: &mut App, content: &str) {
                 }
             }
             "wpsDebug" => app.wps_debug = v == "1",
+            "themeAccent" => {
+                if let Some(accent) = crate::ui_theme::Accent::parse(v) { app.theme.accent = accent; }
+            }
             "wpsTestMode" => app.wps_test_mode = v == "1",
             "sbScale" => {
                 if let Ok(f) = v.parse::<f64>() {
@@ -794,7 +797,7 @@ pub fn save_settings(app: &App) {
 
 fn serialize_settings(app: &App) -> String {
     format!(
-        "wpsDebug={}\nwpsTestMode={}\nsbScale={:.2}\nsidebarAlpha={}\nrightClickCursor={}\neraseByFinger={}\nlargeTouchThreshold={}\nlargeEraseScale10={}\ntheme={}\n",
+        "wpsDebug={}\nwpsTestMode={}\nsbScale={:.2}\nsidebarAlpha={}\nrightClickCursor={}\neraseByFinger={}\nlargeTouchThreshold={}\nlargeEraseScale10={}\ntheme={}\nthemeAccent={}\n",
         if app.wps_debug { 1 } else { 0 },
         if app.wps_test_mode { 1 } else { 0 },
         app.sb_scale,
@@ -804,6 +807,7 @@ fn serialize_settings(app: &App) -> String {
         app.large_touch_threshold as i32,
         app.large_erase_scale10,
         app.theme.preference.key(),
+        app.theme.accent.key(),
     )
 }
 
@@ -1135,7 +1139,7 @@ mod theme_tests {
         for preference in [Preference::Light, Preference::Dark, Preference::System] {
             for background in 0..WHITEBOARD_COLORS.len() as i32 {
                 let mut source = make();
-                source.theme = Theme { preference, system_dark: true };
+                source.theme = Theme { preference, system_dark: true, ..Default::default() };
                 source.whiteboard_bg_index = background;
                 source.sb_scale = 1.13;
                 let mut loaded = make();
@@ -1165,7 +1169,7 @@ mod theme_tests {
         let ink = app.canvas.data().to_vec();
         let light_board = app.whiteboard_bg_color();
         app.launch.card.get_mut().replace(Pixmap::new(8, 8).unwrap());
-        assert!(app.apply_theme(Theme { preference: Preference::Dark, system_dark: false }));
+        assert!(app.apply_theme(Theme { preference: Preference::Dark, system_dark: false, ..Default::default() }));
         assert!(app.launch.card.borrow().is_none());
         assert_eq!(app.whiteboard_bg_color(), light_board);
         assert_eq!(app.canvas.data(), ink);
@@ -1177,14 +1181,14 @@ mod theme_tests {
         let board_ink = app.canvas.data().to_vec();
         app.whiteboard_bg_index = 0;
         let manual_board = app.whiteboard_bg_color();
-        app.apply_theme(Theme { preference: Preference::System, system_dark: true });
+        app.apply_theme(Theme { preference: Preference::System, system_dark: true, ..Default::default() });
         assert!(app.update_system_theme(false));
         assert_eq!(app.whiteboard_bg_color(), manual_board);
         assert_eq!(app.canvas.data(), board_ink);
         assert_eq!(app.whiteboard_cache.get(&1).unwrap().data(), board_ink);
         app.toggle_whiteboard();
         assert_eq!(app.canvas.data(), ink);
-        app.apply_theme(Theme { preference: Preference::Light, system_dark: false });
+        app.apply_theme(Theme { preference: Preference::Light, system_dark: false, ..Default::default() });
         assert!(!app.update_system_theme(true));
     }
 }

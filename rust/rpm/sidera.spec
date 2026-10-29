@@ -1,6 +1,6 @@
 Name:           sidera
-Version:        3.0
-Release:        Electro_stable
+Version:        3.1
+Release:        Electro_testing
 Summary:        Linux 屏幕批注与教学演示工具（Rust，X11/Wayland，WPS 联动）
 
 License:        GPL-3.0-only
@@ -38,7 +38,8 @@ tar xf %{SOURCE0} -C %{buildroot}
 /usr/share/icons/hicolor/scalable/apps/sidera.svg
 /usr/share/icons/hicolor/256x256/apps/sidera.png
 /usr/share/pixmaps/sidera.svg
-/usr/share/pixmaps/sidera-*.svg
+/usr/share/pixmaps/sidera.png
+/usr/share/pixmaps/sidera-*.png
 /usr/lib/udev/rules.d/70-sidera-uinput.rules
 /usr/lib/udev/rules.d/70-sidera-input.rules
 /etc/modules-load.d/sidera-uinput.conf
@@ -55,15 +56,20 @@ for home in /root /home/*; do
   [ -x /usr/bin/sidera-wps-addin-cleanup ] || continue
   HOME="$home" /usr/bin/sidera-wps-addin-cleanup >/dev/null 2>&1 || :
 done
+gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || :
+update-desktop-database -q /usr/share/applications 2>/dev/null || :
+
+%preun
+if [ "${1:-1}" -eq 0 ] && [ -x /usr/bin/sidera-wps-addin-cleanup ]; then
+  for home in /root /home/*; do
+    [ -d "$home" ] || continue
+    HOME="$home" /usr/bin/sidera-wps-addin-cleanup --remove-current >/dev/null 2>&1 || :
+  done
+fi
 
 %postun
 udevadm control --reload-rules 2>/dev/null || :
-for home in /root /home/*; do
-  [ -d "$home" ] || continue
-  [ -x /usr/bin/sidera-wps-addin-cleanup ] || continue
-  HOME="$home" /usr/bin/sidera-wps-addin-cleanup >/dev/null 2>&1 || :
-done
 
 %changelog
-* Fri Oct 02 2026 Carl_Jin <user@localhost> - 3.0-1
-- Rust 版（Electro）
+* Thu Oct 29 2026 Carl_Jin <user@localhost> - 3.1-1
+- Rust 版（Electro testing）

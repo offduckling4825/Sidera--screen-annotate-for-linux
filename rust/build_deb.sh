@@ -2,7 +2,7 @@
 # ============================================================
 # Rust 版 Sidera DEB 打包脚本
 #   用法: ./build_deb.sh [amd64|aarch64]
-#   产物: <repo>/sidera_3.0-Electro-stable_<amd64|arm64>.deb
+#   产物: <repo>/sidera_3.1-Electro-testing_<amd64|arm64>.deb
 #
 # 依赖：dpkg-dev、binutils、python3；必须能解析目标架构的系统库
 # 前置：先用 ./build_container.sh <arch> 编译出二进制
@@ -25,9 +25,9 @@ case "$ARG" in
 esac
 
 PKG_NAME="sidera"
-# 注意：dpkg 要求 Version 以数字开头，故采用 "3.0-Electro-stable"；
+# 注意：dpkg 要求 Version 以数字开头，故采用 "3.1-Electro-testing"；
 # 如需改版本只改这里即可。
-VERSION="${SIDERA_VERSION:-3.0-Electro-stable}"
+VERSION="${SIDERA_VERSION:-3.1-Electro-testing}"
 dpkg --validate-version "$VERSION" || exit 1
 [[ "$VERSION" != */* && "$VERSION" != *[[:space:]]* ]] || exit 1
 
@@ -115,13 +115,14 @@ cp "$REPO/LICENSE" "$PKG_DIR/usr/share/doc/sidera/LICENSE"
 cp "$REPO/sidera.svg" "$PKG_DIR/usr/share/icons/hicolor/scalable/apps/sidera.svg"
 cp "$REPO/sidera.svg" "$PKG_DIR/usr/share/pixmaps/sidera.svg"
 cp "$REPO/sidera.png" "$PKG_DIR/usr/share/icons/hicolor/256x256/apps/sidera.png"
+cp "$REPO/sidera.png" "$PKG_DIR/usr/share/pixmaps/sidera.png"
 
 # GNOME may retain a texture for an absolute icon path after its file changes.
 # A content-specific path lets the desktop-entry update invalidate that texture.
 # Keep the conventional names above for autostart entries and in-app artwork.
-ICON_SHA="$(sha256sum "$REPO/sidera.svg")"
-ICON_PATH="/usr/share/pixmaps/sidera-${ICON_SHA:0:12}.svg"
-cp "$REPO/sidera.svg" "$PKG_DIR$ICON_PATH"
+ICON_SHA="$(sha256sum "$REPO/sidera.png")"
+ICON_PATH="/usr/share/pixmaps/sidera-${ICON_SHA:0:12}.png"
+cp "$REPO/sidera.png" "$PKG_DIR$ICON_PATH"
 
 # ---------- uinput 权限（KWin 等无虚拟键盘协议时，用内核虚拟键盘发翻页键）----------
 mkdir -p "$PKG_DIR/lib/udev/rules.d" "$PKG_DIR/etc/modules-load.d"
@@ -149,9 +150,24 @@ for home in /root /home/*; do
   [ -x /usr/bin/sidera-wps-addin-cleanup ] || continue
   HOME="$home" /usr/bin/sidera-wps-addin-cleanup >/dev/null 2>&1 || true
 done
+gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
+update-desktop-database -q /usr/share/applications 2>/dev/null || true
 exit 0
 EOF
 chmod 755 "$PKG_DIR/DEBIAN/postinst"
+
+cat > "$PKG_DIR/DEBIAN/prerm" << 'EOF'
+#!/bin/sh
+set -e
+if [ "$1" = remove ] && [ -x /usr/bin/sidera-wps-addin-cleanup ]; then
+  for home in /root /home/*; do
+    [ -d "$home" ] || continue
+    HOME="$home" /usr/bin/sidera-wps-addin-cleanup --remove-current >/dev/null 2>&1 || true
+  done
+fi
+exit 0
+EOF
+chmod 755 "$PKG_DIR/DEBIAN/prerm"
 
 # ---------- DEBIAN/control ----------
 cat > "$PKG_DIR/DEBIAN/control" << EOF

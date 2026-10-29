@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::app::now_ms;
+use crate::bridge_ws;
 
 #[derive(Clone, Debug)]
 pub enum WpsEvent {
@@ -31,6 +32,7 @@ pub struct WpsShared {
     pub whiteboard: bool,
     pub test_mode: bool,
     pub sse_clients: usize,
+    pub ws_clients: usize,
     pub negative_since: i64,
     pub queue: VecDeque<(i64, String)>,
     pub command_failed_until: i64,
@@ -53,6 +55,7 @@ impl Default for WpsShared {
             whiteboard: false,
             test_mode: cfg!(test),
             sse_clients: 0,
+            ws_clients: 0,
             negative_since: 0,
             queue: VecDeque::new(),
             command_failed_until: 0,
@@ -279,8 +282,8 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
         crate::diag_log::warn(line);
         return;
     }
-    if line.starts_with("SSE ") {
-        if line.contains("fallback") || line.contains("unavailable") || line.contains("failed") {
+    if line.starts_with("SSE ") || line.starts_with("CHANNEL ") || line.starts_with("WS ") {
+        if line.contains("fallback") || line.contains("unavailable") || line.contains("failed") || line.contains("closed") {
             crate::diag_log::warn(line);
         } else {
             crate::diag_log::info(line);
@@ -310,31 +313,36 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
     let next_deck = extract_num(line, "deck=");
     let changed_deck = name == "SlideShowState" && pos > 0 && s.real_pos > 0
         && next_deck > 0 && s.deck_epoch > 0 && next_deck != s.deck_epoch;
-    if name == "SlideShowState" {
-        if s.test_mode {
+    let page_event = matches!(name, "SlideShowState" | "SlideShowNextSlide" | "SlideShowNextClick" | "SlideShowBegin" | "SlideShowOnNext" | "SlideShowOnPrevious");
+    let transient_negative = name == "SlideShowState" && pos < 1 && s.real_pos > 0;
+    if s.test_mode && page_event && !transient_negative {
+        if name == "SlideShowState" {
             // Old add-ins do not send ready=; they must never advertise Start.
             s.can_start = pos < 1 && extract_num(line, "ready=") == 1;
-            // Missing fields (including older add-ins) clear stale document data.
-            let page = extract_num(line, "page=");
-            let total = extract_num(line, "total=");
+        }
+        // Page fields are valid on page-change events too, not only SlideShowState.
+        let page = extract_num(line, "page=");
+        let total = extract_num(line, "total=");
+        if name == "SlideShowState" || page > 0 || total > 0 {
             s.page_total = if total > 0 { total } else { -1 };
             s.page_index = if page > 0 && (total < 1 || page <= total) { page } else { -1 };
             s.deck_epoch = extract_num(line, "deck=");
             s.can_jump = extract_num(line, "jump=") == 1 && s.deck_epoch > 0 && page > 0 && total >= page;
-        } else {
-            // Default mode: only API paging and page/animation position.
-            s.can_start = false;
-            s.page_index = -1;
-            s.page_total = -1;
-            s.deck_epoch = -1;
-            s.can_jump = false;
         }
+        let (can_jump, epoch) = (s.can_jump, s.deck_epoch);
+        s.queue.retain(|(_, cmd)| !cmd.starts_with("GOTO ") || (can_jump && jump_command(cmd).is_some_and(|(_, id)| id == epoch)));
+    } else if !s.test_mode {
+        // Default mode: only API paging and page/animation position.
+        s.can_start = false;
+        s.page_index = -1;
+        s.page_total = -1;
+        s.deck_epoch = -1;
+        s.can_jump = false;
         let (can_jump, epoch) = (s.can_jump, s.deck_epoch);
         s.queue.retain(|(_, cmd)| !cmd.starts_with("GOTO ") || (can_jump && jump_command(cmd).is_some_and(|(_, id)| id == epoch)));
     }
     if name == "SlideShowEnd" || (name == "SlideShowState" && pos < 1) {
-        let transient_end = name == "SlideShowState" && pos < 1 && s.real_pos > 0;
-        if transient_end {
+        if transient_negative {
             if s.negative_since == 0 { s.negative_since = now_ms(); }
             if now_ms() - s.negative_since < 1200 {
                 // WPS can briefly return pos=-1 during a slide transition.
@@ -478,7 +486,7 @@ fn handle_sse(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>, shutdown: 
             if sse_send(stream, ": keepalive\n\n").is_err() { break; }
             last_beat = Instant::now();
         }
-        if wrote { last_beat = Instant::now(); last_state = Instant::now(); }
+        if wrote { last_beat = Instant::now(); }
         std::thread::sleep(Duration::from_millis(20));
     }
     sse_end(stream);
@@ -492,6 +500,110 @@ fn handle_sse(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>, shutdown: 
         crate::diag_log::info(&format!("SSE 已关闭（程序退出，clients={clients}）"));
     } else {
         crate::diag_log::warn(&format!("SSE 已断开（clients={clients}）"));
+    }
+}
+
+fn handle_ws_text(shared: &Arc<Mutex<WpsShared>>, text: &str) {
+    let text = text.trim();
+    if text.is_empty() { return; }
+    if text.starts_with("WS ") {
+        if text.contains("fallback") || text.contains("unavailable") || text.contains("closed") {
+            crate::diag_log::warn(text);
+        } else {
+            crate::diag_log::info(text);
+        }
+        return;
+    }
+    if text.starts_with("EVENT ") || text.starts_with("COMMAND_OK ") || text.starts_with("COMMAND_FAILED ") {
+        handle_line(shared, text);
+    }
+}
+
+fn handle_ws(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>, shutdown: &Arc<AtomicBool>, key: &str) {
+    if bridge_ws::handshake(stream, key).is_err() { return; }
+    let mut read_stream = match stream.try_clone() { Ok(stream) => stream, Err(_) => return };
+    let _ = read_stream.set_read_timeout(Some(Duration::from_secs(20)));
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || loop {
+        match bridge_ws::read_frame(&mut read_stream) {
+            Ok(frame) => {
+                let close = frame.opcode == 0x8;
+                if sender.send(frame).is_err() || close { break; }
+            }
+            Err(_) => {
+                let _ = sender.send(bridge_ws::Frame { opcode: 0xff, payload: Vec::new() });
+                break;
+            }
+        }
+    });
+    let clients = {
+        let mut s = shared.lock().unwrap();
+        s.ws_clients = s.ws_clients.saturating_add(1);
+        s.connected = true;
+        s.last_seen = now_ms();
+        s.ws_clients
+    };
+    crate::diag_log::info(&format!("WS 已连接（clients={clients}）"));
+    let mut last_mode: Option<bool> = None;
+    let mut last_state = Instant::now() - Duration::from_secs(10);
+    let mut last_ping = Instant::now() - Duration::from_secs(10);
+    let mut last_pong = Instant::now();
+    'ws: loop {
+        if shutdown.load(Ordering::Relaxed) { break; }
+        let (mode, command) = {
+            let mut s = shared.lock().unwrap();
+            s.connected = true;
+            s.last_seen = now_ms();
+            (s.test_mode, take_command(&mut s))
+        };
+        if last_mode != Some(mode) {
+            if bridge_ws::write_text(stream, &format!("MODE {}", if mode { "full" } else { "default" })).is_err() { break; }
+            last_mode = Some(mode);
+        }
+        if let Some(command) = command {
+            wps_log(&format!("加载项取走 {}", command));
+            if bridge_ws::write_text(stream, &command).is_err() { break; }
+        }
+        if last_state.elapsed() >= Duration::from_secs(5) {
+            if bridge_ws::write_text(stream, "STATE").is_err() { break; }
+            last_state = Instant::now();
+        }
+        if last_ping.elapsed() >= Duration::from_secs(5) {
+            if bridge_ws::write_frame(stream, 0x9, &[]).is_err() { break; }
+            last_ping = Instant::now();
+        }
+        loop {
+            match receiver.try_recv() {
+                Ok(frame) => match frame.opcode {
+                    0x1 => {
+                        if let Ok(text) = std::str::from_utf8(&frame.payload) {
+                            handle_ws_text(shared, text);
+                        }
+                    }
+                    0x9 => { if bridge_ws::write_frame(stream, 0xA, &frame.payload).is_err() { break 'ws; } }
+                    0xA => { last_pong = Instant::now(); }
+                    0x8 => break 'ws,
+                    0xff => break 'ws,
+                    _ => {}
+                },
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => break 'ws,
+            }
+        }
+        if last_pong.elapsed() > Duration::from_secs(15) { break; }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    bridge_ws::write_close(stream);
+    let clients = {
+        let mut s = shared.lock().unwrap();
+        s.ws_clients = s.ws_clients.saturating_sub(1);
+        s.last_seen = now_ms();
+        s.ws_clients
+    };
+    if shutdown.load(Ordering::Relaxed) {
+        crate::diag_log::info(&format!("WS 已关闭（程序退出，clients={clients}）"));
+    } else {
+        crate::diag_log::warn(&format!("WS 已断开（clients={clients}）"));
     }
 }
 
@@ -512,7 +624,7 @@ fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>, shutdown:
     }
 
     if method == "OPTIONS" {
-        if !matches!(path, "/hello" | "/push" | "/poll" | "/config" | "/events") && crate::bridge_http::static_path(path).is_none() {
+        if !matches!(path, "/hello" | "/push" | "/poll" | "/config" | "/events" | "/ws") && crate::bridge_http::static_path(path).is_none() {
             crate::bridge_http::reply(stream, 404, "text/plain", b"Not found"); return;
         }
         reply(stream, b"");
@@ -526,6 +638,26 @@ fn handle_conn(stream: &mut TcpStream, shared: &Arc<Mutex<WpsShared>>, shutdown:
         }
     }
     match path {
+        "/ws" => {
+            if method != "GET" {
+                crate::bridge_http::reply(stream, 405, "text/plain", b"Method not allowed");
+                return;
+            }
+            let headers = &request.headers;
+            let values = |name: &str| headers.iter().filter(|(key, _)| key.eq_ignore_ascii_case(name)).map(|(_, value)| value.as_str()).collect::<Vec<_>>();
+            let upgrade = values("upgrade");
+            let connection = values("connection");
+            let version = values("sec-websocket-version");
+            let keys = values("sec-websocket-key");
+            if upgrade.len() != 1 || !upgrade[0].eq_ignore_ascii_case("websocket")
+                || connection.len() != 1 || !connection[0].to_ascii_lowercase().contains("upgrade")
+                || version.len() != 1 || version[0] != "13"
+                || keys.len() != 1 || keys[0].is_empty() {
+                crate::bridge_http::reply(stream, 400, "text/plain", b"Invalid websocket handshake");
+                return;
+            }
+            handle_ws(stream, shared, shutdown, keys[0]);
+        }
         "/events" => {
             if method != "GET" {
                 crate::bridge_http::reply(stream, 405, "text/plain", b"Method not allowed");
@@ -861,6 +993,57 @@ mod tests {
         assert!(text.contains("data: NEXT"), "SSE command missing: {text:?}");
     }
 
+    fn read_server_frame(stream: &mut TcpStream) -> Option<(u8, Vec<u8>)> {
+        let mut header = [0u8; 2];
+        stream.read_exact(&mut header).ok()?;
+        let opcode = header[0] & 0x0f;
+        let length = (header[1] & 0x7f) as usize;
+        let mut payload = vec![0u8; length];
+        stream.read_exact(&mut payload).ok()?;
+        Some((opcode, payload))
+    }
+
+    #[test]
+    fn websocket_stream_delivers_mode_and_commands() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let bridge = WpsBridge::from_listener(listener);
+        {
+            let mut s = bridge.shared.lock().unwrap();
+            s.connected = true; s.last_seen = now_ms(); s.real_pos = 1; s.test_mode = true;
+        }
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let client = std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            stream.write_all(format!(
+                "GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+            ).as_bytes()).unwrap();
+            let mut header = Vec::new();
+            while !header.ends_with(b"\r\n\r\n") {
+                let mut byte = [0u8; 1];
+                stream.read_exact(&mut byte).unwrap();
+                header.push(byte[0]);
+            }
+            assert!(String::from_utf8_lossy(&header).starts_with("HTTP/1.1 101"));
+            let mut text = String::new();
+            while !text.contains("MODE full") {
+                let (opcode, payload) = read_server_frame(&mut stream).expect("server frame");
+                if opcode == 1 { text.push_str(&String::from_utf8_lossy(&payload)); }
+            }
+            ready_tx.send(()).unwrap();
+            while !text.contains("NEXT") {
+                let (opcode, payload) = read_server_frame(&mut stream).expect("server command");
+                if opcode == 1 { text.push_str(&String::from_utf8_lossy(&payload)); }
+            }
+            text
+        });
+        ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(bridge.enqueue("NEXT"));
+        let text = client.join().unwrap();
+        assert!(text.contains("NEXT"), "WS command missing: {text:?}");
+    }
+
     #[test]
     fn long_poll_delivers_a_command_before_its_deadline() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
@@ -1023,6 +1206,36 @@ mod tests {
             assert!(!bridge.connected());
             assert!(!bridge.ready());
         }
+    }
+
+    #[test]
+    fn page_fields_on_slide_events_update_without_creating_page_events() {
+        let shared = Arc::new(Mutex::new(WpsShared::default()));
+        {
+            let mut s = shared.lock().unwrap();
+            s.connected = true; s.last_seen = now_ms();
+        }
+        handle_line(&shared, "EVENT SlideShowState pos=1 click=0 page=8 total=30 jump=1 deck=90");
+        assert_eq!(shared.lock().unwrap().page_index, 8);
+        let events = shared.lock().unwrap().events.len();
+        handle_line(&shared, "EVENT SlideShowNextSlide pos=2 click=0 page=9 total=30 jump=1 deck=90");
+        assert_eq!(shared.lock().unwrap().page_index, 9);
+        assert_eq!(shared.lock().unwrap().events.len(), events + 1);
+    }
+
+    #[test]
+    fn transient_negative_state_does_not_replace_show_page() {
+        let shared = Arc::new(Mutex::new(WpsShared::default()));
+        {
+            let mut s = shared.lock().unwrap();
+            s.connected = true; s.last_seen = now_ms();
+        }
+        handle_line(&shared, "EVENT SlideShowState pos=5 click=0 page=5 total=30");
+        handle_line(&shared, "EVENT SlideShowState pos=-1 click=-1 page=1 total=30");
+        assert_eq!(shared.lock().unwrap().page_index, 5);
+        handle_line(&shared, "EVENT SlideShowEnd pos=-1 click=-1 page=1 total=30");
+        handle_line(&shared, "EVENT SlideShowState pos=-1 click=-1 page=1 total=30");
+        assert_eq!(shared.lock().unwrap().page_index, 1);
     }
 
     #[test]

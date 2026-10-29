@@ -15,7 +15,7 @@ import unittest
 
 
 REPO = Path(__file__).resolve().parents[2]
-VERSION = "3.0-Electro-stable"
+VERSION = "3.1-Electro-testing"
 
 
 def elf_fixture(machine, elf_class=2, byte_order=1, kind=2):
