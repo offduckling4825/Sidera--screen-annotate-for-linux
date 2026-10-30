@@ -9,7 +9,7 @@
 轻量、免费、开源：把注意力留给课堂。
 
 [![CI](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml/badge.svg)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml)
-[![阶段](https://img.shields.io/badge/3.1-Electro_testing-b98237?style=flat-square)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux)
+[![阶段](https://img.shields.io/badge/3.1-Electro-stable-b98237?style=flat-square)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux)
 [![平台](https://img.shields.io/badge/platform-Linux-5a6f69?style=flat-square)](#桌面与安装包兼容性)
 [![许可](https://img.shields.io/badge/license-GPL_v3-5a6f69?style=flat-square)](LICENSE)
 
@@ -27,8 +27,8 @@
 
 | 版本 | 技术栈 | 版本号 | 建议场景 |
 | --- | --- | --- | --- |
-| **Rust 版（主推，active）** | 纯 Rust，**不依赖 Qt / libX11**，tiny-skia 软件渲染 | `3.1-Electro-testing` | X11 与 Wayland 通吃；老机器、国产化教室机；追求轻量与无重量级依赖 |
-| **C++ / Qt5 版（legacy）** | C++17 + Qt5 | `3.1-Electro-testing` | 经典实现；长期在 X11 教室环境验证 |
+| **Rust 版（主推，active）** | 纯 Rust，**不依赖 Qt / libX11**，tiny-skia 软件渲染 | `3.1-Electro-stable` | X11 与 Wayland 通吃；老机器、国产化教室机；追求轻量与无重量级依赖 |
+| **C++ / Qt5 版（legacy）** | C++17 + Qt5 | `3.1-Electro-stable` | 经典实现；长期在 X11 教室环境验证 |
 
 > Rust 运行时只依赖 `libc6` 与 `libgcc-s1`。C++ 与 Rust 包使用相同的 `sidera` 包名，安装会替换已有版本，**二选一安装**。
 
@@ -77,13 +77,15 @@
 
 ## 核心特性
 
-- 🖊️ **轻量流畅的屏幕批注**：自由画笔、橡皮擦、白板与 10 色色盘；笔迹随落笔时长由细到粗。
+- 🖊️ **轻量流畅的屏幕批注**：自由画笔、30/60/80 三档橡皮、白板与 10 色色盘；支持多指同时绘画，笔迹随落笔时长由细到粗。
 - 🖱️ **智能点击穿透**：光标模式下只响应工具栏与弹窗交互，全屏透明区域完全穿透，不影响底层桌面与课件操作。
 - 🧑‍🏫 **白板模式**：一键把透明批注层变为不透明白板（背景可切换墨绿/白），翻页与笔迹完全本地、与外部放映隔离。
 - ✋ **手掌/大触点橡皮**：多点或大面积触点（如手背）自动临时当大号橡皮，单点恢复画笔；阈值与倍率可调。
 - ↩️ **撤回 / 恢复**：一键撤回最近一笔（最多 12 步）；手动清除后可用“恢复”找回刚才的整页笔迹。
 - 📸 **截图**：抓屏保存 PNG 到图片目录并复制到剪贴板（后端能力允许时）。
-- 📊 **WPS 演示联动**：默认低负载模式只保留 API 翻页和动画/换页判断，命令默认走 WebSocket 双向连接，WebSocket 不可用时回退 SSE；开始放映用 Shift+F5、退出用 Esc；测试模式再提供页码、跳页、从当前页开始。**仅在真实换页时切换批注缓存**，页内动画不丢笔迹。
+- 🧮 **白板点阵**：白板底部可开关点阵辅助线，并用滑块调节点大小。
+- 🛠️ **托盘与进程屏蔽**：托盘菜单可打开设置、切换批注/光标、白板与退出；设置中可扫描并屏蔽启动后不需要的进程。
+- 📊 **WPS 演示联动**：默认启用完整测试模式，提供页码、跳页、从当前页开始、API 上下翻页与放映状态；命令优先走 WebSocket 双向连接，不可用时回退 SSE。**仅在真实换页时切换批注缓存**，页内动画不丢笔迹。
 - 🖥️ **跨架构**：原生支持 x86_64 (amd64) 与 aarch64 (arm64)，适配国产化 Linux 教室机。
 
 ### 为课堂准备的操作
@@ -95,8 +97,8 @@
 | 绘图工具组 | 默认收起橡皮、清除、恢复与撤回，保留画笔与翻页入口；选画笔展开。清除后保留展开以便点“恢复”；恢复后或翻到别的空页时再按空页规则收回。返回有笔迹页自动展开；白板模式保持展开。 |
 | 工具栏拖动 | 上下两个拖拽点，拖动高亮，范围限制在屏幕内；整栏收起后只留边缘小角，不自动弹开。 |
 | 白板 | 进入即切换画笔，光标按钮禁用；切回普通模式会清除白板笔迹并回到空白第 1 页，普通批注页笔迹保留。保持原来的白色／绿板切换，底色不跟随界面主题。**退出程序后不持久保存笔迹。** |
-| WPS 联动 | 默认模式：联动在线时显示“开始放映”，点击发送 Shift+F5；放映中显示“结束放映”，点击发送 Esc；只通过 WPS API 执行上下翻页。测试模式：额外显示页码、跳页和绿色“从当前页开始”。真实换页切换批注，页内动画不切换页缓存。 |
-| 页码与跳页 | 仅测试模式显示当前页 / 总页数并允许拨轮跳转；默认模式隐藏页码，避免持续读取 WPS 页数。白板始终使用自身页码与拨轮。 |
+| WPS 联动 | 联动在线时显示页码、跳页与放映状态；支持 API 上下翻页、绿色“从当前页开始”和结束放映。真实换页切换批注，页内动画不切换页缓存。 |
+| 页码与跳页 | 联动时显示当前页 / 总页数并允许拨轮跳转；白板始终使用自身页码与拨轮。 |
 | 未接入 WPS | 上下键与 Esc 回退到桌面支持的直接按键模拟，页码区域隐藏；不因翻页发起共享桌面授权。 |
 | 启动与外观 | 浅色、深色或跟随系统，保留课堂配色与触摸反馈；启动页显示实际准备信息，两侧工具栏从中间向上下展开。工具栏大小以 1% 步长调节。 |
 
@@ -135,13 +137,13 @@ getconf GNU_LIBC_VERSION
 Rust 版（主推）与 C++ / Qt5 版（legacy）现共用同一版本号与 `sidera` 包名，**二选一安装**：
 
 ```sh
-sudo apt install ./sidera_3.1-Electro-testing_amd64.deb   # amd64
-sudo apt install ./sidera_3.1-Electro-testing_arm64.deb   # arm64
+sudo apt install ./sidera_3.1-Electro-stable_amd64.deb   # amd64
+sudo apt install ./sidera_3.1-Electro-stable_arm64.deb   # arm64
 ```
 
 > 也可以直接用 `dpkg -i`，但推荐 `apt install ./xxx.deb` 以自动补齐依赖。不要跳过依赖检查或替换系统 libc。
 
-RPM / Arch 包可由源码构建（见下），分别产出 `sidera-3.1-Electro_testing.<arch>.rpm` 与 `sidera-3.1_electro_testing-1-<arch>.pkg.tar.zst`（这两种包格式不允许版本号里带 `-`，用 `_` 代替）。
+RPM / Arch 包可由源码构建（见下），分别产出 `sidera-3.1-Electro_stable.<arch>.rpm` 与 `sidera-3.1_electro_stable-1-<arch>.pkg.tar.zst`（这两种包格式不允许版本号里带 `-`，用 `_` 代替）。
 
 ### 2. 选择桌面入口
 

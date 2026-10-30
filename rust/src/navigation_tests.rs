@@ -973,3 +973,91 @@ fn startup_reveal_keeps_its_center_and_fits_the_screen_at_every_frame() {
         }
     }
 }
+#[test]
+fn more_button_toggles_and_outside_click_dismisses_cursor_popups() {
+    let (rt, mut app, _) = fixture(false);
+    app.configure_geometry(640, 360, 1.0);
+    app.mode = 0;
+    app.more_settings_entry = true;
+    let mut ip = Ip::default();
+    let more = ui::sidebar_buttons(&app, false)
+        .into_iter()
+        .find(|(button, _)| *button == Btn::More)
+        .unwrap()
+        .1;
+    let (x, y) = (more.x + more.w / 2, more.y + more.h / 2);
+    on_press(&rt, &mut app, &mut ip, None, x, y, 1);
+    on_release(&rt, &mut app, &mut ip, None, x, y, 1);
+    assert!(app.more_menu_open);
+    on_press(&rt, &mut app, &mut ip, None, x, y, 1);
+    on_release(&rt, &mut app, &mut ip, None, x, y, 1);
+    assert!(
+        !app.more_menu_open,
+        "clicking the More button again must close the menu"
+    );
+
+    app.pen_popup_visible = true;
+    app.more_menu_open = false;
+    apply_input_shape(&rt, &app);
+    assert!(dismiss_capture(&app));
+    on_press(&rt, &mut app, &mut ip, None, 320, 300, 1);
+    on_release(&rt, &mut app, &mut ip, None, 320, 300, 1);
+    assert!(!app.pen_popup_visible);
+    assert!(!app.is_drawing && !app.page_has_ink);
+    assert!(!dismiss_capture(&app));
+}
+
+#[test]
+fn whiteboard_dot_controls_toggle_and_apply_the_size_slider() {
+    let (rt, mut app, _) = fixture(false);
+    app.configure_geometry(640, 360, 1.0);
+    app.toggle_whiteboard();
+    let mut ip = Ip::default();
+    let toggle = ui::whiteboard_dots_toggle_rect(&app);
+    on_press(
+        &rt,
+        &mut app,
+        &mut ip,
+        None,
+        toggle.x + 20,
+        toggle.y + 20,
+        1,
+    );
+    on_release(
+        &rt,
+        &mut app,
+        &mut ip,
+        None,
+        toggle.x + 20,
+        toggle.y + 20,
+        1,
+    );
+    assert!(app.whiteboard_dots);
+    let slider = ui::whiteboard_dot_slider_rect(&app);
+    on_press(
+        &rt,
+        &mut app,
+        &mut ip,
+        None,
+        slider.x + slider.w - 1,
+        slider.y + 10,
+        1,
+    );
+    assert_eq!(app.whiteboard_dot_size, 10);
+    assert!(ip.dot_slider);
+    on_release(
+        &rt,
+        &mut app,
+        &mut ip,
+        None,
+        slider.x + slider.w - 1,
+        slider.y + 10,
+        1,
+    );
+    assert!(!ip.dot_slider);
+    app.whiteboard_dots = false;
+    assert_eq!(
+        ui::whiteboard_control_hit(&app, slider.x + 4, slider.y + 4),
+        None
+    );
+}

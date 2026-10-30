@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use crate::app::now_ms;
 use crate::bridge_ws;
+use sha1::{Digest, Sha1};
 
 #[derive(Clone, Debug)]
 pub enum WpsEvent {
@@ -53,7 +54,7 @@ impl Default for WpsShared {
             can_start: false,
             start_pending_until: 0,
             whiteboard: false,
-            test_mode: cfg!(test),
+            test_mode: true,
             sse_clients: 0,
             ws_clients: 0,
             negative_since: 0,
@@ -126,12 +127,79 @@ fn addin_dir() -> Option<std::path::PathBuf> {
         .find(|p| p.join("manifest.xml").exists())
 }
 
-pub fn ensure_addin_registered() {
-    crate::diag_log::info("开始登记 WPS 加载项");
-    // 与手动安装复用同一条安全合并路径：修复 enable_dev，保留其他加载项，
-    // 备份后原子替换；遇到损坏的 XML 不覆盖原文件。
+const ADDIN_SCHEMA: &str = "sidera-wps-addin-registration-v2";
+const ADDIN_FILES: [&str; 7] = [
+    "publish.xml",
+    "manifest.xml",
+    "main.js",
+    "js/bridge.js",
+    "ribbon.xml",
+    "install.sh",
+    "cleanup-old.sh",
+];
+
+fn addin_fingerprint(dir: &std::path::Path) -> Option<String> {
+    let mut digest = Sha1::new();
+    digest.update(ADDIN_SCHEMA.as_bytes());
+    digest.update(crate::app::VERSION.as_bytes());
+    for name in ADDIN_FILES {
+        let bytes = std::fs::read(dir.join(name)).ok()?;
+        digest.update(name.as_bytes());
+        digest.update((bytes.len() as u64).to_le_bytes());
+        digest.update(bytes);
+    }
+    Some(format!("{:x}", digest.finalize()))
+}
+
+fn registration_state_path() -> Option<std::path::PathBuf> {
+    dirs::state_dir().map(|path| path.join("sidera/wps-addin-state"))
+}
+
+fn wps_publish_path() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|home| home.join(".local/share/Kingsoft/wps/jsaddons/publish.xml"))
+}
+
+fn registration_present() -> bool {
+    let Some(path) = wps_publish_path() else {
+        return false;
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    text.contains("name=\"sidera-bridge\"") || text.contains("name='sidera-bridge'")
+}
+
+fn mark_registered(fingerprint: &str) {
+    let Some(path) = registration_state_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = crate::persistence::atomic_write(&path, fingerprint.as_bytes());
+}
+
+/// Register only after install/upgrade, or when the WPS entry is missing.
+/// Never rewrite WPS-owned files merely because WPS changed its own enable flag.
+pub fn ensure_addin_registered_if_needed() {
+    let Some(dir) = addin_dir() else {
+        wps_log("警告: 未找到 wps-addin 目录（请设置 WPS_ADDIN_DIR）");
+        return;
+    };
+    let Some(fingerprint) = addin_fingerprint(&dir) else {
+        wps_log("警告: 无法读取 WPS 加载项文件，跳过自动登记");
+        return;
+    };
+    let recorded = registration_state_path()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(|value| value.trim().to_string());
+    if recorded.as_deref() == Some(fingerprint.as_str()) && registration_present() {
+        return;
+    }
+    crate::diag_log::info("WPS 加载项首次安装/升级，执行一次登记");
     match register_addin() {
         Ok(text) => {
+            mark_registered(&fingerprint);
             wps_log(&text);
             crate::diag_log::info(&format!("WPS 加载项登记成功：{text}"));
         }
@@ -147,6 +215,9 @@ pub fn register_addin() -> Result<String, String> {
     let output = run_script(&dir.join("install.sh"), &["--repair"], Duration::from_secs(5))
         .map_err(|error| format!("无法运行加载项登记：{error}"))?;
     if output.status.success() {
+        if let Some(fingerprint) = addin_fingerprint(&dir) {
+            mark_registered(&fingerprint);
+        }
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
         Err(format!("加载项登记失败：{}", String::from_utf8_lossy(&output.stderr).trim()))
@@ -713,7 +784,7 @@ impl WpsBridge {
             Some(d) => wps_log(&format!("加载项目录: {}", d.display())),
             None => wps_log("警告: 未找到 wps-addin 目录（请设置 WPS_ADDIN_DIR）"),
         }
-        ensure_addin_registered();
+        ensure_addin_registered_if_needed();
         Some(bridge)
     }
 
@@ -1286,5 +1357,30 @@ mod tests {
         bridge.shared.lock().unwrap().last_seen -= 4000;
         assert!(!bridge.start_available());
         assert!(!bridge.enqueue("START"));
+    }
+}
+
+#[cfg(test)]
+mod registration_state_tests {
+    use super::*;
+
+    #[test]
+    fn addin_fingerprint_tracks_content_and_version_inputs() {
+        let dir = std::env::temp_dir().join(format!(
+            "sidera-addin-fingerprint-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ADDIN_FILES {
+            let path = dir.join(name);
+            if let Some(parent) = path.parent() { std::fs::create_dir_all(parent).unwrap(); }
+            std::fs::write(path, name.as_bytes()).unwrap();
+        }
+        let first = addin_fingerprint(&dir).unwrap();
+        assert_eq!(first, addin_fingerprint(&dir).unwrap());
+        std::fs::write(dir.join("main.js"), b"changed").unwrap();
+        assert_ne!(first, addin_fingerprint(&dir).unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
