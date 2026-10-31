@@ -33,63 +33,15 @@
 > Rust 运行时只依赖 `libc6` 与 `libgcc-s1`。C++ 与 Rust 包使用相同的 `sidera` 包名，安装会替换已有版本，**二选一安装**。
 
 ## 界面预览
+<img width="1280" height="800" alt="ppt-before-showing" src="https://github.com/user-attachments/assets/777ce3fc-e76c-4650-86ba-12a4c1845ea6" />
+<img width="480" height="300" alt="ppt-showing" src="https://github.com/user-attachments/assets/23399457-4d09-4afd-b9a3-729bf51b78a0" />
+<img width="320" height="471" alt="page-picker" src="https://github.com/user-attachments/assets/5e1e0c23-14cb-4c87-95ba-1e84e90c8b2e" />
+<img width="330" height="591" alt="settings" src="https://github.com/user-attachments/assets/77a3764f-7876-4bf9-bef8-86540d09ac66" />
+<img width="480" height="300" alt="whiteboard-green" src="https://github.com/user-attachments/assets/16bfb9a4-d0ce-4687-bd54-338e1516a00b" />
+<img width="480" height="300" alt="whiteboard-white" src="https://github.com/user-attachments/assets/08d261b1-3687-470b-b23e-178de9aefbb5" />
 
-<p align="center">
-  <img src="docs/assets/screenshots/ppt-before-showing.png" width="1080" alt="WPS/PPT 放映前：课件画面上显示 Sidera 左右工具栏和批注入口">
-</p>
 
-<p align="center"><sub>PPT 放映前：工具栏与批注入口就绪，可直接在课件上书写。</sub></p>
 
-<table>
-<tr>
-<td width="50%" valign="top" align="center">
-<b>PPT 放映中</b><br><br>
-<img src="docs/assets/screenshots/ppt-showing.png" width="100%" alt="PPT 放映中界面"><br>
-<sub>放映时只保留课堂需要的批注与翻页入口。</sub>
-</td>
-<td width="50%" valign="top" align="center">
-<b>设置界面</b><br><br>
-<img src="docs/assets/screenshots/settings.png" width="330" alt="Sidera 设置界面：主题、工具栏、WPS 联动、进程屏蔽等"><br>
-<sub>主题、工具栏、触摸、WPS 联动、进程屏蔽与诊断。</sub>
-</td>
-</tr>
-</table>
-
-<table>
-<tr>
-<td width="50%" valign="top" align="center">
-<b>白色白板</b><br><br>
-<img src="docs/assets/screenshots/whiteboard-white.png" width="100%" alt="白色背景白板与点阵"><br>
-<sub>白色白板，可开启点阵辅助。</sub>
-</td>
-<td width="50%" valign="top" align="center">
-<b>绿色白板</b><br><br>
-<img src="docs/assets/screenshots/whiteboard-green.png" width="100%" alt="绿色背景白板与点阵"><br>
-<sub>墨绿白板，适合传统课堂板书。</sub>
-</td>
-</tr>
-</table>
-
-<table>
-<tr>
-<td width="50%" valign="top" align="center">
-<b>侧边栏展开</b><br><br>
-<img src="docs/assets/screenshots/sidebar-expanded.png" width="120" alt="展开的侧边栏工具栏"><br>
-<sub>完整工具栏，包含画笔、橡皮、翻页与白板。</sub>
-</td>
-<td width="50%" valign="top" align="center">
-<b>侧边栏收起</b><br><br>
-<img src="docs/assets/screenshots/sidebar-collapsed.png" width="100" alt="收起后的侧边栏小角"><br>
-<sub>贴边收起后只保留小角，减少课堂遮挡。</sub>
-</td>
-</tr>
-</table>
-
-<p align="center">
-  <b>页码跳转</b><br><br>
-  <img src="docs/assets/screenshots/page-picker.png" width="320" alt="页码拨轮与跳页按钮"><br>
-  <sub>选择页码后确认跳转，避免误触。</sub>
-</p>
 
 ## 核心特性
 
