@@ -1,6 +1,6 @@
 <div align="center">
 
-![Sidera 标志](docs/assets/screenshots/sidera-icon.png)
+![Sidera 标志](sidera.png)
 
 # Sidera · 星罗
 
@@ -34,26 +34,21 @@
 
 ## 界面预览
 
-![PPT 放映前：课件画面上显示 Sidera 左右工具栏和批注入口](docs/assets/screenshots/ppt-before-showing.png)
+![PPT 放映前：课件画面上显示 Sidera 左右工具栏和批注入口](https://github.com/user-attachments/assets/777ce3fc-e76c-4650-86ba-12a4c1845ea6)
 
 *PPT 放映前：工具栏与批注入口就绪，可直接在课件上书写。*
 
 | PPT 放映中 | 设置界面 |
 | :---: | :---: |
-| ![PPT 放映中界面](docs/assets/screenshots/ppt-showing.png) | ![Sidera 设置界面](docs/assets/screenshots/settings.png) |
+| ![PPT 放映中界面](https://github.com/user-attachments/assets/23399457-4d09-4afd-b9a3-729bf51b78a0) | ![Sidera 设置界面](https://github.com/user-attachments/assets/77a3764f-7876-4bf9-bef8-86540d09ac66) |
 | 放映时只保留课堂需要的批注与翻页入口。 | 主题、工具栏、触摸、WPS 联动、进程屏蔽与诊断。 |
 
 | 白色白板 | 绿色白板 |
 | :---: | :---: |
-| ![白色背景白板与点阵](docs/assets/screenshots/whiteboard-white.png) | ![绿色背景白板与点阵](docs/assets/screenshots/whiteboard-green.png) |
+| ![白色背景白板与点阵](https://github.com/user-attachments/assets/08d261b1-3687-470b-b23e-178de9aefbb5) | ![绿色背景白板与点阵](https://github.com/user-attachments/assets/16bfb9a4-d0ce-4687-bd54-338e1516a00b) |
 | 白色白板，可开启点阵辅助。 | 墨绿白板，适合传统课堂板书。 |
 
-| 侧边栏展开 | 侧边栏收起 |
-| :---: | :---: |
-| ![展开的侧边栏工具栏](docs/assets/screenshots/sidebar-expanded.png) | ![收起后的侧边栏小角](docs/assets/screenshots/sidebar-collapsed.png) |
-| 完整工具栏，包含画笔、橡皮、翻页与白板。 | 贴边收起后只保留小角，减少课堂遮挡。 |
-
-![页码拨轮与跳页按钮](docs/assets/screenshots/page-picker.png)
+![页码拨轮与跳页按钮](https://github.com/user-attachments/assets/5e1e0c23-14cb-4c87-95ba-1e84e90c8b2e)
 
 *页码跳转：选择页码后确认跳转，避免误触。*
 
