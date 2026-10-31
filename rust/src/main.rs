@@ -1196,8 +1196,14 @@ fn activate_press(
     if app.pen_popup_visible {
         if let Some(hit) = ui::pen_popup_hit(app, x, y) {
             match hit {
-                PopupHit::Color(i) => app.cur_color = i,
-                PopupHit::PenSize(i) => app.cur_pen = i,
+                PopupHit::Color(i) => {
+                    app.cur_color = i;
+                    app::save_settings(app);
+                }
+                PopupHit::PenSize(i) => {
+                    app.cur_pen = i;
+                    app::save_settings(app);
+                }
                 _ => {}
             }
             rt.redraw_full(app);
@@ -1207,7 +1213,10 @@ fn activate_press(
     if app.eraser_popup_visible {
         if let Some(hit) = ui::eraser_popup_hit(app, x, y) {
             match hit {
-                PopupHit::EraserSize(i) => app.cur_eraser = i,
+                PopupHit::EraserSize(i) => {
+                    app.cur_eraser = i;
+                    app::save_settings(app);
+                }
                 PopupHit::ClearAll => clear_drawing(rt, app),
                 _ => {}
             }

@@ -797,6 +797,15 @@ fn parse_settings(app: &mut App, content: &str) {
                 if let Ok(n) = v.parse::<i32>() { app.whiteboard_dot_size = n.clamp(1, 10); }
             }
             "processBlock" => app.process_block_enabled = v == "1",
+            "penColor" => {
+                if let Ok(n) = v.parse::<usize>() { app.cur_color = n.min(COLORS.len() - 1); }
+            }
+            "penSize" => {
+                if let Ok(n) = v.parse::<usize>() { app.cur_pen = n.min(PEN_SIZES.len() - 1); }
+            }
+            "eraserSize" => {
+                if let Ok(n) = v.parse::<usize>() { app.cur_eraser = n.min(ERASER_SIZES.len() - 1); }
+            }
             "largeTouchThreshold" => {
                 if let Ok(n) = v.parse::<i32>() {
                     app.large_touch_threshold = n.clamp(20, 260) as f64;
@@ -821,7 +830,7 @@ pub fn save_settings(app: &App) {
 
 fn serialize_settings(app: &App) -> String {
     format!(
-        "wpsDebug={}\nwpsTestMode={}\nsbScale={:.2}\nsidebarAlpha={}\nrightClickCursor={}\nwhiteboardDots={}\nwhiteboardDotSize={}\nprocessBlock={}\nlargeTouchThreshold={}\nlargeEraseScale10={}\ntheme={}\nthemeAccent={}\n",
+        "wpsDebug={}\nwpsTestMode={}\nsbScale={:.2}\nsidebarAlpha={}\nrightClickCursor={}\nwhiteboardDots={}\nwhiteboardDotSize={}\nprocessBlock={}\npenColor={}\npenSize={}\neraserSize={}\nlargeTouchThreshold={}\nlargeEraseScale10={}\ntheme={}\nthemeAccent={}\n",
         if app.wps_debug { 1 } else { 0 },
         1,
         app.sb_scale,
@@ -830,6 +839,9 @@ fn serialize_settings(app: &App) -> String {
         if app.whiteboard_dots { 1 } else { 0 },
         app.whiteboard_dot_size,
         if app.process_block_enabled { 1 } else { 0 },
+        app.cur_color,
+        app.cur_pen,
+        app.cur_eraser,
         app.large_touch_threshold as i32,
         app.large_erase_scale10,
         app.theme.preference.key(),
@@ -1183,6 +1195,37 @@ mod theme_tests {
                     assert_eq!(loaded.whiteboard_bg_index, background);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn paint_tool_choices_roundtrip_through_settings() {
+        let mut source = App::new(Pixmap::new(10, 10).unwrap(), 10, 10);
+        source.cur_color = 5;
+        source.cur_pen = 2;
+        source.cur_eraser = 0;
+        let mut loaded = App::new(Pixmap::new(10, 10).unwrap(), 10, 10);
+        parse_settings(&mut loaded, &serialize_settings(&source));
+        assert_eq!(loaded.cur_color, 5);
+        assert_eq!(loaded.cur_pen, 2);
+        assert_eq!(loaded.cur_eraser, 0);
+    }
+
+    #[test]
+    fn theme_accent_roundtrips_through_settings() {
+        for accent in [
+            crate::ui_theme::Accent::Teal,
+            crate::ui_theme::Accent::Blue,
+            crate::ui_theme::Accent::Green,
+            crate::ui_theme::Accent::Amber,
+            crate::ui_theme::Accent::Violet,
+            crate::ui_theme::Accent::Rose,
+        ] {
+            let mut source = App::new(Pixmap::new(10, 10).unwrap(), 10, 10);
+            source.theme.accent = accent;
+            let mut loaded = App::new(Pixmap::new(10, 10).unwrap(), 10, 10);
+            parse_settings(&mut loaded, &serialize_settings(&source));
+            assert_eq!(loaded.theme.accent, accent);
         }
     }
 
