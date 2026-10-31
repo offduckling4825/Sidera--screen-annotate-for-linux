@@ -103,7 +103,7 @@ fn background_wps_does_not_enter_presentation_or_switch_pages() {
         s.page_index = 3; s.page_total = 10; s.can_jump = true; s.deck_epoch = 7;
     }
     let update = WpsUpdate { connected: true, events: vec![WpsEvent::RealPos(3)] };
-    tick_shared(&rt, &mut app, &mut Ip::default(), Some(&bridge), &update, &mut Timers::new());
+    tick_shared(&rt, &mut app, &mut Ip::default(), Some(&bridge), &update, &mut Timers::new(), false);
     assert_eq!(app.current_slide, 1, "background page changes must not replace the canvas");
     assert!(!app.wps_can_jump);
     assert!(!app.sidebar_page_visible());
@@ -177,7 +177,7 @@ fn presentation_lifecycle_does_not_erase_visible_whiteboard() {
         let mut ip = Ip::default();
         let mut timers = Timers::new();
         let update = WpsUpdate { connected: false, events: vec![event] };
-        tick_shared(&rt, &mut app, &mut ip, None, &update, &mut timers);
+        tick_shared(&rt, &mut app, &mut ip, None, &update, &mut timers, false);
         assert!(app.whiteboard);
         assert_eq!(app.current_slide, 2);
         assert_eq!(app.canvas.data(), second.as_slice());
@@ -202,7 +202,7 @@ fn presentation_page_changes_behind_whiteboard_update_the_overlay_on_mode_switch
     paint::stroke_tapered(&mut app, (20, 40), (80, 40), 6, 6);
     let whiteboard = app.canvas.data().to_vec();
     let update = WpsUpdate { connected: true, events: vec![WpsEvent::RealPos(7)] };
-    tick_shared(&rt, &mut app, &mut Ip::default(), None, &update, &mut Timers::new());
+    tick_shared(&rt, &mut app, &mut Ip::default(), None, &update, &mut Timers::new(), false);
     assert_eq!(app.canvas.data(), whiteboard.as_slice());
     assert_eq!(app.current_slide, 1);
     app.toggle_whiteboard();
@@ -244,7 +244,7 @@ fn presentation_button_tracks_ready_showing_and_disconnected_states() {
     }
     let mut ip = Ip::default(); let mut timers = Timers::new();
     let update = WpsUpdate { connected: true, events: vec![] };
-    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &update, &mut timers);
+    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &update, &mut timers, false);
     assert_eq!(app.presentation_action, ui::PresentationAction::Start);
     // Presentation colours are animating, but the buttons remain available.
     assert!(!ui::sidebar_animating(&app));
@@ -261,10 +261,10 @@ fn presentation_button_tracks_ready_showing_and_disconnected_states() {
     {
         let mut s = bridge.shared.lock().unwrap(); s.can_start = false; s.real_pos = 1;
     }
-    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &update, &mut timers);
+    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &update, &mut timers, false);
     assert_eq!(app.presentation_action, ui::PresentationAction::End);
     bridge.shared.lock().unwrap().last_seen -= 4000;
-    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &update, &mut timers);
+    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &update, &mut timers, false);
     assert_eq!(app.presentation_action, ui::PresentationAction::Escape);
     for (right, before) in [false, true].into_iter().zip(bounds) {
         assert_eq!(ui::control_rect(&app, ui::Control::Sidebar(Btn::Exit, right)), Some(before));
@@ -341,11 +341,11 @@ fn stale_wps_document_closes_the_wheel_without_sending_a_jump() {
     }
     let update = WpsUpdate { connected: true, events: vec![] };
     let mut timers = Timers::new();
-    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &update, &mut timers);
+    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &update, &mut timers, false);
     open_page_picker(&rt, &mut app, true);
     assert!(app.page_picker.is_some());
     bridge.shared.lock().unwrap().deck_epoch = 11;
-    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &update, &mut timers);
+    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &update, &mut timers, false);
     assert!(app.page_picker.is_none());
     assert!(bridge.shared.lock().unwrap().queue.is_empty());
 }
@@ -548,12 +548,12 @@ fn wps_waits_for_real_page_before_collapsing_and_whiteboard_restores_tools() {
     let mut timers = Timers::new();
     timers.last_wps = Instant::now();
     let same_page = WpsUpdate { connected: true, events: vec![WpsEvent::RealPos(1)] };
-    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &same_page, &mut timers);
+    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &same_page, &mut timers, false);
     resolve_drawing_tools_auto_update(&rt, &mut app);
     assert!(app.drawing_tools.expanded(), "a queued command or animation step is not a page change");
     bridge.shared.lock().unwrap().real_pos = 2;
     let next_page = WpsUpdate { connected: true, events: vec![WpsEvent::RealPos(2)] };
-    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &next_page, &mut timers);
+    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &next_page, &mut timers, false);
     resolve_drawing_tools_auto_update(&rt, &mut app);
     assert_eq!(app.current_slide, 2);
     assert!(!app.drawing_tools.expanded());
@@ -563,11 +563,11 @@ fn wps_waits_for_real_page_before_collapsing_and_whiteboard_restores_tools() {
     resolve_drawing_tools_auto_update(&rt, &mut app);
     assert!(!app.drawing_tools.expanded());
     go_prev(&rt, &mut app, Some(&bridge));
-    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &next_page, &mut timers);
+    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &next_page, &mut timers, false);
     resolve_drawing_tools_auto_update(&rt, &mut app);
     assert!(!app.drawing_tools.expanded(), "queued navigation must wait for restored page content");
     bridge.shared.lock().unwrap().real_pos = 1;
-    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &same_page, &mut timers);
+    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &same_page, &mut timers, false);
     resolve_drawing_tools_auto_update(&rt, &mut app);
     assert_eq!(app.current_slide, 1);
     assert!(app.canvas.pixels().iter().any(|p| p.alpha() != 0));
@@ -605,7 +605,7 @@ fn page_indicator_uses_fresh_wps_data_without_changing_local_annotations() {
     }
     let mut timers = Timers::new();
     let update = WpsUpdate { connected: true, events: vec![] };
-    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &update, &mut timers);
+    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &update, &mut timers, false);
     assert_eq!(ui::sidebar_page_values(&app), ("6".into(), "24".into()));
     assert!(app.sidebar_page_visible());
     assert_eq!(app.sb_height(), hidden_height + app.sb_page_h() + 6);
@@ -616,7 +616,7 @@ fn page_indicator_uses_fresh_wps_data_without_changing_local_annotations() {
     assert!(app.sidebar_page_visible());
     app.toggle_whiteboard();
     bridge.shared.lock().unwrap().last_seen -= 4000;
-    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &update, &mut timers);
+    tick_shared(&rt, &mut app, &mut ip, Some(&bridge), &update, &mut timers, false);
     assert_eq!(ui::sidebar_page_values(&app), ("—".into(), "—".into()));
     assert!(!app.sidebar_page_visible());
     assert_eq!(app.current_slide, 8);
@@ -689,7 +689,7 @@ fn collapsed_edge_tabs_stay_hidden_until_the_user_expands_them() {
             app.sidebar_anim_start = Some(Instant::now() - Duration::from_secs(121));
             let mut timers = Timers::new();
             tick_shared(&rt, &mut app, &mut ip, None,
-                &WpsUpdate { connected: false, events: vec![] }, &mut timers);
+                &WpsUpdate { connected: false, events: vec![] }, &mut timers, false);
             assert!(app.collapsed, "idle ticks must never reopen a tucked toolbar");
             assert!(app.sidebar_anim_start.is_none());
             let tab = ui::sidebar_rect(&app, right);

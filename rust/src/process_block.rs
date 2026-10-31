@@ -1,4 +1,5 @@
 //! Match and terminate user-selected processes after Sidera starts.
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 
@@ -58,6 +59,7 @@ pub fn save_rules(rules: &[String]) -> std::io::Result<()> {
     crate::persistence::atomic_write(&path, text.as_bytes())
 }
 
+#[cfg(unix)]
 pub fn scan() -> Vec<ProcInfo> {
     let uid = unsafe { libc::geteuid() };
     let self_pid = std::process::id() as i32;
@@ -116,6 +118,12 @@ pub fn scan() -> Vec<ProcInfo> {
     out
 }
 
+#[cfg(windows)]
+pub fn scan() -> Vec<ProcInfo> {
+    // Windows implementation will use CreateToolhelp32Snapshot later.
+    Vec::new()
+}
+
 fn exe_name(proc: &ProcInfo) -> &str {
     proc.exe.rsplit('/').next().unwrap_or("")
 }
@@ -139,6 +147,7 @@ pub fn matches(rule: &str, proc: &ProcInfo) -> bool {
     })
 }
 
+#[cfg(unix)]
 pub fn kill_rules(rules: &[String]) -> Vec<(i32, String, bool)> {
     let self_pid = std::process::id() as i32;
     let mut results = Vec::new();
@@ -153,6 +162,11 @@ pub fn kill_rules(rules: &[String]) -> Vec<(i32, String, bool)> {
         results.push((proc.pid, proc.name, ok));
     }
     results
+}
+
+#[cfg(windows)]
+pub fn kill_rules(_rules: &[String]) -> Vec<(i32, String, bool)> {
+    Vec::new()
 }
 
 pub fn run_configured() {

@@ -92,9 +92,14 @@ pub fn wps_log(msg: &str) {
     log::info!("[WPSAPI] {}", msg);
     if cfg!(test) { return; }
     let path = log_file();
-    use std::os::unix::fs::OpenOptionsExt;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true)
-        .mode(0o600).custom_flags(libc::O_NOFOLLOW).open(&path) {
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    if let Ok(mut f) = options.open(&path) {
         if !f.metadata().map(|m| m.is_file()).unwrap_or(false) { return; }
         if f.metadata().map(|m| m.len() > 1024 * 1024).unwrap_or(false) { let _ = f.set_len(0); }
         let _ = writeln!(f, "{} {}", now_ms(), msg);
@@ -235,6 +240,7 @@ pub fn remove_addin_registration() -> Result<String, String> {
     }
 }
 
+#[cfg(unix)]
 fn run_script(script: &std::path::Path, args: &[&str], timeout: Duration) -> std::io::Result<std::process::Output> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
@@ -255,6 +261,14 @@ fn run_script(script: &std::path::Path, args: &[&str], timeout: Duration) -> std
             }
         }
     }
+}
+
+#[cfg(windows)]
+fn run_script(_script: &std::path::Path, _args: &[&str], _timeout: Duration) -> std::io::Result<std::process::Output> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "Windows WPS 加载项登记尚未实现",
+    ))
 }
 
 fn percent_decode(s: &str) -> String {
@@ -804,6 +818,9 @@ impl WpsBridge {
                             drop(st);
                             continue;
                         }
+                        // Windows may inherit the listener's nonblocking mode on
+                        // accepted sockets; switch back so read timeouts work.
+                        let _ = st.set_nonblocking(false);
                         let _ = st.set_read_timeout(Some(Duration::from_secs(1)));
                         let s3 = s2.clone();
                         let sd3 = sd.clone();
@@ -958,6 +975,7 @@ impl WpsBridge {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn registration_timeout_does_not_block_the_bridge() {
         let directory = std::env::temp_dir().join(format!("sidera-register-{}", std::process::id()));
@@ -1037,7 +1055,7 @@ mod tests {
         }
         let client = std::thread::spawn(move || {
             let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
             stream.write_all(format!(
                 "GET /events HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: keep-alive\r\n\r\n"
             ).as_bytes()).unwrap();

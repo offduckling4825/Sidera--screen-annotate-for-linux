@@ -1055,6 +1055,15 @@ impl crate::backend::Backend for X11Plat {
             Err(error) => log::warn!("[WARN] 更新 X11 点击区域失败: {error}"),
         }
     }
+    fn set_text_input(&self, on: bool) {
+        if on {
+            if !self.grab_text_keyboard() {
+                log::warn!("无法抓取键盘，进程名可先复制后用“粘贴”");
+            }
+        } else {
+            self.ungrab_text_keyboard();
+        }
+    }
     fn fake_key(&self, key: crate::backend::Key) {
         use crate::backend::Key;
         if self.x11.is_xwayland {

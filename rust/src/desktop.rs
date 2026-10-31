@@ -205,7 +205,7 @@ impl Desktop {
             };
             if connected && position > 0 {
                 let update = crate::WpsUpdate { connected: true, events: vec![crate::WpsEvent::RealPos(position)] };
-                crate::tick_shared(&output.rt, &mut output.app, &mut output.ip, Some(bridge), &update, &mut output.timers);
+                crate::tick_shared(&output.rt, &mut output.app, &mut output.ip, Some(bridge), &update, &mut output.timers, crate::system_theme::dark());
             }
         }
         self.outputs.insert(id, output);
@@ -326,7 +326,7 @@ impl Desktop {
         if self.outputs.values().any(|o| !o.launch_pending && o.app.canvas.width() > 1) { self.starting = false; }
         let update = crate::poll_wps(self.controls.wps, self.controls.whiteboard, self.controls.wps_test, &mut self.wps);
         for output in self.outputs.values_mut() {
-            crate::tick_shared(&output.rt, &mut output.app, &mut output.ip, self.wps.as_ref(), &update, &mut output.timers);
+            crate::tick_shared(&output.rt, &mut output.app, &mut output.ip, self.wps.as_ref(), &update, &mut output.timers, crate::system_theme::dark());
         }
         if let Some(output) = self.outputs.values().next() { self.controls = Controls::read(&output.app); }
         self.resolve_drawing_tools_auto_update();
