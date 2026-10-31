@@ -262,10 +262,44 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "/StatusNotifierWatcher",
         "org.kde.StatusNotifierWatcher",
     )?;
-    if let Err(error) = watcher.call::<_, _, ()>("RegisterStatusNotifierItem", &(name.as_str(),)) {
-        crate::diag_log::warn(&format!("未找到托盘宿主：{error}"));
-    }
+    let bus = zbus::blocking::Proxy::new(
+        &connection,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+    )?;
+    let mut registered_owner: Option<String> = None;
+    let mut logged_failure = false;
     loop {
-        std::thread::sleep(Duration::from_secs(1));
+        // Quickshell/waybar may start after Sidera. Retry when the watcher
+        // appears, and re-register if its D-Bus owner changes after a restart.
+        let owner = bus
+            .call::<_, _, String>("GetNameOwner", &("org.kde.StatusNotifierWatcher",))
+            .ok();
+        match owner {
+            Some(owner) if registered_owner.as_deref() != Some(owner.as_str()) => {
+                match watcher.call::<_, _, ()>(
+                    "RegisterStatusNotifierItem",
+                    &(name.as_str(),),
+                ) {
+                    Ok(()) => {
+                        crate::diag_log::info("托盘菜单已注册");
+                        registered_owner = Some(owner);
+                        logged_failure = false;
+                    }
+                    Err(error) => {
+                        if !logged_failure {
+                            crate::diag_log::warn(&format!("托盘菜单注册失败：{error}"));
+                            logged_failure = true;
+                        }
+                    }
+                }
+            }
+            Some(_) => {}
+            None => {
+                registered_owner = None;
+            }
+        }
+        std::thread::sleep(Duration::from_secs(2));
     }
 }
