@@ -9,7 +9,7 @@
 轻量、免费、开源：把注意力留给课堂。
 
 [![CI](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml/badge.svg)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml)
-[![阶段](https://img.shields.io/badge/3.1-Electro_stable-b98237?style=flat-square)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux)
+[![阶段](https://img.shields.io/badge/3.1-Electro-stable-b98237?style=flat-square)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux)
 [![平台](https://img.shields.io/badge/platform-Linux-5a6f69?style=flat-square)](#桌面与安装包兼容性)
 [![许可](https://img.shields.io/badge/license-GPL_v3-5a6f69?style=flat-square)](LICENSE)
 
@@ -27,63 +27,81 @@
 
 | 版本 | 技术栈 | 版本号 | 建议场景 |
 | --- | --- | --- | --- |
-| **Rust 版（主推，active）** | 纯 Rust，**不依赖 Qt / libX11**，tiny-skia 软件渲染 | `3.1-Electro-testing` | X11 与 Wayland 通吃；老机器、国产化教室机；追求轻量与无重量级依赖 |
-| **C++ / Qt5 版（legacy）** | C++17 + Qt5 | `3.1-Electro-testing` | 经典实现；长期在 X11 教室环境验证 |
+| **Rust 版（主推，active）** | 纯 Rust，**不依赖 Qt / libX11**，tiny-skia 软件渲染 | `3.1-Electro-stable` | X11 与 Wayland 通吃；老机器、国产化教室机；追求轻量与无重量级依赖 |
+| **C++ / Qt5 版（legacy）** | C++17 + Qt5 | `3.1-Electro-stable` | 经典实现；长期在 X11 教室环境验证 |
 
 > Rust 运行时只依赖 `libc6` 与 `libgcc-s1`。C++ 与 Rust 包使用相同的 `sidera` 包名，安装会替换已有版本，**二选一安装**。
 
 ## 界面预览
 
 <p align="center">
-  <img src="docs/assets/preview/classroom.png" width="1080" alt="浅色课堂界面：左右工具栏、画笔色盘、课件页码与开始放映入口">
+  <img src="docs/assets/screenshots/ppt-before-showing.png" width="1080" alt="WPS/PPT 放映前：课件画面上显示 Sidera 左右工具栏和批注入口">
 </p>
 
-<p align="center"><sub>生产绘制代码生成的静态预览；课堂背景与页码为演示数据，不是桌面实测截图。</sub></p>
-
-<details>
-<summary>查看深色课堂界面</summary>
-
-![深色课堂界面：深灰绿面板、薄荷绿选中态、保留原色的画笔](docs/assets/preview/classroom-dark.png)
-
-在设置顶部选择 **浅色 / 深色 / 跟随系统**，并可选择青绿、蓝色、绿色、琥珀、紫色、玫红六种主题强调色，立即生效并保存。工具栏、弹窗、设置和启动页统一适配；白板底色与实际笔迹保持原样。参见[主题使用与验证范围](docs/DARK_MODE.md)。
-
-</details>
+<p align="center"><sub>PPT 放映前：工具栏与批注入口就绪，可直接在课件上书写。</sub></p>
 
 <table>
 <tr>
 <td width="50%" valign="top" align="center">
-<b>启动准备</b><br><br>
-<img src="docs/assets/preview/startup.png" width="440" alt="启动页显示桌面连接、界面资源、绘图交互和 WPS 联动的准备状态"><br>
-<sub>实际准备状态、原作者署名与辅助贡献署名。</sub>
+<b>PPT 放映中</b><br><br>
+<img src="docs/assets/screenshots/ppt-showing.png" width="100%" alt="PPT 放映中界面"><br>
+<sub>放映时只保留课堂需要的批注与翻页入口。</sub>
 </td>
 <td width="50%" valign="top" align="center">
-<b>设置与触摸</b><br><br>
-<img src="docs/assets/preview/settings.png" width="300" alt="设置界面包含工具栏大小、透明度、大触点阈值和逐项恢复默认"><br>
-<sub>细致调节、逐项恢复默认，保留原有操作位置。</sub>
+<b>设置界面</b><br><br>
+<img src="docs/assets/screenshots/settings.png" width="330" alt="Sidera 设置界面：主题、工具栏、WPS 联动、进程屏蔽等"><br>
+<sub>主题、工具栏、触摸、WPS 联动、进程屏蔽与诊断。</sub>
 </td>
 </tr>
 </table>
 
-<details>
-<summary>查看页码拨轮与工具栏展开分帧</summary>
+<table>
+<tr>
+<td width="50%" valign="top" align="center">
+<b>白色白板</b><br><br>
+<img src="docs/assets/screenshots/whiteboard-white.png" width="100%" alt="白色背景白板与点阵"><br>
+<sub>白色白板，可开启点阵辅助。</sub>
+</td>
+<td width="50%" valign="top" align="center">
+<b>绿色白板</b><br><br>
+<img src="docs/assets/screenshots/whiteboard-green.png" width="100%" alt="绿色背景白板与点阵"><br>
+<sub>墨绿白板，适合传统课堂板书。</sub>
+</td>
+</tr>
+</table>
 
-![页码拨轮：先选择，确认后跳转](docs/assets/preview/page-wheel.png)
+<table>
+<tr>
+<td width="50%" valign="top" align="center">
+<b>侧边栏展开</b><br><br>
+<img src="docs/assets/screenshots/sidebar-expanded.png" width="120" alt="展开的侧边栏工具栏"><br>
+<sub>完整工具栏，包含画笔、橡皮、翻页与白板。</sub>
+</td>
+<td width="50%" valign="top" align="center">
+<b>侧边栏收起</b><br><br>
+<img src="docs/assets/screenshots/sidebar-collapsed.png" width="100" alt="收起后的侧边栏小角"><br>
+<sub>贴边收起后只保留小角，减少课堂遮挡。</sub>
+</td>
+</tr>
+</table>
 
-![两侧工具栏从中心向上下展开的静态分帧](docs/assets/preview/startup-reveal.png)
-
-浅色预览与分帧由 [render_ui](rust/examples/render_ui.rs) 生成，深色预览由 [render_themes](rust/examples/render_themes.rs) 生成，均使用实际界面绘制函数。分帧用于展示设计，不能替代真实动画、输入与桌面兼容性验收。
-
-</details>
+<p align="center">
+  <b>页码跳转</b><br><br>
+  <img src="docs/assets/screenshots/page-picker.png" width="320" alt="页码拨轮与跳页按钮"><br>
+  <sub>选择页码后确认跳转，避免误触。</sub>
+</p>
 
 ## 核心特性
 
-- 🖊️ **轻量流畅的屏幕批注**：自由画笔、橡皮擦、白板与 10 色色盘；笔迹随落笔时长由细到粗。
+- 🖊️ **轻量流畅的屏幕批注**：自由画笔、30/60/80 三档橡皮、白板与 10 色色盘；支持多指同时绘画，笔迹随落笔时长由细到粗。
 - 🖱️ **智能点击穿透**：光标模式下只响应工具栏与弹窗交互，全屏透明区域完全穿透，不影响底层桌面与课件操作。
 - 🧑‍🏫 **白板模式**：一键把透明批注层变为不透明白板（背景可切换墨绿/白），翻页与笔迹完全本地、与外部放映隔离。
 - ✋ **手掌/大触点橡皮**：多点或大面积触点（如手背）自动临时当大号橡皮，单点恢复画笔；阈值与倍率可调。
 - ↩️ **撤回 / 恢复**：一键撤回最近一笔（最多 12 步）；手动清除后可用“恢复”找回刚才的整页笔迹。
 - 📸 **截图**：抓屏保存 PNG 到图片目录并复制到剪贴板（后端能力允许时）。
-- 📊 **WPS 演示联动**：默认低负载模式只保留 API 翻页和动画/换页判断，命令默认走 WebSocket 双向连接，WebSocket 不可用时回退 SSE；开始放映用 Shift+F5、退出用 Esc；测试模式再提供页码、跳页、从当前页开始。**仅在真实换页时切换批注缓存**，页内动画不丢笔迹。
+- 🧮 **白板点阵**：白板底部可开关点阵辅助线，并用滑块调节点大小。
+- 🛠️ **托盘与进程屏蔽**：托盘菜单可打开设置、切换批注/光标、白板与退出；设置中可扫描并屏蔽启动后不需要的进程。
+- 📊 **WPS 演示联动**：默认启用完整测试模式，提供页码、跳页、从当前页开始、API 上下翻页与放映状态；命令优先走 WebSocket 双向连接，不可用时回退 SSE。**仅在真实换页时切换批注缓存**，页内动画不丢笔迹。
 - 🖥️ **跨架构**：原生支持 x86_64 (amd64) 与 aarch64 (arm64)，适配国产化 Linux 教室机。
 
 ### 为课堂准备的操作
@@ -95,8 +113,8 @@
 | 绘图工具组 | 默认收起橡皮、清除、恢复与撤回，保留画笔与翻页入口；选画笔展开。清除后保留展开以便点“恢复”；恢复后或翻到别的空页时再按空页规则收回。返回有笔迹页自动展开；白板模式保持展开。 |
 | 工具栏拖动 | 上下两个拖拽点，拖动高亮，范围限制在屏幕内；整栏收起后只留边缘小角，不自动弹开。 |
 | 白板 | 进入即切换画笔，光标按钮禁用；切回普通模式会清除白板笔迹并回到空白第 1 页，普通批注页笔迹保留。保持原来的白色／绿板切换，底色不跟随界面主题。**退出程序后不持久保存笔迹。** |
-| WPS 联动 | 默认模式：联动在线时显示“开始放映”，点击发送 Shift+F5；放映中显示“结束放映”，点击发送 Esc；只通过 WPS API 执行上下翻页。测试模式：额外显示页码、跳页和绿色“从当前页开始”。真实换页切换批注，页内动画不切换页缓存。 |
-| 页码与跳页 | 仅测试模式显示当前页 / 总页数并允许拨轮跳转；默认模式隐藏页码，避免持续读取 WPS 页数。白板始终使用自身页码与拨轮。 |
+| WPS 联动 | 联动在线时显示页码、跳页与放映状态；支持 API 上下翻页、绿色“从当前页开始”和结束放映。真实换页切换批注，页内动画不切换页缓存。 |
+| 页码与跳页 | 联动时显示当前页 / 总页数并允许拨轮跳转；白板始终使用自身页码与拨轮。 |
 | 未接入 WPS | 上下键与 Esc 回退到桌面支持的直接按键模拟，页码区域隐藏；不因翻页发起共享桌面授权。 |
 | 启动与外观 | 浅色、深色或跟随系统，保留课堂配色与触摸反馈；启动页显示实际准备信息，两侧工具栏从中间向上下展开。工具栏大小以 1% 步长调节。 |
 
@@ -135,13 +153,13 @@ getconf GNU_LIBC_VERSION
 Rust 版（主推）与 C++ / Qt5 版（legacy）现共用同一版本号与 `sidera` 包名，**二选一安装**：
 
 ```sh
-sudo apt install ./sidera_3.1-Electro-testing_amd64.deb   # amd64
-sudo apt install ./sidera_3.1-Electro-testing_arm64.deb   # arm64
+sudo apt install ./sidera_3.1-Electro-stable_amd64.deb   # amd64
+sudo apt install ./sidera_3.1-Electro-stable_arm64.deb   # arm64
 ```
 
 > 也可以直接用 `dpkg -i`，但推荐 `apt install ./xxx.deb` 以自动补齐依赖。不要跳过依赖检查或替换系统 libc。
 
-RPM / Arch 包可由源码构建（见下），分别产出 `sidera-3.1-Electro_testing.<arch>.rpm` 与 `sidera-3.1_electro_testing-1-<arch>.pkg.tar.zst`（这两种包格式不允许版本号里带 `-`，用 `_` 代替）。
+RPM / Arch 包可由源码构建（见下），分别产出 `sidera-3.1-Electro_stable.<arch>.rpm` 与 `sidera-3.1_electro_stable-1-<arch>.pkg.tar.zst`（这两种包格式不允许版本号里带 `-`，用 `_` 代替）。
 
 ### 2. 选择桌面入口
 
