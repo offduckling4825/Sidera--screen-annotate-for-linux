@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="sidera.png" width="88" height="88" alt="Sidera 标志">
+![Sidera 标志](docs/assets/screenshots/sidera-icon.png)
 
 # Sidera · 星罗
 
@@ -34,46 +34,28 @@
 
 ## 界面预览
 
-<p align="center">
-  <img src="docs/assets/preview/classroom.png" width="1080" alt="浅色课堂界面：左右工具栏、画笔色盘、课件页码与开始放映入口">
-</p>
+![PPT 放映前：课件画面上显示 Sidera 左右工具栏和批注入口](docs/assets/screenshots/ppt-before-showing.png)
 
-<p align="center"><sub>生产绘制代码生成的静态预览；课堂背景与页码为演示数据，不是桌面实测截图。</sub></p>
+*PPT 放映前：工具栏与批注入口就绪，可直接在课件上书写。*
 
-<details>
-<summary>查看深色课堂界面</summary>
+| PPT 放映中 | 设置界面 |
+| :---: | :---: |
+| ![PPT 放映中界面](docs/assets/screenshots/ppt-showing.png) | ![Sidera 设置界面](docs/assets/screenshots/settings.png) |
+| 放映时只保留课堂需要的批注与翻页入口。 | 主题、工具栏、触摸、WPS 联动、进程屏蔽与诊断。 |
 
-![深色课堂界面：深灰绿面板、薄荷绿选中态、保留原色的画笔](docs/assets/preview/classroom-dark.png)
+| 白色白板 | 绿色白板 |
+| :---: | :---: |
+| ![白色背景白板与点阵](docs/assets/screenshots/whiteboard-white.png) | ![绿色背景白板与点阵](docs/assets/screenshots/whiteboard-green.png) |
+| 白色白板，可开启点阵辅助。 | 墨绿白板，适合传统课堂板书。 |
 
-在设置顶部选择 **浅色 / 深色 / 跟随系统**，并可选择青绿、蓝色、绿色、琥珀、紫色、玫红六种主题强调色，立即生效并保存。工具栏、弹窗、设置和启动页统一适配；白板底色与实际笔迹保持原样。参见[主题使用与验证范围](docs/DARK_MODE.md)。
+| 侧边栏展开 | 侧边栏收起 |
+| :---: | :---: |
+| ![展开的侧边栏工具栏](docs/assets/screenshots/sidebar-expanded.png) | ![收起后的侧边栏小角](docs/assets/screenshots/sidebar-collapsed.png) |
+| 完整工具栏，包含画笔、橡皮、翻页与白板。 | 贴边收起后只保留小角，减少课堂遮挡。 |
 
-</details>
+![页码拨轮与跳页按钮](docs/assets/screenshots/page-picker.png)
 
-<table>
-<tr>
-<td width="50%" valign="top" align="center">
-<b>启动准备</b><br><br>
-<img src="docs/assets/preview/startup.png" width="440" alt="启动页显示桌面连接、界面资源、绘图交互和 WPS 联动的准备状态"><br>
-<sub>实际准备状态、原作者署名与辅助贡献署名。</sub>
-</td>
-<td width="50%" valign="top" align="center">
-<b>设置与触摸</b><br><br>
-<img src="docs/assets/preview/settings.png" width="300" alt="设置界面包含工具栏大小、透明度、大触点阈值和逐项恢复默认"><br>
-<sub>细致调节、逐项恢复默认，保留原有操作位置。</sub>
-</td>
-</tr>
-</table>
-
-<details>
-<summary>查看页码拨轮与工具栏展开分帧</summary>
-
-![页码拨轮：先选择，确认后跳转](docs/assets/preview/page-wheel.png)
-
-![两侧工具栏从中心向上下展开的静态分帧](docs/assets/preview/startup-reveal.png)
-
-浅色预览与分帧由 [render_ui](rust/examples/render_ui.rs) 生成，深色预览由 [render_themes](rust/examples/render_themes.rs) 生成，均使用实际界面绘制函数。分帧用于展示设计，不能替代真实动画、输入与桌面兼容性验收。
-
-</details>
+*页码跳转：选择页码后确认跳转，避免误触。*
 
 ## 核心特性
 
