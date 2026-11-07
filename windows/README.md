@@ -7,13 +7,16 @@ Windows 10 x64 起步。Windows 平台代码、构建脚本、验收 VM 和打�
 - [x] Linux 宿主交叉编译工具链（Rust 1.93.1 + mingw-w64）
 - [x] Win32 覆盖层：透明/置顶/局部点击穿透 + 共享 UI（Ctrl+Shift+Q 退出）
 - [x] 共享核心拆分：`rust` 同时产出 `sidera-core` 库，Windows 直接依赖
-- [x] Linux 134 项测试通过；Windows 核心 109 项测试在 Wine 下通过
+- [x] Linux 149 项测试通过；Windows 核心 124 项测试在 Wine 下通过
 - [x] `Win32Plat` 实现 `Backend`，接入 `ui::render_region` 与共享 `App`
 - [x] 鼠标、WM_POINTER 触摸、热键、截图、单实例、系统主题、字体
 - [x] 已通过 Wine 验证 Windows 字体与共享 UI 渲染
 - [x] 托盘菜单（设置/切换/白板/显示/退出）与注册表自启动
 - [x] WPS Windows 加载项注册（原生 XML 合并）
-- [ ] Windows 进程扫描
+- [x] Windows 进程扫描与进程屏蔽（NtSuspendProcess/NtResumeProcess，带崩溃恢复状态文件）
+- [x] 单显示器分辨率 / DPI 变化后重建覆盖层
+- [x] 原生 Windows 设置窗口（与 Linux 共用设置面板渲染与输入路径）
+- [x] WPS 放映前台 / 全屏判定（复用共享类名与标题分类）
 - [ ] 多显示器 / 混合 DPI、真实触摸设备验收
 - [ ] Win10 VM / 真机验收与安装包签名
 
@@ -44,6 +47,7 @@ Windows 10 x64 起步。Windows 平台代码、构建脚本、验收 VM 和打�
 ```sh
 SIDERA_RENDER_PNG='Z:\tmp\sidera-ui.png' wine sidera.exe
 SIDERA_DUMP_DIB='Z:\tmp\sidera-dib.png' wine sidera.exe   # 走 present/flush 后的 DIB
+SIDERA_SETTINGS_SMOKE=1 wine sidera.exe   # 创建并绘制一次原生设置窗口后退出
 ```
 
 ## 编译
@@ -86,7 +90,7 @@ target/x86_64-pc-windows-gnu/release/sidera.exe
 ## 托盘与自启动
 
 - 托盘图标使用 `Shell_NotifyIconW`，左键显示覆盖层，右键菜单：打开设置、切换批注/光标、白板、显示 Sidera、退出；双击打开设置。
-- 自启动写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 的 `Sidera` 值，设置面板的开关直接生效。
+- 自启动写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 的 `Sidera` 值，设置面板的开关直接生效；`--autostart` 会遵循“自动启动延迟”设置。
 - 调试自启动：`SIDERA_AUTOSTART_TEST=1 wine sidera.exe`，结果写入 `%TEMP%\sidera-win-startup.log`。
 
 ## WPS 加载项注册
@@ -96,6 +100,13 @@ target/x86_64-pc-windows-gnu/release/sidera.exe
 - 设置里的“重新登记 WPS 加载项”会再次合并；关闭 WPS 后重新打开演示生效。
 - 合并逻辑在 Rust/quick-xml 中完成，会保留其他加载项，清理旧名称和旧 URL 条目。
 - 加载项本体随 ZIP 放在 `wps-addin/`，HTTP 桥从 `127.0.0.1:16666` 提供 manifest/ribbon/JS。
+- 放映前台检测复用 Linux 的类名/标题分类（Windows 上同时参考进程名 `wps/wpp/et`），后台放映不再响应 Sidera 的翻页/开始/退出动作。
+
+## Windows 设置窗口
+
+- 托盘“打开设置”创建独立原生窗口（标准标题栏、可拖动、可缩放），内容复用共享 `settings_panel`，和 Linux 原生设置窗口一致。
+- 打开期间覆盖层输入区域清空，透明覆盖层保持点击穿透；关闭时恢复原状态。
+- 设置窗口内的数值/HEX 输入、对话框、进程屏蔽和颜色选择器与覆盖层共用同一套事件路由。
 
 ## Windows 覆盖层结构
 

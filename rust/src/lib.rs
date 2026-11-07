@@ -210,10 +210,27 @@ impl Rt {
         #[cfg(unix)]
         if let Some(window) = &app.settings_ui.window {
             let full = r.x == 0 && r.y == 0 && r.w >= app.screen_w && r.h >= app.screen_h;
-            if full {
+            if !full {
+                // Partial settings repaints also refresh the sidebar preview
+                // strips drawn on the overlay.
+                self.redraw_settings_window(app, window, true);
+            } else {
+                // The overlay is blank behind a native settings window, so a
+                // full redraw only needs it for the Appearance preview.
+                if app.previewing_sidebars() {
+                    self.redraw_overlay(app, r);
+                }
+                self.redraw_settings_window(app, window, false);
+            }
+            return;
+        }
+        #[cfg(windows)]
+        if app.settings_ui.window_size().is_some() {
+            let full = r.x == 0 && r.y == 0 && r.w >= app.screen_w && r.h >= app.screen_h;
+            if full && app.previewing_sidebars() {
                 self.redraw_overlay(app, r);
             }
-            self.redraw_settings_window(app, window, !full);
+            app.settings_ui.native_dirty.set(true);
             return;
         }
         self.redraw_overlay(app, r);
@@ -236,6 +253,11 @@ impl Rt {
             self.redraw_settings_window(app, window, sidebar_preview_dirty);
             return;
         }
+        #[cfg(windows)]
+        if app.settings_ui.window_size().is_some() {
+            app.settings_ui.native_dirty.set(true);
+            return;
+        }
         let _ = sidebar_preview_dirty;
         self.redraw_full(app);
     }
@@ -255,6 +277,15 @@ impl Rt {
             }
         } else {
             self.render(app, r);
+        }
+    }
+    /// Clear the overlay presentation surface (used when a native settings
+    /// window takes over; sidebar previews are kept when the Appearance tab is
+    /// visible).
+    pub fn clear_overlay(&self, app: &App) {
+        if let Some(pm) = ui::render_region(app, &self.fonts, self.icon.as_ref(),
+            0, 0, app.screen_w, app.screen_h) {
+            self.backend.present(&pm, 0, 0);
         }
     }
     pub fn redraw_full(&self, app: &App) {
@@ -1223,8 +1254,6 @@ pub fn handle_settings_hit(rt: &Rt, app: &mut App, hit: SetHit) {
             app.settings_ui.autostart = ui::is_autostart();
             if app.settings_ui.autostart == old { app.settings_ui.notify("未能修改自动启动设置"); }
         }
-        // Kept for source compatibility; there is no off state in the settings UI.
-        SetHit::WpsDebug => { app.wps_debug = true; app::save_settings(app); }
         SetHit::WpsRemove => app.settings_ui.show_dialog(Dialog::Remove),
         SetHit::WpsRegister => app.settings_ui.show_dialog(Dialog::Register),
         SetHit::ProcessBlock => {
@@ -2240,11 +2269,22 @@ pub fn tick_shared(rt: &Rt, app: &mut App, _ip: &mut Ip,
     }
     if app.settings_ui.closing_at>0 && now-app.settings_ui.closing_at>=120 {
         #[cfg(unix)]
-        settings_window::close(rt, app, _ip);
-        app.settings_ui.closing_at=0;
-        app.settings_open=false;
-        apply_input_shape(rt,app);
-        rt.redraw_full(app);
+        {
+            settings_window::close(rt, app, _ip);
+            app.settings_ui.closing_at=0;
+            app.settings_open=false;
+            apply_input_shape(rt,app);
+            rt.redraw_full(app);
+        }
+        #[cfg(windows)]
+        if app.settings_ui.window_size().is_none() {
+            // The fallback in-canvas panel closes here; a native Windows
+            // settings window is closed by the platform loop.
+            app.settings_ui.closing_at=0;
+            app.settings_open=false;
+            apply_input_shape(rt,app);
+            rt.redraw_full(app);
+        }
     }
     if app.settings_ui.overlay_closing_at>0 && now-app.settings_ui.overlay_closing_at>=120 {
         app.settings_ui.overlay_closing_at=0;

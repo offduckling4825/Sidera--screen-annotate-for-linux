@@ -1,6 +1,6 @@
 Name:           sidera
-Version:        3.1
-Release:        Electro_stable
+Version:        3.2
+Release:        Electro.rc
 Summary:        Linux 屏幕批注与教学演示工具（Rust，X11/Wayland，WPS 联动）
 
 License:        GPL-3.0-only
@@ -72,5 +72,5 @@ fi
 udevadm control --reload-rules 2>/dev/null || :
 
 %changelog
-* Thu Oct 29 2026 Carl_Jin <user@localhost> - 3.1-1
-- Rust 版（Electro stable）
+* Sat Nov 07 2026 Carl_Jin <user@localhost> - 3.2-1
+- Rust 版（Electro rc）

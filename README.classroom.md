@@ -1,10 +1,10 @@
 # Sidera 教室部署指南
 
-适用于本仓库 `custom` 分支的 Rust 3.0 定制版。Sidera 原项目与本分支归属见 [NOTICE.md](NOTICE.md)，功能概览见 [README](README.md)。
+适用于本仓库 `custom` 分支的 Rust 3.2 定制版。Sidera 原项目与本分支归属见 [NOTICE.md](NOTICE.md)，功能概览见 [README](README.md)。
 
 ## 安装前
 
-核对发行版、CPU 架构、系统 libc 与桌面会话。`custom20261025.35` 提供 **amd64 与 ARM64**，均以对应架构的 Ubuntu 22.04 为构建基线；实际依赖以包的 `Depends` 和 Release 内 `BUILDINFO-对应架构.md` 为准。构建基线不等于所有桌面都已验收，学校 ARM64 / glibc 2.31 环境仍需单独构建。
+核对发行版、CPU 架构、系统 libc 与桌面会话。`3.2-Electro.rc` 提供 **amd64 与 ARM64**，均以对应架构的 Ubuntu 22.04 为构建基线；实际依赖以包的 `Depends` 和 Release 内 `BUILDINFO-对应架构.md` 为准。构建基线不等于所有桌面都已验收，学校 ARM64 / glibc 2.31 环境仍需单独构建。
 
 匹配系统请按 [README 的安装步骤](README.md#安装与开始使用) 下载、校验并用 apt 安装；不要强制跳过依赖。Rust 与旧 C++ 版使用同一个 `sidera` 包名，安装会覆盖原版本。
 
@@ -27,7 +27,7 @@ sidera-gnome-install
 安装包不包含 WPS。请使用匹配系统的 WPS Linux 版本；加载项功能取决于 WPS 提供的 API。
 
 1. 关闭 WPS，普通用户执行 `sidera-wps-addin-install`。
-2. 启动 Sidera，在设置中开启“WPS 联动”。
+2. 启动 Sidera（Rust 版默认启用 WPS 联动；C++ 版在设置中开启“WPS 联动”）。
 3. 打开 WPS 演示，确认加载“批注联动”标签并取得状态。
 4. 联动在线且文档支持“当页开始”时，侧栏出现绿色“开始放映”；联动放映时显示“结束放映”。未接入时显示普通样式的 Esc，并按桌面能力使用按键模拟；未联动本身不额外变色，具体条件见[按钮与页码状态](wps-addin/README.md#按钮与页码状态)。
 

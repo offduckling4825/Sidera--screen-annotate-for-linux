@@ -11,8 +11,8 @@
 #
 # 产物：
 #   target/container-amd64/release/sidera（低 glibc 二进制）
-#   sidera_3.1-Electro-stable_amd64.deb / sidera-3.1-Electro_stable.x86_64.rpm
-#   sidera-3.1_electro_stable-1-x86_64.pkg.tar.zst（rust/dist/）
+#   sidera_3.2-Electro.rc_amd64.deb / sidera-3.2-Electro.rc.x86_64.rpm
+#   sidera-3.2_electro_rc-1-x86_64.pkg.tar.zst（rust/dist/）
 # ============================================================
 set -e
 

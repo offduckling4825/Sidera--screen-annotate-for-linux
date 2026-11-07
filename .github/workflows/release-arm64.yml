@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing Sidera custom release tag
+        description: Existing Sidera release tag
         required: true
-        default: v3.0-Electro-testing-custom20261024.29
+        default: v3.2-Electro.rc
         type: string
       runner_image:
         description: Native ARM64 build system (also determines the library baseline)
@@ -40,11 +40,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v3\.0-Electro-testing-custom[0-9]{8}\.[0-9]+$ ]]
+          [[ "$RELEASE_TAG" =~ ^v3\.2-Electro\.rc$ ]]
           test "$(uname -m)" = aarch64
           test "$(dpkg --print-architecture)" = arm64
           version="${RELEASE_TAG#v}"
-          echo "SIDERA_VERSION=${version/-custom/+custom}" >> "$GITHUB_ENV"
+          echo "SIDERA_VERSION=${version}" >> "$GITHUB_ENV"
 
       - name: Checkout the released application sources
         uses: actions/checkout@v4

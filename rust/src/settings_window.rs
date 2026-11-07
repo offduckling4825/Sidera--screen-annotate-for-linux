@@ -1,20 +1,20 @@
 //! Native settings windows, sharing one renderer and input path.
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use tiny_skia::IntRect;
+use tiny_skia::{IntRect, Pixmap};
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::protocol::xproto::{
     Atom, AtomEnum, ClientMessageEvent, ConfigureWindowAux, ConnectionExt, CreateGCAux,
     CreateWindowAux, EventMask, Gcontext, PropMode, StackMode, WindowClass,
 };
-use x11rb::protocol::Event;
+use x11rb::protocol::{randr, xproto, Event};
 use x11rb::wrapper::ConnectionExt as _;
 
 use crate::{app::App, ui, x11::{XResult, X11}, Ip, Rt, WpsBridge};
 use crate::settings_wayland::WaylandWindow;
 
 pub(crate) enum Window {
-    X11(X11Window),
+    X11(Box<X11Window>),
     Wayland(WaylandWindow),
 }
 
@@ -37,7 +37,7 @@ impl Window {
                 Err(error) => log::info!("原生设置窗口不可用：{error}"),
             }
         }
-        Ok(Rc::new(Self::X11(X11Window::open(app)?)))
+        Ok(Rc::new(Self::X11(Box::new(X11Window::open(app)?))))
     }
 
     pub(crate) fn raise(&self) {
@@ -85,6 +85,21 @@ pub(crate) struct X11Window {
     protocols: Atom,
     delete: Atom,
     dirty: Cell<bool>,
+    frame: RefCell<Option<Pixmap>>,
+}
+
+/// Screen area of the monitor containing the pointer, in physical pixels.
+fn pointer_monitor(x11: &X11) -> Option<(i32, i32, i32, i32)> {
+    let pointer = xproto::query_pointer(&x11.conn, x11.root).ok()?.reply().ok()?;
+    let (px, py) = (i32::from(pointer.root_x), i32::from(pointer.root_y));
+    let reply = randr::get_monitors(&x11.conn, x11.root, true).ok()?.reply().ok()?;
+    let monitor = reply.monitors.iter().find(|monitor| {
+        let (x, y) = (i32::from(monitor.x), i32::from(monitor.y));
+        px >= x && px < x + i32::from(monitor.width)
+            && py >= y && py < y + i32::from(monitor.height)
+    }).or_else(|| reply.monitors.first())?;
+    Some((i32::from(monitor.x), i32::from(monitor.y),
+        i32::from(monitor.width), i32::from(monitor.height)))
 }
 
 impl X11Window {
@@ -92,8 +107,12 @@ impl X11Window {
         let x11 = X11::connect()?;
         let scale = x11.detect_scale();
         let pixels = |logical: i32| (f64::from(logical) * scale).round() as i32;
-        let width = pixels(860).min((x11.width - 40).max(1)).max(1);
-        let height = pixels(620).min((x11.height - 72).max(1)).max(1);
+        let (mon_x, mon_y, mon_w, mon_h) = pointer_monitor(&x11)
+            .unwrap_or((0, 0, x11.width, x11.height));
+        let width = pixels(860).min((mon_w - 40).max(1)).max(1);
+        let height = pixels(620).min((mon_h - 72).max(1)).max(1);
+        let window_x = (mon_x + (mon_w - width) / 2).clamp(i16::MIN as i32, i16::MAX as i32);
+        let window_y = (mon_y + (mon_h - height) / 2).clamp(i16::MIN as i32, i16::MAX as i32);
         let id = x11.conn.generate_id()?;
         let gc = x11.conn.generate_id()?;
         let atom = |name: &[u8]| -> XResult<Atom> {
@@ -102,10 +121,14 @@ impl X11Window {
         let protocols = atom(b"WM_PROTOCOLS")?;
         let delete = atom(b"WM_DELETE_WINDOW")?;
         let net_name = atom(b"_NET_WM_NAME")?;
+        let net_type = atom(b"_NET_WM_WINDOW_TYPE")?;
+        let net_type_dialog = atom(b"_NET_WM_WINDOW_TYPE_DIALOG")?;
+        let net_pid = atom(b"_NET_WM_PID")?;
+        let net_icon = atom(b"_NET_WM_ICON")?;
         let utf8 = atom(b"UTF8_STRING")?;
         x11.conn.create_window(
             x11.argb_depth, id, x11.root,
-            ((x11.width - width) / 2) as i16, ((x11.height - height) / 2) as i16,
+            window_x as i16, window_y as i16,
             width as u16, height as u16, 0, WindowClass::INPUT_OUTPUT, x11.argb_visual,
             &CreateWindowAux::new()
                 .colormap(x11.cmap)
@@ -123,6 +146,21 @@ impl X11Window {
         x11.conn.change_property8(PropMode::REPLACE, id, AtomEnum::WM_CLASS,
             AtomEnum::STRING, b"sidera\0Sidera\0")?.check()?;
         x11.conn.change_property32(PropMode::REPLACE, id, protocols, AtomEnum::ATOM, &[delete])?.check()?;
+        x11.conn.change_property32(PropMode::REPLACE, id, net_type, AtomEnum::ATOM, &[net_type_dialog])?.check()?;
+        x11.conn.change_property32(PropMode::REPLACE, id, net_pid, AtomEnum::CARDINAL, &[std::process::id()])?.check()?;
+        if let Some(icon) = crate::ui_icons::app_icon(48) {
+            let mut data = Vec::with_capacity(2 + 48 * 48);
+            data.extend([48u32, 48u32]);
+            for px in icon.data().chunks_exact(4) {
+                let alpha = u32::from(px[3]);
+                let unpremultiply = |channel: u8| if alpha == 0 { 0 } else {
+                    ((u32::from(channel) * 255 + alpha / 2) / alpha).min(255)
+                };
+                data.push((alpha << 24) | (unpremultiply(px[0]) << 16)
+                    | (unpremultiply(px[1]) << 8) | unpremultiply(px[2]));
+            }
+            x11.conn.change_property32(PropMode::REPLACE, id, net_icon, AtomEnum::CARDINAL, &data)?.check()?;
+        }
         // ICCCM PMinSize. Settings reflow at this size, including the palette and dialogs.
         let mut hints = [0; 18];
         hints[0] = 1 << 4;
@@ -135,6 +173,7 @@ impl X11Window {
         Ok(Self {
             x11, id, gc, size: Cell::new((width as u16, height as u16)), scale,
             protocols, delete, dirty: Cell::new(true),
+            frame: RefCell::new(None),
         })
     }
 
@@ -164,14 +203,17 @@ impl X11Window {
         if !crate::app::valid_geometry(i32::from(width), i32::from(height), 1.0) {
             return;
         }
-        let Some(frame) = ui::render_settings_window(
-            app, &rt.fonts, rt.icon.as_ref(), width.into(), height.into(), self.scale as f32,
-        ) else { return };
+        let mut cache = self.frame.borrow_mut();
+        let resize = cache.as_ref().is_none_or(|frame|
+            frame.width() != u32::from(width) || frame.height() != u32::from(height));
+        if resize { *cache = Pixmap::new(width.into(), height.into()); }
+        let Some(frame) = cache.as_mut() else { return };
+        ui::draw_settings_window(app, &rt.fonts, rt.icon.as_ref(), frame, self.scale as f32);
         // Respect the server's request limit when the window is maximized.
         let limit = self.x11.conn.maximum_request_bytes().saturating_sub(64);
         let rows = (limit / (usize::from(width) * 4)).max(1);
         if rows >= usize::from(height) {
-            let _ = self.x11.put_pixmap(self.id, self.gc, &frame, 0, 0);
+            let _ = self.x11.put_pixmap(self.id, self.gc, frame, 0, 0);
             return;
         }
         for y in (0..u32::from(height)).step_by(rows) {

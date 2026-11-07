@@ -13,16 +13,21 @@ use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use sidera_core::app::App;
 use sidera_core::backend::{Backend, IRect, Key};
+use sidera_core::text::Fonts;
 use sidera_core::gesture::TouchKind;
 use tiny_skia::Pixmap;
 
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM,
+};
 use windows_sys::Win32::Graphics::Gdi::{
-    AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, BitBlt,
-    CAPTUREBLT, CreateCompatibleBitmap, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS,
-    CombineRgn, CreateRectRgn, DeleteDC, DeleteObject, GetDC, GetDIBits, HDC, HBITMAP,
-    HGDIOBJ, RGN_OR, ReleaseDC, SRCCOPY, SelectObject, SetWindowRgn, ValidateRect,
+    AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, BeginPaint,
+    BitBlt, CAPTUREBLT, CreateCompatibleBitmap, CreateCompatibleDC, CreateDIBSection,
+    DIB_RGB_COLORS, CombineRgn, CreateRectRgn, DeleteDC, DeleteObject, EndPaint, GetDC,
+    GetDIBits, HDC, HBITMAP, HGDIOBJ, PAINTSTRUCT, RGN_OR, ReleaseDC,
+    SRCCOPY, ScreenToClient, SelectObject, SetWindowRgn, ValidateRect,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Shell::{
@@ -31,6 +36,9 @@ use windows_sys::Win32::UI::Shell::{
 use windows_sys::Win32::System::Registry::{
     HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW,
 };
+use windows_sys::Win32::System::Threading::{
+    OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
@@ -38,27 +46,33 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP,
     MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEINPUT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
     RegisterHotKey, ReleaseCapture, SendInput, SetCapture, UnregisterHotKey, VK_DOWN, VK_ESCAPE, VK_F5, VK_SHIFT,
-    VK_UP, GetKeyState, SetFocus, VK_CONTROL,
+    VK_UP, GetKeyState, SetFocus, VK_CONTROL, VK_MENU,
 };
 use windows_sys::Win32::UI::Input::Pointer::{
     GetPointerInfo, GetPointerTouchInfo, POINTER_FLAG_INCONTACT, POINTER_INFO, POINTER_TOUCH_INFO,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu,
-    DestroyWindow, DispatchMessageW, GWLP_USERDATA, GWL_EXSTYLE, GetForegroundWindow, GetCursorPos, GetSystemMetrics,
+    AdjustWindowRect, AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon,
+    DestroyMenu, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GWL_EXSTYLE,
+    GetClientRect, GetClassNameW,
+    GetForegroundWindow, GetCursorPos, GetSystemMetrics, GetWindowRect,
+    GetWindowTextW, GetWindowThreadProcessId,
     GetWindowLongPtrW, HTCLIENT, HTTRANSPARENT, HWND_TOPMOST, IDC_ARROW, IDI_APPLICATION,
     LoadCursorW, LoadIconW, LoadImageW, MF_STRING, MSG, PM_REMOVE, PeekMessageW,
     PostMessageW, PostQuitMessage, RegisterClassW, SetCursorPos, SetForegroundWindow,
     TrackPopupMenu, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-    SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+    SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN,
+    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    SW_SHOW, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
     SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
-    ULW_ALPHA, UpdateLayeredWindow, WNDCLASSW, LWA_ALPHA,
-    WM_DESTROY, WM_DISPLAYCHANGE, WM_ERASEBKGND, WM_HOTKEY, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    ULW_ALPHA, UpdateLayeredWindowIndirect, UPDATELAYEREDWINDOWINFO, WNDCLASSW, LWA_ALPHA,
+    WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ERASEBKGND, WM_HOTKEY, WM_LBUTTONDOWN, WM_LBUTTONUP,
     WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST, WM_PAINT, WM_POINTERDOWN, WM_POINTERUP, WM_POINTERUPDATE,
-    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETTINGCHANGE, WM_CONTEXTMENU, WM_LBUTTONDBLCLK, WM_KEYDOWN, WM_CHAR,
+    WM_CLOSE, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETTINGCHANGE, WM_CONTEXTMENU, WM_LBUTTONDBLCLK,
+    WM_KEYDOWN, WM_CHAR, WM_SIZE,
     WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
-    WS_POPUP, WS_VISIBLE, HICON, IMAGE_ICON, LR_DEFAULTSIZE, LR_LOADFROMFILE,
+    WS_OVERLAPPEDWINDOW, WS_POPUP, WS_VISIBLE, HICON, IMAGE_ICON, LR_DEFAULTSIZE,
+    LR_LOADFROMFILE,
 };
 
 const HOTKEY_TOGGLE: i32 = 1;
@@ -88,15 +102,17 @@ pub enum WinEvent {
     ThemeChanged,
     DisplayChanged,
     ValueKey(sidera_core::value_input::Key),
+    SettingsClose,
+    SettingsResized,
 }
 
 pub struct Win32Plat {
     visual_hwnd: HWND,
     input_hwnd: HWND,
-    origin: (i32, i32),
-    phys_w: i32,
-    phys_h: i32,
-    scale: f64,
+    origin: Cell<(i32, i32)>,
+    phys_w: Cell<i32>,
+    phys_h: Cell<i32>,
+    scale: Cell<f64>,
     events: RefCell<VecDeque<WinEvent>>,
     input_rects: RefCell<Vec<IRect>>,
     full_input: Cell<bool>,
@@ -105,14 +121,27 @@ pub struct Win32Plat {
     touch_last: RefCell<HashMap<u32, (i32, i32, f64)>>,
     hdc_screen: HDC,
     hdc_mem: HDC,
-    dib: HBITMAP,
-    old_bitmap: HGDIOBJ,
-    bits: *mut u8,
+    dib: Cell<HBITMAP>,
+    old_bitmap: Cell<HGDIOBJ>,
+    bits: Cell<*mut u8>,
     dirty: Cell<bool>,
+    dirty_rect: Cell<Option<(i32, i32, i32, i32)>>,
     update_failed: Cell<bool>,
     last_topmost: Cell<Instant>,
     tray_icon: HICON,
     tray_icon_owned: bool,
+    pending_dpi: Cell<Option<u32>>,
+    settings: RefCell<Option<SettingsWindow>>,
+}
+
+struct SettingsWindow {
+    hwnd: HWND,
+    hdc_mem: HDC,
+    dib: HBITMAP,
+    old_bitmap: HGDIOBJ,
+    bits: *mut u8,
+    width: i32,
+    height: i32,
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -170,6 +199,44 @@ pub fn system_dark() -> bool {
         )
     };
     status == 0 && value == 0
+}
+
+unsafe fn window_class(hwnd: HWND) -> String {
+    if hwnd.is_null() { return String::new(); }
+    let mut buf = [0u16; 256];
+    let len = GetClassNameW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+    String::from_utf16_lossy(&buf[..len.max(0) as usize])
+}
+
+unsafe fn window_title(hwnd: HWND) -> String {
+    if hwnd.is_null() { return String::new(); }
+    let mut buf = [0u16; 1024];
+    let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+    String::from_utf16_lossy(&buf[..len.max(0) as usize])
+}
+
+unsafe fn window_exe(hwnd: HWND) -> String {
+    let mut pid = 0u32;
+    GetWindowThreadProcessId(hwnd, &mut pid);
+    if pid == 0 { return String::new(); }
+    let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+    if process.is_null() { return String::new(); }
+    let mut buf = [0u16; 1024];
+    let mut len = buf.len() as u32;
+    let ok = QueryFullProcessImageNameW(process, 0, buf.as_mut_ptr(), &mut len);
+    CloseHandle(process);
+    if ok == 0 { return String::new(); }
+    let path = String::from_utf16_lossy(&buf[..len as usize]);
+    path.rsplit(['\\', '/']).next().unwrap_or("")
+        .trim_end_matches(".exe").to_ascii_lowercase()
+}
+
+unsafe fn is_wps_presentation_window(hwnd: HWND) -> bool {
+    if hwnd.is_null() { return false; }
+    let class = window_class(hwnd);
+    let exe = window_exe(hwnd);
+    let title = window_title(hwnd);
+    sidera_core::wps::presentation_window(&format!("{class}\0{exe}\0"), &title)
 }
 
 impl Win32Plat {
@@ -287,10 +354,10 @@ impl Win32Plat {
             let plat = Box::new(Win32Plat {
                 visual_hwnd: visual,
                 input_hwnd: input,
-                origin: (vx, vy),
-                phys_w: vw,
-                phys_h: vh,
-                scale,
+                origin: Cell::new((vx, vy)),
+                phys_w: Cell::new(vw),
+                phys_h: Cell::new(vh),
+                scale: Cell::new(scale),
                 events: RefCell::new(VecDeque::new()),
                 input_rects: RefCell::new(Vec::new()),
                 full_input: Cell::new(false),
@@ -299,14 +366,17 @@ impl Win32Plat {
                 touch_last: RefCell::new(HashMap::new()),
                 hdc_screen,
                 hdc_mem,
-                dib,
-                old_bitmap,
-                bits: bits as *mut u8,
+                dib: Cell::new(dib),
+                old_bitmap: Cell::new(old_bitmap),
+                bits: Cell::new(bits as *mut u8),
                 dirty: Cell::new(true),
+                dirty_rect: Cell::new(Some((0, 0, vw, vh))),
                 update_failed: Cell::new(false),
                 last_topmost: Cell::new(Instant::now()),
                 tray_icon,
                 tray_icon_owned,
+                pending_dpi: Cell::new(None),
+                settings: RefCell::new(None),
             });
 
             let ptr = &*plat as *const Win32Plat as isize;
@@ -358,17 +428,343 @@ impl Win32Plat {
 
     pub fn logical_size(&self) -> (i32, i32) {
         (
-            (self.phys_w as f64 / self.scale).round().max(1.0) as i32,
-            (self.phys_h as f64 / self.scale).round().max(1.0) as i32,
+            (self.phys_w.get() as f64 / self.scale.get()).round().max(1.0) as i32,
+            (self.phys_h.get() as f64 / self.scale.get()).round().max(1.0) as i32,
         )
     }
 
     pub fn canvas_size(&self) -> (u32, u32) {
-        (self.phys_w as u32, self.phys_h as u32)
+        (self.phys_w.get() as u32, self.phys_h.get() as u32)
     }
 
     pub fn scale(&self) -> f64 {
-        self.scale
+        self.scale.get()
+    }
+
+    /// Rebuild the overlay surface after a resolution or DPI change. Only the
+    /// single-monitor layout is considered here.
+    pub fn refresh_display(&self) -> Option<(i32, i32, f64)> {
+        unsafe {
+            let vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+            let vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+            let vw = GetSystemMetrics(SM_CXVIRTUALSCREEN).max(1);
+            let vh = GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1);
+            let dpi = self.pending_dpi.take()
+                .unwrap_or_else(|| GetDpiForWindow(self.visual_hwnd)).max(96);
+            let scale = (dpi as f64 / 96.0).clamp(1.0, 4.0);
+            SetWindowPos(self.visual_hwnd, HWND_TOPMOST, vx, vy, vw, vh,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            SetWindowPos(self.input_hwnd, HWND_TOPMOST, vx, vy, vw, vh,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            let old = self.old_bitmap.get();
+            if !old.is_null() {
+                SelectObject(self.hdc_mem, old);
+                self.old_bitmap.set(null_mut());
+            }
+            let dib = self.dib.get();
+            if !dib.is_null() {
+                DeleteObject(dib as HGDIOBJ);
+                self.dib.set(null_mut());
+                self.bits.set(null_mut());
+            }
+            let mut bmi: BITMAPINFO = std::mem::zeroed();
+            bmi.bmiHeader = BITMAPINFOHEADER {
+                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: vw,
+                biHeight: -vh,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB,
+                ..std::mem::zeroed()
+            };
+            let mut bits: *mut c_void = null_mut();
+            let dib = CreateDIBSection(self.hdc_screen, &bmi, DIB_RGB_COLORS,
+                &mut bits, null_mut(), 0);
+            if dib.is_null() || bits.is_null() {
+                return None;
+            }
+            let old = SelectObject(self.hdc_mem, dib);
+            std::ptr::write_bytes(bits as *mut u8, 0, (vw * vh * 4) as usize);
+            self.dib.set(dib);
+            self.bits.set(bits as *mut u8);
+            self.old_bitmap.set(old);
+            self.origin.set((vx, vy));
+            self.phys_w.set(vw);
+            self.phys_h.set(vh);
+            self.scale.set(scale);
+            self.dirty.set(true);
+            self.dirty_rect.set(Some((0, 0, vw, vh)));
+            let rects = self.input_rects.borrow().clone();
+            let full = self.full_input.get();
+            self.set_input_region(&rects, full);
+            let logical_w = ((vw as f64) / scale).round().max(1.0) as i32;
+            let logical_h = ((vh as f64) / scale).round().max(1.0) as i32;
+            Some((logical_w, logical_h, scale))
+        }
+    }
+
+    pub fn settings_window_open(&self) -> bool {
+        self.settings.borrow().is_some()
+    }
+
+    pub fn settings_logical_size(&self) -> Option<(i32, i32)> {
+        let settings = self.settings.borrow();
+        let settings = settings.as_ref()?;
+        unsafe {
+            let mut client: RECT = std::mem::zeroed();
+            if GetClientRect(settings.hwnd, &mut client) == 0 { return None; }
+            let width = client.right - client.left;
+            let height = client.bottom - client.top;
+            if width <= 8 || height <= 8 { return None; }
+            let scale = self.scale.get();
+            Some((
+                ((width as f64) / scale).round().max(1.0) as i32,
+                ((height as f64) / scale).round().max(1.0) as i32,
+            ))
+        }
+    }
+
+    /// Create the native settings window (single-monitor layout).
+    pub fn create_settings_window(&self) -> Option<(i32, i32)> {
+        if self.settings.borrow().is_some() {
+            return self.settings_logical_size();
+        }
+        unsafe {
+            let class_name = wide("SideraSettingsWindow");
+            let hinstance = GetModuleHandleW(null());
+            let wc = WNDCLASSW {
+                style: 0,
+                lpfnWndProc: Some(settings_wndproc),
+                cbClsExtra: 0,
+                cbWndExtra: 0,
+                hInstance: hinstance,
+                hIcon: self.tray_icon,
+                hCursor: LoadCursorW(null_mut(), IDC_ARROW),
+                hbrBackground: null_mut(),
+                lpszMenuName: null(),
+                lpszClassName: class_name.as_ptr(),
+            };
+            RegisterClassW(&wc);
+            let scale = self.scale.get();
+            let screen_w = GetSystemMetrics(SM_CXSCREEN);
+            let screen_h = GetSystemMetrics(SM_CYSCREEN);
+            let client_w = ((860.0 * scale).round() as i32).min((screen_w - 40).max(320));
+            let client_h = ((620.0 * scale).round() as i32).min((screen_h - 72).max(240));
+            let mut frame = RECT { left: 0, top: 0, right: client_w, bottom: client_h };
+            AdjustWindowRect(&mut frame, WS_OVERLAPPEDWINDOW, 0);
+            let win_w = frame.right - frame.left;
+            let win_h = frame.bottom - frame.top;
+            let x = ((screen_w - win_w) / 2).max(0);
+            let y = ((screen_h - win_h) / 2).max(0);
+            let title = wide("Sidera · 偏好设置");
+            let hwnd = CreateWindowExW(0, class_name.as_ptr(), title.as_ptr(),
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE, x, y, win_w, win_h,
+                null_mut(), null_mut(), hinstance, null());
+            if hwnd.is_null() { return None; }
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, &*self as *const Win32Plat as isize);
+            let mut surface = SettingsWindow {
+                hwnd, hdc_mem: null_mut(), dib: null_mut(), old_bitmap: null_mut(),
+                bits: null_mut(), width: 0, height: 0,
+            };
+            if self.ensure_settings_surface(&mut surface).is_none() {
+                if !surface.old_bitmap.is_null() && !surface.hdc_mem.is_null() {
+                    SelectObject(surface.hdc_mem, surface.old_bitmap);
+                }
+                if !surface.dib.is_null() { DeleteObject(surface.dib as HGDIOBJ); }
+                if !surface.hdc_mem.is_null() { DeleteDC(surface.hdc_mem); }
+                DestroyWindow(hwnd);
+                return None;
+            }
+            *self.settings.borrow_mut() = Some(surface);
+            ShowWindow(hwnd, SW_SHOW);
+            SetForegroundWindow(hwnd);
+            SetFocus(hwnd);
+            self.settings_logical_size()
+        }
+    }
+
+    fn ensure_settings_surface(&self, settings: &mut SettingsWindow) -> Option<()> {
+        unsafe {
+            let mut client: RECT = std::mem::zeroed();
+            if GetClientRect(settings.hwnd, &mut client) == 0 { return None; }
+            let width = (client.right - client.left).max(1);
+            let height = (client.bottom - client.top).max(1);
+            if !settings.bits.is_null() && settings.width == width && settings.height == height {
+                return Some(());
+            }
+            if !settings.old_bitmap.is_null() && !settings.hdc_mem.is_null() {
+                SelectObject(settings.hdc_mem, settings.old_bitmap);
+                settings.old_bitmap = null_mut();
+            }
+            if !settings.dib.is_null() {
+                DeleteObject(settings.dib as HGDIOBJ);
+                settings.dib = null_mut();
+                settings.bits = null_mut();
+            }
+            if settings.hdc_mem.is_null() {
+                settings.hdc_mem = CreateCompatibleDC(self.hdc_screen);
+            }
+            if settings.hdc_mem.is_null() { return None; }
+            let mut bmi: BITMAPINFO = std::mem::zeroed();
+            bmi.bmiHeader = BITMAPINFOHEADER {
+                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB,
+                ..std::mem::zeroed()
+            };
+            let mut bits: *mut c_void = null_mut();
+            let dib = CreateDIBSection(self.hdc_screen, &bmi, DIB_RGB_COLORS,
+                &mut bits, null_mut(), 0);
+            if dib.is_null() || bits.is_null() { return None; }
+            let old = SelectObject(settings.hdc_mem, dib);
+            std::ptr::write_bytes(bits as *mut u8, 0, (width * height * 4) as usize);
+            settings.dib = dib;
+            settings.old_bitmap = old;
+            settings.bits = bits as *mut u8;
+            settings.width = width;
+            settings.height = height;
+            Some(())
+        }
+    }
+
+    pub fn paint_settings(&self, app: &App, fonts: &Fonts, icon: Option<&Pixmap>) {
+        let mut guard = self.settings.borrow_mut();
+        let Some(settings) = guard.as_mut() else { return };
+        if self.ensure_settings_surface(settings).is_none() { return; }
+        let Some(mut pm) = Pixmap::new(settings.width as u32, settings.height as u32) else { return };
+        sidera_core::ui::draw_settings_window(app, fonts, icon, &mut pm, self.scale.get() as f32);
+        let src = pm.data();
+        let dst = unsafe {
+            std::slice::from_raw_parts_mut(settings.bits, (settings.width * settings.height * 4) as usize)
+        };
+        for (target, source) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+            target.copy_from_slice(&[source[2], source[1], source[0], 255u8]);
+        }
+        unsafe {
+            let dc = GetDC(settings.hwnd);
+            if !dc.is_null() {
+                BitBlt(dc, 0, 0, settings.width, settings.height, settings.hdc_mem, 0, 0, SRCCOPY);
+                ReleaseDC(settings.hwnd, dc);
+            }
+        }
+    }
+
+    pub fn raise_settings_window(&self) {
+        if let Some(settings) = self.settings.borrow().as_ref() {
+            unsafe {
+                ShowWindow(settings.hwnd, SW_SHOW);
+                SetForegroundWindow(settings.hwnd);
+                SetFocus(settings.hwnd);
+            }
+        }
+    }
+
+    pub fn close_settings_window(&self) {
+        let Some(settings) = self.settings.borrow_mut().take() else { return };
+        unsafe {
+            SetWindowLongPtrW(settings.hwnd, GWLP_USERDATA, 0);
+            if !settings.old_bitmap.is_null() && !settings.hdc_mem.is_null() {
+                SelectObject(settings.hdc_mem, settings.old_bitmap);
+            }
+            if !settings.dib.is_null() {
+                DeleteObject(settings.dib as HGDIOBJ);
+            }
+            if !settings.hdc_mem.is_null() {
+                DeleteDC(settings.hdc_mem);
+            }
+            DestroyWindow(settings.hwnd);
+        }
+    }
+
+    unsafe fn on_settings_message(&self, hwnd: HWND, msg: u32, wparam: WPARAM,
+        lparam: LPARAM) -> Option<LRESULT> {
+        let scale = self.scale.get().max(1.0);
+        let client = |x: i32, y: i32| {
+            ((x as f64 / scale).round() as i32, (y as f64 / scale).round() as i32)
+        };
+        match msg {
+            WM_PAINT => {
+                let mut paint: PAINTSTRUCT = std::mem::zeroed();
+                let dc = BeginPaint(hwnd, &mut paint);
+                if !dc.is_null() {
+                    if let Some(settings) = self.settings.borrow().as_ref() {
+                        if !settings.bits.is_null() && !settings.hdc_mem.is_null() {
+                            BitBlt(dc, 0, 0, settings.width, settings.height,
+                                settings.hdc_mem, 0, 0, SRCCOPY);
+                        }
+                    }
+                }
+                EndPaint(hwnd, &paint);
+                Some(0)
+            }
+            WM_ERASEBKGND => Some(1),
+            WM_SIZE => { self.enqueue(WinEvent::SettingsResized); Some(0) }
+            WM_CLOSE => { self.enqueue(WinEvent::SettingsClose); Some(0) }
+            WM_DESTROY => { self.enqueue(WinEvent::SettingsClose); Some(0) }
+            WM_MOUSEMOVE => {
+                let (x, y) = client(lo(lparam), hi(lparam));
+                self.enqueue(WinEvent::MouseMove(x, y));
+                Some(0)
+            }
+            WM_LBUTTONDOWN => {
+                let (x, y) = client(lo(lparam), hi(lparam));
+                SetCapture(hwnd);
+                self.enqueue(WinEvent::MouseDown(x, y, 1));
+                Some(0)
+            }
+            WM_LBUTTONUP => {
+                let (x, y) = client(lo(lparam), hi(lparam));
+                ReleaseCapture();
+                self.enqueue(WinEvent::MouseUp(x, y, 1));
+                Some(0)
+            }
+            WM_MOUSEWHEEL => {
+                let mut point = POINT { x: lo(lparam), y: hi(lparam) };
+                ScreenToClient(hwnd, &mut point);
+                let (x, y) = client(point.x, point.y);
+                let delta = ((wparam >> 16) as u16 as i16) as f64;
+                self.enqueue(WinEvent::Wheel(x, y, -delta / 120.0));
+                Some(0)
+            }
+            WM_POINTERDOWN | WM_POINTERUPDATE | WM_POINTERUP => {
+                let id = (wparam & 0xffff) as u32;
+                if msg == WM_POINTERUP { ReleaseCapture(); }
+                let mut info: POINTER_INFO = std::mem::zeroed();
+                if GetPointerInfo(id, &mut info) == 0 { return Some(0); }
+                let mut point = POINT { x: info.ptPixelLocation.x, y: info.ptPixelLocation.y };
+                ScreenToClient(hwnd, &mut point);
+                let (x, y) = client(point.x, point.y);
+                match msg {
+                    WM_POINTERDOWN => {
+                        SetCapture(hwnd);
+                        self.enqueue(WinEvent::MouseDown(x, y, 1));
+                    }
+                    WM_POINTERUPDATE => self.enqueue(WinEvent::MouseMove(x, y)),
+                    _ => {
+                        ReleaseCapture();
+                        self.enqueue(WinEvent::MouseUp(x, y, 1));
+                    }
+                }
+                Some(0)
+            }
+            WM_KEYDOWN => {
+                if let Some(key) = key_from_vk(wparam) {
+                    self.enqueue(WinEvent::ValueKey(key));
+                    Some(0)
+                } else { None }
+            }
+            WM_CHAR => {
+                if let Some(ch) = char::from_u32(wparam as u32).filter(|ch| !ch.is_control()) {
+                    self.enqueue(WinEvent::ValueKey(
+                        sidera_core::value_input::Key::Character(ch)));
+                }
+                Some(0)
+            }
+            _ => None,
+        }
     }
 
     pub fn show(&self) {
@@ -441,11 +837,11 @@ impl Win32Plat {
     }
 
     pub fn dump_png(&self, path: &str) -> Result<(), String> {
-        if self.bits.is_null() {
+        if self.bits.get().is_null() {
             return Err("DIB 未初始化".into());
         }
         let src = unsafe {
-            std::slice::from_raw_parts(self.bits, (self.phys_w * self.phys_h * 4) as usize)
+            std::slice::from_raw_parts(self.bits.get(), (self.phys_w.get() * self.phys_h.get() * 4) as usize)
         };
         let mut rgba = Vec::with_capacity(src.len());
         for px in src.chunks_exact(4) {
@@ -456,7 +852,7 @@ impl Win32Plat {
             let un = |c: u32| if a == 0 { 0 } else { ((c * 255 + a / 2) / a).min(255) as u8 };
             rgba.extend_from_slice(&[un(r), un(g), un(b), px[3]]);
         }
-        let img = image::RgbaImage::from_raw(self.phys_w as u32, self.phys_h as u32, rgba)
+        let img = image::RgbaImage::from_raw(self.phys_w.get() as u32, self.phys_h.get() as u32, rgba)
             .ok_or("无法创建 DIB PNG 缓冲")?;
         img.save(path).map_err(|e| e.to_string())
     }
@@ -483,8 +879,8 @@ impl Win32Plat {
 
     fn to_logical(&self, x: i32, y: i32) -> (i32, i32) {
         (
-            (x as f64 / self.scale).round() as i32,
-            (y as f64 / self.scale).round() as i32,
+            (x as f64 / self.scale.get()).round() as i32,
+            (y as f64 / self.scale.get()).round() as i32,
         )
     }
 
@@ -497,15 +893,9 @@ impl Win32Plat {
     ) -> Option<LRESULT> {
         match msg {
             WM_KEYDOWN if self.text_input.get() => {
-                use sidera_core::value_input::Key;
-                let ctrl = GetKeyState(VK_CONTROL as i32) < 0;
-                let key = match wparam as u32 {
-                    27 => Some(Key::Escape), 13 => Some(Key::Enter), 8 => Some(Key::Backspace),
-                    46 => Some(Key::Delete), 37 => Some(Key::Left), 39 => Some(Key::Right),
-                    36 => Some(Key::Home), 35 => Some(Key::End),
-                    65 if ctrl => Some(Key::SelectAll), 86 if ctrl => Some(Key::Paste), _ => None,
-                };
-                if let Some(key) = key { self.enqueue(WinEvent::ValueKey(key)); }
+                if let Some(key) = key_from_vk(wparam) {
+                    self.enqueue(WinEvent::ValueKey(key));
+                }
                 Some(0)
             }
             WM_CHAR if self.text_input.get() => {
@@ -515,8 +905,8 @@ impl Win32Plat {
                 Some(0)
             }
             WM_NCHITTEST => {
-                let x = lo(lparam) - self.origin.0;
-                let y = hi(lparam) - self.origin.1;
+                let x = lo(lparam) - self.origin.get().0;
+                let y = hi(lparam) - self.origin.get().1;
                 let (lx, ly) = self.to_logical(x, y);
                 Some(if self.hit_test(lx, ly) {
                     HTCLIENT as LRESULT
@@ -554,11 +944,13 @@ impl Win32Plat {
                 Some(0)
             }
             WM_MOUSEWHEEL => {
-                let x = lo(lparam) - self.origin.0;
-                let y = hi(lparam) - self.origin.1;
+                let x = lo(lparam) - self.origin.get().0;
+                let y = hi(lparam) - self.origin.get().1;
                 let (x, y) = self.to_logical(x, y);
                 let delta = ((wparam >> 16) as u16 as i16) as f64;
-                self.enqueue(WinEvent::Wheel(x, y, delta / 120.0));
+                // WM_MOUSEWHEEL is positive for wheel-up; shared on_scroll uses
+                // negative for up (matching X11 Button4).
+                self.enqueue(WinEvent::Wheel(x, y, -delta / 120.0));
                 Some(0)
             }
             WM_POINTERDOWN | WM_POINTERUPDATE | WM_POINTERUP => {
@@ -592,6 +984,12 @@ impl Win32Plat {
                 Some(0)
             }
             WM_DISPLAYCHANGE => {
+                self.pending_dpi.set(None);
+                self.enqueue(WinEvent::DisplayChanged);
+                Some(0)
+            }
+            WM_DPICHANGED => {
+                self.pending_dpi.set(Some((wparam & 0xffff) as u32));
                 self.enqueue(WinEvent::DisplayChanged);
                 Some(0)
             }
@@ -629,15 +1027,15 @@ impl Win32Plat {
         if msg == WM_POINTERUPDATE && info.pointerFlags & POINTER_FLAG_INCONTACT == 0 {
             return;
         }
-        let x = info.ptPixelLocation.x - self.origin.0;
-        let y = info.ptPixelLocation.y - self.origin.1;
+        let x = info.ptPixelLocation.x - self.origin.get().0;
+        let y = info.ptPixelLocation.y - self.origin.get().1;
         let (lx, ly) = self.to_logical(x, y);
 
         let mut touch: POINTER_TOUCH_INFO = std::mem::zeroed();
         let diameter = if GetPointerTouchInfo(id, &mut touch) != 0 {
             let w = (touch.rcContact.right - touch.rcContact.left).unsigned_abs() as f64;
             let h = (touch.rcContact.bottom - touch.rcContact.top).unsigned_abs() as f64;
-            (w.max(h) / self.scale).clamp(0.0, 4096.0)
+            (w.max(h) / self.scale.get()).clamp(0.0, 4096.0)
         } else {
             0.0
         };
@@ -662,6 +1060,7 @@ impl Win32Plat {
 
 impl Drop for Win32Plat {
     fn drop(&mut self) {
+        self.close_settings_window();
         unsafe {
             UnregisterHotKey(self.input_hwnd, HOTKEY_TOGGLE);
             UnregisterHotKey(self.input_hwnd, HOTKEY_QUIT);
@@ -671,11 +1070,11 @@ impl Drop for Win32Plat {
             }
             SetWindowLongPtrW(self.input_hwnd, GWLP_USERDATA, 0);
             SetWindowLongPtrW(self.visual_hwnd, GWLP_USERDATA, 0);
-            if !self.hdc_mem.is_null() && !self.old_bitmap.is_null() {
-                SelectObject(self.hdc_mem, self.old_bitmap);
+            if !self.hdc_mem.is_null() && !self.old_bitmap.get().is_null() {
+                SelectObject(self.hdc_mem, self.old_bitmap.get());
             }
-            if !self.dib.is_null() {
-                DeleteObject(self.dib as HGDIOBJ);
+            if !self.dib.get().is_null() {
+                DeleteObject(self.dib.get() as HGDIOBJ);
             }
             if !self.hdc_mem.is_null() {
                 DeleteDC(self.hdc_mem);
@@ -716,34 +1115,42 @@ impl Backend for Win32Plat {
     }
 
     fn present(&self, pm: &Pixmap, x: i32, y: i32) {
-        let px = (x as f64 * self.scale).round() as i32;
-        let py = (y as f64 * self.scale).round() as i32;
+        let px = (x as f64 * self.scale.get()).round() as i32;
+        let py = (y as f64 * self.scale.get()).round() as i32;
         let pw = pm.width() as i32;
         let ph = pm.height() as i32;
-        if pw <= 0 || ph <= 0 || self.bits.is_null() {
+        if pw <= 0 || ph <= 0 || self.bits.get().is_null() {
             return;
         }
         let src = pm.data();
         let dst = unsafe {
-            std::slice::from_raw_parts_mut(self.bits, (self.phys_w * self.phys_h * 4) as usize)
+            std::slice::from_raw_parts_mut(self.bits.get(), (self.phys_w.get() * self.phys_h.get() * 4) as usize)
         };
+        let phys_w = self.phys_w.get();
+        let phys_h = self.phys_h.get();
         for row in 0..ph {
             let dy = py + row;
-            if dy < 0 || dy >= self.phys_h {
+            if dy < 0 || dy >= phys_h {
                 continue;
             }
-            for col in 0..pw {
-                let dx = px + col;
-                if dx < 0 || dx >= self.phys_w {
-                    continue;
-                }
-                let si = ((row * pw + col) * 4) as usize;
-                let di = ((dy * self.phys_w + dx) * 4) as usize;
-                dst[di] = src[si + 2];
-                dst[di + 1] = src[si + 1];
-                dst[di + 2] = src[si];
-                dst[di + 3] = src[si + 3];
+            let x0 = px.max(0);
+            let x1 = (px + pw).min(phys_w);
+            if x1 <= x0 { continue; }
+            let src_start = ((row * pw) as usize + (x0 - px) as usize) * 4;
+            let src_row = &src[src_start..src_start + (x1 - x0) as usize * 4];
+            let dst_start = (dy as usize * phys_w as usize + x0 as usize) * 4;
+            let dst_row = &mut dst[dst_start..dst_start + (x1 - x0) as usize * 4];
+            for (target, source) in dst_row.chunks_exact_mut(4).zip(src_row.chunks_exact(4)) {
+                target.copy_from_slice(&[source[2], source[1], source[0], source[3]]);
             }
+        }
+        let rect = (px.max(0), py.max(0), (px + pw).min(phys_w), (py + ph).min(phys_h));
+        if rect.2 > rect.0 && rect.3 > rect.1 {
+            self.dirty_rect.set(Some(match self.dirty_rect.get() {
+                Some((x0, y0, x1, y1)) =>
+                    (x0.min(rect.0), y0.min(rect.1), x1.max(rect.2), y1.max(rect.3)),
+                None => rect,
+            }));
         }
         self.dirty.set(true);
     }
@@ -758,10 +1165,10 @@ impl Backend for Win32Plat {
             }
             let total = CreateRectRgn(0, 0, 0, 0);
             for r in rects {
-                let x1 = (r.x as f64 * self.scale).round() as i32;
-                let y1 = (r.y as f64 * self.scale).round() as i32;
-                let x2 = ((r.x + r.w) as f64 * self.scale).round() as i32;
-                let y2 = ((r.y + r.h) as f64 * self.scale).round() as i32;
+                let x1 = (r.x as f64 * self.scale.get()).round() as i32;
+                let y1 = (r.y as f64 * self.scale.get()).round() as i32;
+                let x2 = ((r.x + r.w) as f64 * self.scale.get()).round() as i32;
+                let y2 = ((r.y + r.h) as f64 * self.scale.get()).round() as i32;
                 if x2 <= x1 || y2 <= y1 {
                     continue;
                 }
@@ -803,8 +1210,8 @@ impl Backend for Win32Plat {
     }
 
     fn virtual_right_click(&self, x: i32, y: i32) {
-        let px = self.origin.0 + (x as f64 * self.scale).round() as i32;
-        let py = self.origin.1 + (y as f64 * self.scale).round() as i32;
+        let px = self.origin.get().0 + (x as f64 * self.scale.get()).round() as i32;
+        let py = self.origin.get().1 + (y as f64 * self.scale.get()).round() as i32;
         unsafe {
             SetCursorPos(px, py);
             send_mouse(MOUSEEVENTF_RIGHTDOWN);
@@ -823,7 +1230,7 @@ impl Backend for Win32Plat {
                 return None;
             }
             let mem = CreateCompatibleDC(screen);
-            let bmp = CreateCompatibleBitmap(screen, self.phys_w, self.phys_h);
+            let bmp = CreateCompatibleBitmap(screen, self.phys_w.get(), self.phys_h.get());
             if mem.is_null() || bmp.is_null() {
                 if !mem.is_null() {
                     DeleteDC(mem);
@@ -836,29 +1243,29 @@ impl Backend for Win32Plat {
                 mem,
                 0,
                 0,
-                self.phys_w,
-                self.phys_h,
+                self.phys_w.get(),
+                self.phys_h.get(),
                 screen,
-                self.origin.0,
-                self.origin.1,
+                self.origin.get().0,
+                self.origin.get().1,
                 SRCCOPY | CAPTUREBLT,
             );
             let mut bmi: BITMAPINFO = std::mem::zeroed();
             bmi.bmiHeader = BITMAPINFOHEADER {
                 biSize: size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: self.phys_w,
-                biHeight: -self.phys_h,
+                biWidth: self.phys_w.get(),
+                biHeight: -self.phys_h.get(),
                 biPlanes: 1,
                 biBitCount: 32,
                 biCompression: BI_RGB,
                 ..std::mem::zeroed()
             };
-            let mut buf = vec![0u8; (self.phys_w * self.phys_h * 4) as usize];
+            let mut buf = vec![0u8; (self.phys_w.get() * self.phys_h.get() * 4) as usize];
             let lines = GetDIBits(
                 mem,
                 bmp,
                 0,
-                self.phys_h as u32,
+                self.phys_h.get() as u32,
                 buf.as_mut_ptr() as *mut c_void,
                 &mut bmi,
                 DIB_RGB_COLORS,
@@ -873,7 +1280,7 @@ impl Backend for Win32Plat {
             for px in buf.chunks_exact_mut(4) {
                 px.swap(0, 2);
             }
-            Some((buf, self.phys_w as u32, self.phys_h as u32))
+            Some((buf, self.phys_w.get() as u32, self.phys_h.get() as u32))
         }
     }
 
@@ -882,11 +1289,22 @@ impl Backend for Win32Plat {
     }
 
     fn is_presentation_fullscreen(&self) -> bool {
-        false
+        // Single-monitor Win32 path: a WPS presentation window that covers the
+        // primary screen is treated as a fullscreen show.
+        unsafe {
+            let hwnd = GetForegroundWindow();
+            if !is_wps_presentation_window(hwnd) { return false; }
+            let mut rect: RECT = std::mem::zeroed();
+            if GetWindowRect(hwnd, &mut rect) == 0 { return false; }
+            let width = rect.right - rect.left;
+            let height = rect.bottom - rect.top;
+            width >= GetSystemMetrics(SM_CXSCREEN) - 8
+                && height >= GetSystemMetrics(SM_CYSCREEN) - 8
+        }
     }
 
     fn presentation_foreground(&self) -> Option<bool> {
-        None
+        Some(unsafe { is_wps_presentation_window(GetForegroundWindow()) })
     }
 
     fn has_compositor(&self) -> bool {
@@ -904,7 +1322,7 @@ impl Backend for Win32Plat {
     fn set_scale(&self, _scale: f64) {}
 
     fn device_pixel_ratio(&self) -> f64 {
-        self.scale
+        self.scale.get()
     }
 
     fn flush(&self) {
@@ -936,27 +1354,37 @@ impl Backend for Win32Plat {
         }
         self.dirty.set(false);
         unsafe {
-            let pt_dst = POINT { x: self.origin.0, y: self.origin.1 };
+            let pt_dst = POINT { x: self.origin.get().0, y: self.origin.get().1 };
             let pt_src = POINT { x: 0, y: 0 };
-            let size = SIZE { cx: self.phys_w, cy: self.phys_h };
+            let size = SIZE { cx: self.phys_w.get(), cy: self.phys_h.get() };
             let blend = BLENDFUNCTION {
                 BlendOp: AC_SRC_OVER as u8,
                 BlendFlags: 0,
                 SourceConstantAlpha: 255,
                 AlphaFormat: AC_SRC_ALPHA as u8,
             };
-            let ok = UpdateLayeredWindow(
-                self.visual_hwnd,
-                self.hdc_screen,
-                &pt_dst,
-                &size,
-                self.hdc_mem,
-                &pt_src,
-                0,
-                &blend,
-                ULW_ALPHA,
-            );
+            let dirty_range = self.dirty_rect.take()
+                .unwrap_or((0, 0, self.phys_w.get(), self.phys_h.get()));
+            let dirty = RECT {
+                left: dirty_range.0, top: dirty_range.1,
+                right: dirty_range.2, bottom: dirty_range.3,
+            };
+            let info = UPDATELAYEREDWINDOWINFO {
+                cbSize: size_of::<UPDATELAYEREDWINDOWINFO>() as u32,
+                hdcDst: self.hdc_screen,
+                pptDst: &pt_dst,
+                psize: &size,
+                hdcSrc: self.hdc_mem,
+                pptSrc: &pt_src,
+                crKey: 0,
+                pblend: &blend,
+                dwFlags: ULW_ALPHA,
+                prcDirty: &dirty,
+            };
+            let ok = UpdateLayeredWindowIndirect(self.visual_hwnd, &info);
             if ok == 0 {
+                self.dirty.set(true);
+                self.dirty_rect.set(Some(dirty_range));
                 if !self.update_failed.get() {
                     self.update_failed.set(true);
                     sidera_core::diag_log::warn("UpdateLayeredWindow 失败");
@@ -965,6 +1393,18 @@ impl Backend for Win32Plat {
                 self.update_failed.set(false);
             }
         }
+    }
+}
+
+unsafe fn key_from_vk(wparam: WPARAM) -> Option<sidera_core::value_input::Key> {
+    use sidera_core::value_input::Key;
+    let altgr = GetKeyState(VK_MENU as i32) < 0;
+    let ctrl = GetKeyState(VK_CONTROL as i32) < 0 && !altgr;
+    match wparam as u32 {
+        27 => Some(Key::Escape), 13 => Some(Key::Enter), 8 => Some(Key::Backspace),
+        46 => Some(Key::Delete), 37 => Some(Key::Left), 39 => Some(Key::Right),
+        36 => Some(Key::Home), 35 => Some(Key::End),
+        65 if ctrl => Some(Key::SelectAll), 86 if ctrl => Some(Key::Paste), _ => None,
     }
 }
 
@@ -1056,6 +1496,19 @@ unsafe fn tray_delete(hwnd: HWND) {
     nid.hWnd = hwnd;
     nid.uID = TRAY_ID;
     Shell_NotifyIconW(NIM_DELETE, &nid);
+}
+
+unsafe extern "system" fn settings_wndproc(hwnd: HWND, msg: u32,
+    wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Win32Plat;
+    if !ptr.is_null() {
+        if let Some(state) = ptr.as_ref() {
+            if let Some(result) = state.on_settings_message(hwnd, msg, wparam, lparam) {
+                return result;
+            }
+        }
+    }
+    DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
 unsafe extern "system" fn wndproc(

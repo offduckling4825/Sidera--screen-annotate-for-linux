@@ -83,6 +83,10 @@ pub fn ease(start: i64, duration: i64) -> f32 {
 pub struct State {
     #[cfg(unix)]
     pub(crate) window: Option<std::rc::Rc<crate::settings_window::Window>>,
+    #[cfg(windows)]
+    pub native_size: Option<(i32, i32)>,
+    #[cfg(windows)]
+    pub native_dirty: std::cell::Cell<bool>,
     pub tab: Tab,
     pub nav_from: f32,
     pub tab_at: i64,
@@ -104,12 +108,19 @@ pub struct State {
     pub theme_from: Option<(Palette, i64)>,
     pub toggle: Option<(Control, f32, i64)>,
     pub last_frame: i64,
+    /// Scratch surface reused by fade transitions so animation frames do not
+    /// allocate a full-window pixmap each time.
+    pub tile: std::cell::RefCell<Option<tiny_skia::Pixmap>>,
 }
 impl State {
     pub fn window_size(&self) -> Option<(i32, i32)> {
         #[cfg(unix)]
         if let Some(window) = &self.window {
             return Some(window.logical_size());
+        }
+        #[cfg(windows)]
+        if let Some(size) = self.native_size {
+            return Some(size);
         }
         None
     }
@@ -173,4 +184,23 @@ pub fn save_appearance(app: &App) -> Result<(), String> {
     data["recent"] = serde_json::json!(app.settings_ui.recent.iter().map(|rgb| format!("#{rgb:06X}")).collect::<Vec<_>>());
     let bytes = serde_json::to_vec_pretty(&data).map_err(|e| e.to_string())?;
     crate::persistence::atomic_write(&path, &bytes).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn colour_draft_round_trips_common_values() {
+        for rgb in [0x216F62, 0xFFFFFF, 0x000000, 0xFF0000, 0x123456, 0x8CD6B5] {
+            assert_eq!(ColorDraft::new(rgb).rgb(), rgb, "{rgb:06X}");
+        }
+    }
+
+    #[test]
+    fn hsv_clamps_out_of_range_inputs() {
+        assert_eq!(hsv(-1.0, 2.0, 2.0), 0xFF0000);
+        assert_eq!(hsv(0.0, -1.0, 1.0), 0xFFFFFF);
+        assert_eq!(hsv(1.0, 1.0, 1.0), 0xFF0000);
+    }
 }

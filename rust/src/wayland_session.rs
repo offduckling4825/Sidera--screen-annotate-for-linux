@@ -217,6 +217,9 @@ impl LayerShellHandler for WlState {
         self.desktop.configure(&id,w,h,scale);
     }
 }
+// Native Wayland text input follows the embedded US keymap (src/keymap.xkb).
+// Non-US layouts are fully handled only by the GNOME extension's Unicode
+// events; X11 uses the server keysym levels instead.
 fn evdev_char(key: u32, upper: bool) -> Option<char> {
     let (lower, shifted) = match key {
         2 => ('1', '!'), 3 => ('2', '@'), 4 => ('3', '#'), 5 => ('4', '$'),

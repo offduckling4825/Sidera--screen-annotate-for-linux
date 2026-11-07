@@ -1,0 +1,10 @@
+[
+  {"instance": "wpsoffice", "class": "wpsoffice", "title": "课程.dps - WPS Office", "expected": true},
+  {"instance": "wpsoffice", "class": "wpsoffice", "title": "笔记.pptx.docx - WPS Office", "expected": false},
+  {"instance": "wpsoffice", "class": "wpsoffice", "title": "汇总.xlsx - WPS Office", "expected": false},
+  {"instance": "wpsoffice", "class": "wpsoffice", "title": "演示文稿1 - WPS Office", "expected": true},
+  {"instance": "wpsoffice", "class": "wpsoffice", "title": "WPS Office", "expected": false},
+  {"instance": "wpp", "class": "Wpp", "title": "", "expected": true},
+  {"instance": "wps", "class": "Wps", "title": "文档1", "expected": false},
+  {"instance": "firefox", "class": "Firefox", "title": "课程.pptx", "expected": false}
+]

@@ -1,6 +1,6 @@
 //! xdg-shell preferences window for native Wayland, including GNOME.
 use std::cell::RefCell;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use smithay_client_toolkit::{
     activation::{ActivationHandler, ActivationState, RequestData},
@@ -26,9 +26,17 @@ use wayland_client::{
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface, wl_touch},
     Connection, Dispatch, Proxy, QueueHandle, WEnum,
 };
+use wayland_protocols::wp::fractional_scale::v1::client::{
+    wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
+    wp_fractional_scale_v1::{self, WpFractionalScaleV1},
+};
+use wayland_protocols::wp::viewporter::client::{
+    wp_viewport::WpViewport, wp_viewporter::WpViewporter,
+};
 use wayland_protocols::xdg::shell::client::xdg_toplevel::ResizeEdge;
 
-use crate::{app::App, settings_window::WindowEvent, ui::{self, Ctx, R}, ui_theme::{c, alpha}, Rt};
+use crate::{app::App, settings_window::WindowEvent, ui::{self, Ctx, R},
+    ui_theme::{c, alpha}, value_input::Key, Rt};
 
 const BORDER: i32 = 7;
 const TITLE: i32 = 40;
@@ -39,6 +47,15 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 pub(crate) struct WaylandWindow {
     transport: RefCell<Transport>,
+    body: RefCell<Option<Pixmap>>,
+    frame: RefCell<Option<Pixmap>>,
+}
+
+struct Repeat {
+    keycode: u32,
+    key: Key,
+    next: Instant,
+    interval: Duration,
 }
 
 struct Transport {
@@ -71,10 +88,16 @@ struct State {
     pool: SlotPool,
     buffers: [Option<Buffer>; 2],
     size: (i32, i32),
-    scale: i32,
+    scale: f64,
     configured: bool,
     dirty: bool,
     maximized: bool,
+    fractional: Option<WpFractionalScaleV1>,
+    viewport: Option<WpViewport>,
+    activation_retry: bool,
+    repeat_rate: i32,
+    repeat_delay: i32,
+    repeat: Option<Repeat>,
 }
 
 impl WaylandWindow {
@@ -88,9 +111,12 @@ impl WaylandWindow {
         let shell = XdgShell::bind(&globals, &queue)?;
         let shm = Shm::bind(&globals, &queue)?;
         let pool = SlotPool::new(4096, &shm)?;
-        let window = shell.create_window(
-            compositor.create_surface(&queue), WindowDecorations::ClientOnly, &queue,
-        );
+        let surface = compositor.create_surface(&queue);
+        let fractional = globals.bind::<WpFractionalScaleManagerV1, _, _>(&queue, 1..=1, ()).ok()
+            .map(|manager| manager.get_fractional_scale(&surface, &queue, ()));
+        let viewport = globals.bind::<WpViewporter, _, _>(&queue, 1..=1, ()).ok()
+            .map(|viewporter| viewporter.get_viewport(&surface, &queue, ()));
+        let window = shell.create_window(surface, WindowDecorations::ClientOnly, &queue);
         window.set_title("Sidera · 偏好设置");
         window.set_app_id("sidera");
         window.set_min_size(Some((MIN_WIDTH, MIN_HEIGHT)));
@@ -103,9 +129,14 @@ impl WaylandWindow {
             devices: Vec::new(), touch: None, events: Vec::new(), pool, buffers: [None, None],
             size: ((860 + BORDER * 2).min(app.screen_w - 24).max(MIN_WIDTH as i32),
                 (620 + TITLE + BORDER).min(app.screen_h - 24).max(MIN_HEIGHT as i32)),
-            scale: 1, configured: false, dirty: true, maximized: false,
+            scale: 1.0, configured: false, dirty: true, maximized: false,
+            fractional, viewport, activation_retry: false,
+            repeat_rate: 25, repeat_delay: 600, repeat: None,
         };
-        let result = Self { transport: RefCell::new(Transport { event_loop, state, queue, connection }) };
+        let result = Self {
+            transport: RefCell::new(Transport { event_loop, state, queue, connection }),
+            body: RefCell::new(None), frame: RefCell::new(None),
+        };
         result.activate();
         Ok(result)
     }
@@ -135,29 +166,52 @@ impl WaylandWindow {
         let mut transport = self.transport.borrow_mut();
         let Transport { event_loop, state, .. } = &mut *transport;
         event_loop.dispatch(Duration::ZERO, state)?;
+        let now = Instant::now();
+        while let Some(repeat) = state.repeat.as_mut() {
+            if now < repeat.next { break; }
+            state.events.push(WindowEvent::Key(repeat.key));
+            repeat.next += repeat.interval;
+            // Never replay a long backlog after a stall.
+            if repeat.next <= now { repeat.next = now + repeat.interval; }
+        }
         Ok(std::mem::take(&mut state.events))
     }
 
     pub(crate) fn paint(&self, rt: &Rt, app: &App) {
         // Drawing the common UI consults logical_size(), so release the
         // transport borrow before calling the renderer.
-        let (size, scale, buffer) = {
+        let (size, scale, viewport, buffer) = {
             let mut transport = self.transport.borrow_mut();
             let state = &mut transport.state;
             if !state.configured || !state.dirty { return; }
             let Some(buffer) = state.available_buffer() else { return };
-            (state.size, state.scale, buffer)
+            (state.size, state.scale, state.viewport.is_some(), buffer)
         };
+        // Without wp_viewport a fractional scale cannot be represented, so use
+        // the nearest integer buffer scale instead.
+        let render_scale = if viewport { scale.clamp(1.0, 4.0) } else { scale.round().clamp(1.0, 4.0) };
         let (width, height) = size;
-        let (body_w, body_h) = self.logical_size();
-        let Some(body) = ui::render_settings_window(app, &rt.fonts, rt.icon.as_ref(),
-            (body_w * scale) as u32, (body_h * scale) as u32, scale as f32) else { return };
-        let Some(mut frame) = Pixmap::new((width * scale) as u32, (height * scale) as u32) else { return };
+        let body_w = (((width - 2 * BORDER) as f64) * render_scale).round().max(1.0) as u32;
+        let body_h = (((height - TITLE - BORDER) as f64) * render_scale).round().max(1.0) as u32;
+        let frame_w = ((width as f64) * render_scale).round().max(1.0) as u32;
+        let frame_h = ((height as f64) * render_scale).round().max(1.0) as u32;
+        let mut body_cache = self.body.borrow_mut();
+        if body_cache.as_ref().is_none_or(|body| body.width() != body_w || body.height() != body_h) {
+            *body_cache = Pixmap::new(body_w, body_h);
+        }
+        let Some(body) = body_cache.as_mut() else { return };
+        ui::draw_settings_window(app, &rt.fonts, rt.icon.as_ref(), body, render_scale as f32);
+        let mut frame_cache = self.frame.borrow_mut();
+        if frame_cache.as_ref().is_none_or(|frame| frame.width() != frame_w || frame.height() != frame_h) {
+            *frame_cache = Pixmap::new(frame_w, frame_h);
+        }
+        let Some(frame) = frame_cache.as_mut() else { return };
         let palette = app.palette();
         frame.fill(c(palette.surface));
-        frame.draw_pixmap(BORDER * scale, TITLE * scale, body.as_ref(),
-            &PixmapPaint::default(), Transform::identity(), None);
-        let mut ctx = Ctx { palette, pm: &mut frame, tr: Transform::from_scale(scale as f32, scale as f32) };
+        let border = (BORDER as f64 * render_scale).round() as i32;
+        let title = (TITLE as f64 * render_scale).round() as i32;
+        frame.draw_pixmap(border, title, body.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+        let mut ctx = Ctx { palette, pm: frame, tr: Transform::from_scale(render_scale as f32, render_scale as f32) };
         ctx.text(&rt.fonts, "Sidera · 偏好设置", 16.0, 25.0, 14.0, c(palette.text));
         let close = close_rect(width);
         ctx.fill_round(close, 5.0, alpha(palette.border, 100));
@@ -166,7 +220,7 @@ impl WaylandWindow {
         ctx.stroke_line((x - 4.0, y - 4.0), (x + 4.0, y + 4.0), c(palette.text), 1.5);
         ctx.stroke_line((x - 4.0, y + 4.0), (x + 4.0, y - 4.0), c(palette.text), 1.5);
         let mut transport = self.transport.borrow_mut();
-        if let Err(error) = transport.state.present(&frame, buffer) {
+        if let Err(error) = transport.state.present(frame, buffer) {
             log::warn!("无法绘制 Wayland 设置窗口：{error}");
             transport.state.events.push(WindowEvent::Close);
         }
@@ -199,8 +253,11 @@ impl State {
             dst.copy_from_slice(&[src[2], src[1], src[0], 255]);
         }
         let surface = self.window.wl_surface();
-        if surface.version() >= 3 {
-            surface.set_buffer_scale(self.scale);
+        if let Some(viewport) = self.viewport.as_ref() {
+            viewport.set_destination(self.size.0, self.size.1);
+            if surface.version() >= 3 { surface.set_buffer_scale(1); }
+        } else if surface.version() >= 3 {
+            surface.set_buffer_scale(self.scale.round().max(1.0) as i32);
         }
         buffer.attach_to(surface)?;
         surface.damage(0, 0, self.size.0, self.size.1);
@@ -248,12 +305,12 @@ impl WindowHandler for State {
         self.events.push(WindowEvent::Close);
     }
 
-    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &Window,
+    fn configure(&mut self, _: &Connection, queue: &QueueHandle<Self>, _: &Window,
         configure: WindowConfigure, _: u32) {
         let (width, height) = self.size;
         let size = (configure.new_size.0.map_or(width, |w| w.get() as i32),
             configure.new_size.1.map_or(height, |h| h.get() as i32));
-        if crate::app::valid_geometry(size.0, size.1, f64::from(self.scale)) {
+        if crate::app::valid_geometry(size.0, size.1, self.scale) {
             if size != self.size {
                 self.size = size;
                 self.events.push(WindowEvent::Resized);
@@ -261,14 +318,28 @@ impl WindowHandler for State {
             self.maximized = configure.is_maximized() || configure.is_fullscreen();
             self.configured = true;
             self.dirty = true;
+            // The first activation token can be requested before the surface is
+            // mapped; ask again once the compositor has configured it.
+            if !self.activation_retry {
+                self.activation_retry = true;
+                if let Some(activation) = &self.activation {
+                    activation.request_token(queue, RequestData {
+                        seat_and_serial: None,
+                        surface: Some(self.window.wl_surface().clone()),
+                        app_id: Some("sidera".into()),
+                    });
+                }
+            }
         }
     }
 }
 
 impl CompositorHandler for State {
     fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, surface: &wl_surface::WlSurface, factor: i32) {
-        let factor = if surface.version() >= 3 { factor.clamp(1, 4) } else { 1 };
-        if crate::app::valid_geometry(self.size.0, self.size.1, f64::from(factor)) {
+        // wp_fractional_scale_v1 supersedes the integer surface scale when present.
+        if self.fractional.is_some() { return; }
+        let factor = if surface.version() >= 3 { f64::from(factor.clamp(1, 4)) } else { 1.0 };
+        if crate::app::valid_geometry(self.size.0, self.size.1, factor) {
             self.scale = factor;
             self.dirty = true;
         }
@@ -416,20 +487,67 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
             wl_keyboard::Event::Leave { .. } => {
                 device.focused = false;
                 device.modifiers = 0;
+                state.repeat = None;
                 state.events.push(WindowEvent::FocusLost);
             }
             wl_keyboard::Event::Modifiers { mods_depressed, mods_latched, mods_locked, .. } => {
                 device.modifiers = mods_depressed | mods_latched | (mods_locked & 2);
             }
-            wl_keyboard::Event::Key { key, state: WEnum::Value(wl_keyboard::KeyState::Pressed), .. }
+            wl_keyboard::Event::RepeatInfo { rate, delay } => {
+                state.repeat_rate = rate;
+                state.repeat_delay = delay;
+            }
+            wl_keyboard::Event::Key { key: code, state: WEnum::Value(wl_keyboard::KeyState::Pressed), .. }
                 if device.focused => {
-                if let Some(key) = crate::wayland::text_key(key, device.modifiers) {
+                if let Some(key) = crate::wayland::text_key(code, device.modifiers) {
                     state.events.push(WindowEvent::Key(key));
+                    state.repeat = (state.repeat_rate > 0).then(|| {
+                        let delay = Duration::from_millis(state.repeat_delay.max(0) as u64);
+                        Repeat {
+                            keycode: code, key, next: Instant::now() + delay,
+                            interval: Duration::from_secs_f64(1.0 / state.repeat_rate as f64),
+                        }
+                    });
+                } else {
+                    state.repeat = None;
+                }
+            }
+            wl_keyboard::Event::Key { key: code, state: WEnum::Value(wl_keyboard::KeyState::Released), .. } => {
+                if state.repeat.as_ref().is_some_and(|repeat| repeat.keycode == code) {
+                    state.repeat = None;
                 }
             }
             _ => {}
         }
     }
+}
+
+impl Dispatch<WpFractionalScaleManagerV1, ()> for State {
+    fn event(_: &mut Self, _: &WpFractionalScaleManagerV1, _: <WpFractionalScaleManagerV1 as Proxy>::Event,
+        _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+
+impl Dispatch<WpFractionalScaleV1, ()> for State {
+    fn event(state: &mut Self, _: &WpFractionalScaleV1, event: wp_fractional_scale_v1::Event,
+        _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
+            let factor = (scale as f64 / 120.0).clamp(1.0, 4.0);
+            if crate::app::valid_geometry(state.size.0, state.size.1, factor) {
+                state.scale = factor;
+                state.dirty = true;
+            }
+        }
+    }
+}
+
+impl Dispatch<WpViewporter, ()> for State {
+    fn event(_: &mut Self, _: &WpViewporter, _: <WpViewporter as Proxy>::Event,
+        _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+
+impl Dispatch<WpViewport, ()> for State {
+    fn event(_: &mut Self, _: &WpViewport, _: <WpViewport as Proxy>::Event,
+        _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
 
 impl ActivationHandler for State {

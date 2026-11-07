@@ -124,9 +124,119 @@ pub fn scan() -> Vec<ProcInfo> {
 }
 
 #[cfg(windows)]
+mod windows_proc {
+    use super::ProcInfo;
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+    use windows_sys::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, QueryFullProcessImageNameW,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME,
+    };
+
+    fn wide(value: &str) -> Vec<u16> {
+        value.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    fn image_name(pid: u32) -> Option<String> {
+        unsafe {
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if process.is_null() { return None; }
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(process, 0, buf.as_mut_ptr(), &mut len);
+            CloseHandle(process);
+            (ok != 0).then(|| String::from_utf16_lossy(&buf[..len as usize]))
+        }
+    }
+
+    pub(super) fn creation_time(pid: u32) -> Option<u64> {
+        unsafe {
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if process.is_null() { return None; }
+            let mut created = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+            let mut exited = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+            let mut kernel = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+            let mut user = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+            let ok = GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user);
+            CloseHandle(process);
+            (ok != 0).then(|| ((created.dwHighDateTime as u64) << 32) | created.dwLowDateTime as u64)
+        }
+    }
+
+    pub(super) fn scan() -> Vec<ProcInfo> {
+        let mut out = Vec::new();
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if snapshot == INVALID_HANDLE_VALUE { return out; }
+            let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+            let self_pid = std::process::id();
+            if Process32FirstW(snapshot, &mut entry) != 0 {
+                loop {
+                    let pid = entry.th32ProcessID;
+                    if pid > 4 && pid != self_pid {
+                        let file = String::from_utf16_lossy(
+                            &entry.szExeFile.iter().take_while(|&&ch| ch != 0).copied().collect::<Vec<_>>()
+                        );
+                        let name = file.strip_suffix(".exe")
+                            .or_else(|| file.strip_suffix(".EXE"))
+                            .unwrap_or(&file).to_string();
+                        let exe = image_name(pid).unwrap_or_default();
+                        let start_time = creation_time(pid).unwrap_or(0);
+                        out.push(ProcInfo {
+                            pid: pid as i32, name, exe, cmdline: String::new(),
+                            state: 'R', start_time,
+                        });
+                    }
+                    if Process32NextW(snapshot, &mut entry) == 0 { break; }
+                }
+            }
+            CloseHandle(snapshot);
+        }
+        out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then(a.pid.cmp(&b.pid)));
+        out
+    }
+
+    fn nt_call(pid: u32, suspend: bool) -> bool {
+        type NtProcess = unsafe extern "system" fn(HANDLE) -> i32;
+        unsafe {
+            let module = GetModuleHandleW(wide("ntdll.dll").as_ptr());
+            if module.is_null() { return false; }
+            let name: &[u8] = if suspend { b"NtSuspendProcess\0" } else { b"NtResumeProcess\0" };
+            let Some(address) = GetProcAddress(module, name.as_ptr()) else { return false; };
+            let function: NtProcess = std::mem::transmute(address);
+            let process = OpenProcess(PROCESS_SUSPEND_RESUME, 0, pid);
+            if process.is_null() { return false; }
+            let status = function(process);
+            CloseHandle(process);
+            status >= 0
+        }
+    }
+
+    pub(super) fn suspend(pid: i32) -> bool { nt_call(pid as u32, true) }
+    pub(super) fn resume(pid: i32) -> bool { nt_call(pid as u32, false) }
+}
+
+#[cfg(windows)]
 pub fn scan() -> Vec<ProcInfo> {
-    // Windows implementation will use CreateToolhelp32Snapshot later.
-    Vec::new()
+    windows_proc::scan()
+}
+
+#[cfg(windows)]
+fn suspend_process(proc: &ProcInfo) -> bool {
+    windows_proc::suspend(proc.pid)
+}
+
+#[cfg(windows)]
+fn resume_process(pid: i32, start_time: u64) -> bool {
+    if start_time != 0 && windows_proc::creation_time(pid as u32) != Some(start_time) {
+        return false;
+    }
+    windows_proc::resume(pid)
 }
 
 #[cfg(unix)]
@@ -159,7 +269,7 @@ fn resume_process(pid: i32, start_time: u64) -> bool {
 }
 
 fn exe_name(proc: &ProcInfo) -> &str {
-    proc.exe.rsplit('/').next().unwrap_or("")
+    proc.exe.rsplit(['/', '\\']).next().unwrap_or("")
 }
 
 pub fn matches(rule: &str, proc: &ProcInfo) -> bool {
@@ -170,23 +280,21 @@ pub fn matches(rule: &str, proc: &ProcInfo) -> bool {
     if rule.eq_ignore_ascii_case(&proc.name) || rule.eq_ignore_ascii_case(exe_name(proc)) {
         return true;
     }
-    if rule.contains('/') && rule.eq_ignore_ascii_case(&proc.exe) {
+    if (rule.contains('/') || rule.contains('\\')) && rule.eq_ignore_ascii_case(&proc.exe) {
         return true;
     }
     proc.cmdline.split_whitespace().next().is_some_and(|first| {
         first
-            .rsplit('/')
+            .rsplit(['/', '\\'])
             .next()
             .is_some_and(|name| name.eq_ignore_ascii_case(rule))
     })
 }
 
-#[cfg(unix)]
 fn blocker_state_path() -> Option<PathBuf> {
-    dirs::state_dir().map(|dir| dir.join("sidera/blocker-state"))
+    dirs::state_dir().or_else(dirs::config_dir).map(|dir| dir.join("sidera/blocker-state"))
 }
 
-#[cfg(unix)]
 fn read_blocker_state() -> Vec<(i32, u64)> {
     let Some(path) = blocker_state_path() else { return Vec::new() };
     let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
@@ -200,7 +308,6 @@ fn read_blocker_state() -> Vec<(i32, u64)> {
         .collect()
 }
 
-#[cfg(unix)]
 fn write_blocker_state(entries: &[(i32, u64)]) {
     let Some(path) = blocker_state_path() else { return };
     let mut text = String::new();
@@ -401,7 +508,100 @@ pub fn set_daemon_enabled(enabled: bool) {
 }
 
 #[cfg(windows)]
-pub fn set_daemon_enabled(_enabled: bool) {}
+static WIN_BLOCKER_STOP: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(windows)]
+static WIN_BLOCKER: std::sync::Mutex<Option<std::thread::JoinHandle<()>>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(windows)]
+fn win_blocker_loop() {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    // A previous crash may have left processes suspended.
+    for (pid, start) in read_blocker_state() {
+        if resume_process(pid, start) {
+            crate::diag_log::info(&format!("进程屏蔽：恢复上次暂停的进程 pid {pid}"));
+        }
+    }
+    write_blocker_state(&[]);
+
+    let mut suspended: Vec<(i32, u64)> = Vec::new();
+    loop {
+        if WIN_BLOCKER_STOP.load(Ordering::Relaxed) {
+            break;
+        }
+        let rules = load_rules();
+        let processes = scan();
+        let mut changed = false;
+        let mut index = 0;
+        while index < suspended.len() {
+            let (pid, start) = suspended[index];
+            let current = processes.iter().find(|proc|
+                proc.pid == pid && (start == 0 || proc.start_time == start));
+            let keep = current.is_some_and(|proc| rules.iter().any(|rule| matches(rule, proc)));
+            if keep {
+                index += 1;
+                continue;
+            }
+            if resume_process(pid, start) {
+                crate::diag_log::info(&format!("进程屏蔽：恢复 pid {pid}"));
+            }
+            suspended.remove(index);
+            changed = true;
+        }
+        for proc in &processes {
+            if proc.name.eq_ignore_ascii_case("sidera")
+                || proc.pid as u32 == std::process::id()
+                || suspended.iter().any(|(pid, _)| *pid == proc.pid)
+                || !rules.iter().any(|rule| matches(rule, proc))
+            {
+                continue;
+            }
+            if suspend_process(proc) {
+                suspended.push((proc.pid, proc.start_time));
+                changed = true;
+                crate::diag_log::info(&format!(
+                    "进程屏蔽：已暂停 {} (pid {})", proc.name, proc.pid));
+            } else {
+                crate::diag_log::warn(&format!(
+                    "进程屏蔽：无法暂停 {} (pid {})", proc.name, proc.pid));
+            }
+        }
+        if changed {
+            write_blocker_state(&suspended);
+        }
+        for _ in 0..10 {
+            if WIN_BLOCKER_STOP.load(Ordering::Relaxed) { break; }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    for (pid, start) in suspended {
+        resume_process(pid, start);
+    }
+    write_blocker_state(&[]);
+    crate::diag_log::info("进程屏蔽守护线程已停止，已恢复暂停的进程");
+}
+
+#[cfg(windows)]
+pub fn set_daemon_enabled(enabled: bool) {
+    use std::sync::atomic::Ordering;
+    if enabled {
+        let Ok(mut handle) = WIN_BLOCKER.lock() else { return };
+        if handle.is_some() {
+            return;
+        }
+        WIN_BLOCKER_STOP.store(false, Ordering::Relaxed);
+        *handle = Some(std::thread::spawn(win_blocker_loop));
+    } else {
+        WIN_BLOCKER_STOP.store(true, Ordering::Relaxed);
+        let handle = WIN_BLOCKER.lock().ok().and_then(|mut guard| guard.take());
+        if let Some(handle) = handle {
+            let _ = handle.join();
+        }
+    }
+}
 
 pub fn stop_daemon() {
     set_daemon_enabled(false);
@@ -445,6 +645,25 @@ mod tests {
         assert_ne!(read_process_stat(pid).unwrap().0, 'T');
         let _ = child.kill();
         let _ = child.wait();
+    }
+
+    #[test]
+    fn windows_style_paths_match_names_and_full_executables() {
+        let item = proc(
+            "notepad",
+            "C:\\Windows\\notepad.exe",
+            "C:\\Windows\\notepad.exe",
+        );
+        assert!(matches("notepad", &item));
+        assert!(matches("notepad.exe", &item));
+        assert!(matches("C:\\Windows\\notepad.exe", &item));
+        assert!(!matches("note", &item));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_scan_does_not_panic() {
+        let _ = scan();
     }
 
     #[test]

@@ -13,6 +13,40 @@ use crate::app::now_ms;
 use crate::bridge_ws;
 use sha1::{Digest, Sha1};
 
+/// Whether a title belongs to a presentation document in an integrated WPS
+/// window (Writer, Spreadsheets and Presentation share one WM_CLASS there).
+pub fn presentation_title(title: &str) -> bool {
+    let title = title.trim().to_lowercase();
+    let document = title.rsplit_once(" - ")
+        .filter(|(_, suffix)| matches!(*suffix, "wps office" | "wps presentation" | "wps 演示" | "wps演示"))
+        .map_or(title.as_str(), |(document, _)| document)
+        .trim_end_matches([' ', '*']);
+    document.rsplit_once('.').is_some_and(|(_, extension)| matches!(extension,
+        "dps" | "dpt" | "ppt" | "pptx" | "pptm" | "pps" | "ppsx" | "ppsm" | "pot" | "potx" | "potm"))
+        || ["演示文稿", "presentation"].into_iter().any(|prefix| {
+            document.strip_prefix(prefix).is_some_and(|number| {
+                let number = number.trim();
+                !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+            })
+        })
+}
+
+/// Shared WPS presentation classifier. `window_class` is the raw WM_CLASS
+/// ("instance\0class\0"); Windows callers can pass "instance\0class\0" too.
+/// Keep aligned with compat/gnome-extension/presentation.js; the shared test
+/// vectors live in compat/gnome-extension/tests/wps-presentation-cases.json.
+pub fn presentation_window(window_class: &str, title: &str) -> bool {
+    let classes = window_class.to_ascii_lowercase();
+    let fields = || classes.split('\0');
+    if fields().any(|name| matches!(name, "wpp" | "wps-office-wpp" | "com.kingsoft.wps.wpp")) {
+        return true;
+    }
+    if !fields().any(|name| matches!(name, "wpsoffice" | "wps-office" | "com.kingsoft.wpsoffice" | "wps")) {
+        return false;
+    }
+    presentation_title(title)
+}
+
 #[derive(Clone, Debug)]
 pub enum WpsEvent {
     SlideshowBegin(i32),

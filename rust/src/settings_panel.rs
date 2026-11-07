@@ -179,9 +179,20 @@ fn contributors(ctx:&mut Ctx,fonts:&Fonts,r:R) {
     }
 }
 fn opacity(app:&App)->f32 {state::ease(app.settings_ui.opened_at,150)*if app.settings_ui.closing_at==0 {1.0}else{1.0-state::ease(app.settings_ui.closing_at,120)}}
-pub fn layer(ctx:&mut Ctx,opacity:f32,draw:impl FnOnce(&mut Ctx)) {
+pub fn layer(app:&App,ctx:&mut Ctx,opacity:f32,draw:impl FnOnce(&mut Ctx)) {
     if opacity>=0.999 {draw(ctx);return;}if opacity<=0.001{return;}
-    if let Some(mut tile)=Pixmap::new(ctx.pm.width(),ctx.pm.height()) {
+    // The tab-content fade runs inside the window fade, so reuse the cached
+    // scratch surface only for the outermost layer and fall back to a
+    // temporary buffer when it is already borrowed.
+    if let Ok(mut cache)=app.settings_ui.tile.try_borrow_mut() {
+        let resize=cache.as_ref().is_none_or(|tile|tile.width()!=ctx.pm.width()||tile.height()!=ctx.pm.height());
+        if resize {*cache=Pixmap::new(ctx.pm.width(),ctx.pm.height());}
+        if let Some(tile)=cache.as_mut() {
+            tile.fill(tiny_skia::Color::TRANSPARENT);
+            draw(&mut Ctx {pm:tile,palette:ctx.palette,tr:ctx.tr});
+            ctx.pm.draw_pixmap(0,0,tile.as_ref(),&PixmapPaint {opacity,..Default::default()},Transform::identity(),None);
+        }
+    } else if let Some(mut tile)=Pixmap::new(ctx.pm.width(),ctx.pm.height()) {
         draw(&mut Ctx {pm:&mut tile,palette:ctx.palette,tr:ctx.tr});
         ctx.pm.draw_pixmap(0,0,tile.as_ref(),&PixmapPaint {opacity,..Default::default()},Transform::identity(),None);
     }
@@ -189,7 +200,7 @@ pub fn layer(ctx:&mut Ctx,opacity:f32,draw:impl FnOnce(&mut Ctx)) {
 fn draw_icon(ctx:&mut Ctx,icon:Option<&Pixmap>,x:i32,y:i32,size:f32) {
     if let Some(icon)=icon {ctx.pm.draw_pixmap(0,0,icon.as_ref(),&PixmapPaint::default(),ctx.tr.pre_translate(x as f32,y as f32).pre_scale(size/icon.width() as f32,size/icon.height() as f32),None);}
 }
-pub fn draw(app:&App,fonts:&Fonts,ctx:&mut Ctx,icon:Option<&Pixmap>) {layer(ctx,opacity(app),|ctx|draw_content(app,fonts,ctx,icon));}
+pub fn draw(app:&App,fonts:&Fonts,ctx:&mut Ctx,icon:Option<&Pixmap>) {layer(app,ctx,opacity(app),|ctx|draw_content(app,fonts,ctx,icon));}
 fn draw_content(app:&App,fonts:&Fonts,ctx:&mut Ctx,icon:Option<&Pixmap>) {
     let p=rect(app);let palette=ctx.palette;let wide=has_sidebar(app);let body=content_rect(app);let l=layout(app);
     ui::panel(ctx,p,14.0,1.0);
@@ -216,7 +227,7 @@ fn draw_content(app:&App,fonts:&Fonts,ctx:&mut Ctx,icon:Option<&Pixmap>) {
     }
     let visible=(count(app.settings_ui.tab)-l.page*l.rows).min(l.rows);
     let group=R {h:visible as i32*l.stride,..rows_rect(app)};
-    layer(ctx,state::ease(app.settings_ui.tab_at,130),|ctx| {
+    layer(app,ctx,state::ease(app.settings_ui.tab_at,130),|ctx| {
         if let Some(notice)=addins_notice_rect(app) {wps_exit_notice(ctx,fonts,notice);}
         ui::surface(ctx,group,8.0,c(palette.paper),alpha(palette.border,180));
         for index in l.page*l.rows..l.page*l.rows+visible {
@@ -344,7 +355,7 @@ pub fn picker_drag(app: &mut App, hit: PickerHit, x: i32, y: i32) {
 pub fn draw_overlay(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
     if app.settings_ui.dialog.is_none() && app.settings_ui.picker.is_none() { return; }
     let opacity = state::ease(app.settings_ui.overlay_at, 160) * if app.settings_ui.overlay_closing_at == 0 { 1.0 } else { 1.0 - state::ease(app.settings_ui.overlay_closing_at, 120) };
-    layer(ctx, opacity, |ctx| {
+    layer(app,ctx, opacity, |ctx| {
         let palette = ctx.palette;
         let (width, height) = available_size(app);
         ctx.fill_round(R { x: 0, y: 0, w: width, h: height }, 0.0, alpha(0, if app.theme.dark() { 140 } else { 80 }));
@@ -489,7 +500,7 @@ fn draw_inspector_pager(app:&App,fonts:&Fonts,ctx:&mut Ctx,page:usize,pages:usiz
 }
 pub fn draw_inspector(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
     let p = ui::diag_rect(app); let palette = ctx.palette;
-    layer(ctx, state::ease(app.settings_ui.overlay_at,160), |ctx| {
+    layer(app,ctx, state::ease(app.settings_ui.overlay_at,160), |ctx| {
         ui::panel(ctx,p,12.0,1.0);
         text(ctx,fonts,app.settings_ui.inspector.title(),R { x:p.x+22,y:p.y+14,w:p.w-136,h:36 },19.0,palette.text);
         let lines=inspector_lines(app,fonts); let size=inspector_page_size(app); let pages=lines.len().div_ceil(size).max(1);
@@ -585,7 +596,7 @@ fn draw_process_pager(app:&App,fonts:&Fonts,ctx:&mut Ctx,start:usize,total:usize
 }
 pub fn draw_process(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
     use ui::ProcessHit as H;
-    layer(ctx,state::ease(app.settings_ui.overlay_at,160),|ctx| {
+    layer(app,ctx,state::ease(app.settings_ui.overlay_at,160),|ctx| {
         let p=process_rect(app); let palette=ctx.palette; ui::panel(ctx,p,12.0,1.0);
         text(ctx,fonts,"进程屏蔽",R {x:p.x+20,y:p.y+10,w:p.w-174,h:34},20.0,palette.text);
         text(ctx,fonts,"启用后暂停匹配进程，关闭屏蔽会恢复",R {x:p.x+20,y:p.y+44,w:p.w-40,h:20},12.0,palette.muted);
@@ -654,4 +665,83 @@ pub fn draw_process(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
             ctx.fill_round(R {x:group.x+group.w-5,y:y+2,w:2,h:(h-4).max(1)},1.0,alpha(palette.muted,120));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app(w: i32, h: i32) -> App {
+        App::new(Pixmap::new(w as u32, h as u32).unwrap(), w, h)
+    }
+
+    fn assert_controls_inside_and_disjoint(controls: &[(PickerHit, R)], outer: R) {
+        for (index, (_, r)) in controls.iter().enumerate() {
+            assert!(outer.contains(r.x, r.y) && outer.contains(r.x + r.w - 1, r.y + r.h - 1));
+            for (_, other) in &controls[index + 1..] {
+                assert!(r.x + r.w <= other.x || other.x + other.w <= r.x
+                    || r.y + r.h <= other.y || other.y + other.h <= r.y,
+                    "overlapping picker controls: {r:?} {other:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn dialogs_and_pickers_fit_small_windows() {
+        for (w, h) in [(320, 240), (360, 340), (480, 270), (640, 360), (1280, 720)] {
+            let mut app = app(w, h);
+            for dialog in [state::Dialog::Addins, state::Dialog::Register,
+                state::Dialog::Remove, state::Dialog::ClearLogs] {
+                app.settings_ui.dialog = Some(dialog);
+                let panel = dialog_rect(&app);
+                assert!(panel.x >= 0 && panel.y >= 0
+                    && panel.x + panel.w <= w && panel.y + panel.h <= h, "{w}x{h} {dialog:?}");
+                let controls = dialog_controls(&app);
+                for (index, (_, r)) in controls.iter().enumerate() {
+                    assert!(panel.contains(r.x, r.y) && panel.contains(r.x + r.w - 1, r.y + r.h - 1));
+                    for (_, other) in &controls[index + 1..] {
+                        assert!(r.x + r.w <= other.x || other.x + other.w <= r.x
+                            || r.y + r.h <= other.y || other.y + other.h <= r.y);
+                    }
+                }
+            }
+            app.settings_ui.dialog = None;
+            app.settings_ui.picker = Some(state::ColorDraft::new(0x216F62));
+            let panel = picker_rect(&app);
+            assert!(panel.x >= 0 && panel.y >= 0
+                && panel.x + panel.w <= w && panel.y + panel.h <= h, "{w}x{h} picker");
+            assert_controls_inside_and_disjoint(&picker_controls(&app), panel);
+        }
+    }
+
+    #[test]
+    fn overlapping_fades_do_not_reenter_the_scratch_buffer() {
+        let fonts = crate::text::Fonts::load();
+        let mut app = app(640, 360);
+        app.settings_open = true;
+        app.settings_ui.opened_at = crate::app::now_ms();
+        app.settings_ui.tab_at = crate::app::now_ms();
+        let mut pm = Pixmap::new(640, 360).unwrap();
+        let mut ctx = Ctx { palette: app.palette(), pm: &mut pm, tr: Transform::identity() };
+        draw(&app, &fonts, &mut ctx, None);
+    }
+
+    #[test]
+    fn every_tab_reports_a_valid_page_even_after_a_resize() {
+        for (w, h) in [(320, 240), (640, 360), (1280, 720)] {
+            let mut app = app(w, h);
+            for tab in Tab::ALL {
+                app.settings_ui.tab = tab;
+                app.settings_page = usize::MAX;
+                let layout = layout(&app);
+                assert!(layout.pages >= 1 && layout.page < layout.pages, "{w}x{h} {tab:?}");
+                app.settings_page = 0;
+                for index in 0..count(tab) {
+                    if let Some(r) = row(&app, index) {
+                        assert!(r.w > 0 && r.h > 0, "{w}x{h} {tab:?} row {index}: {r:?}");
+                    }
+                }
+            }
+        }
+    }
 }

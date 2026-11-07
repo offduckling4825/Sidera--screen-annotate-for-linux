@@ -68,7 +68,6 @@ pub enum SetHit {
     Theme(theme::Preference),
     ResetSlider(SliderId),
     Autostart,
-    WpsDebug,
     WpsRemove,
     WpsRegister,
     ProcessBlock,
@@ -907,7 +906,7 @@ pub fn confirm_hit(app: &App,x:i32,y:i32)->Option<ConfirmHit> {
     confirm_controls(app).into_iter().find_map(|(hit,r)|r.contains(x,y).then_some(hit))
 }
 pub fn draw_confirm(app:&App,fonts:&Fonts,ctx:&mut Ctx) {
-    crate::settings_panel::layer(ctx,crate::settings_state::ease(app.settings_ui.overlay_at,160),|ctx| {
+    crate::settings_panel::layer(app,ctx,crate::settings_state::ease(app.settings_ui.overlay_at,160),|ctx| {
         let p=confirm_rect(app); let palette=ctx.palette;
         panel(ctx,p,12.0,1.0);
         ctx.text(fonts,"退出 Sidera？",(p.x+24) as f32,(p.y+42) as f32,19.0,c(palette.text));
@@ -1299,14 +1298,14 @@ pub fn render_region(
     Some(pm)
 }
 
-#[cfg(unix)]
-pub(crate) fn render_settings_window(
-    app: &App, fonts: &Fonts, icon: Option<&Pixmap>, width: u32, height: u32, scale: f32,
-) -> Option<Pixmap> {
-    let mut pixmap = Pixmap::new(width, height)?;
+/// Draw into a caller-owned buffer so the settings windows can be repainted
+/// without allocating a full-surface Pixmap for every frame.
+pub fn draw_settings_window(
+    app: &App, fonts: &Fonts, icon: Option<&Pixmap>, pixmap: &mut Pixmap, scale: f32,
+) {
     let palette = app.palette();
     pixmap.fill(c(palette.paper));
-    let mut ctx = Ctx { palette, pm: &mut pixmap, tr: Transform::from_scale(scale, scale) };
+    let mut ctx = Ctx { palette, pm: pixmap, tr: Transform::from_scale(scale, scale) };
     if app.settings_open {
         draw_settings(app, fonts, &mut ctx, icon);
     }
@@ -1322,7 +1321,6 @@ pub(crate) fn render_settings_window(
     crate::settings_panel::draw_overlay(app, fonts, &mut ctx);
     crate::value_input::draw(app, fonts, &mut ctx);
     draw_press_feedback(app, &mut ctx);
-    Some(pixmap)
 }
 
 fn draw_launch_piece(app: &App, ctx: &mut Ctx, target: R, visible: R, r: R,

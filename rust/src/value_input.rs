@@ -151,3 +151,69 @@ pub fn draw(app:&App,fonts:&Fonts,ctx:&mut Ctx) {
     ctx.fill_round(r,4.0,c(ctx.palette.paper));
     ctx.text_center(fonts,r,&crate::settings_panel::fitted(fonts,&editor.error,12.0,r.w-16),12.0,c(ctx.palette.danger));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::SliderId;
+    use tiny_skia::Pixmap;
+
+    fn app() -> App {
+        App::new(Pixmap::new(8, 8).unwrap(), 8, 8)
+    }
+
+    fn set_editor(app: &mut App, target: Target, text: &str) {
+        let mut editor = Editor::new(app, target);
+        editor.text = text.into();
+        editor.cursor = editor.text.len();
+        editor.selected = false;
+        app.settings_ui.editor = Some(editor);
+    }
+
+    #[test]
+    fn numeric_editor_replaces_selection_and_parses_ranges() {
+        let mut app = app();
+        let mut editor = Editor::new(&app, Target::Setting(SliderId::StartupDelay));
+        assert!(editor.selected);
+        editor.insert("15");
+        assert_eq!(editor.text, "15");
+        app.settings_ui.editor = Some(editor);
+        assert_eq!(parse(&app), Ok(15.0));
+
+        set_editor(&mut app, Target::Setting(SliderId::StartupDelay), "4");
+        assert!(parse(&app).is_err());
+        set_editor(&mut app, Target::Setting(SliderId::StartupDelay), "21");
+        assert!(parse(&app).is_err());
+    }
+
+    #[test]
+    fn overlong_paste_keeps_the_existing_value() {
+        let mut app = app();
+        set_editor(&mut app, Target::Setting(SliderId::StartupDelay), "12");
+        let editor = app.settings_ui.editor.as_mut().unwrap();
+        editor.insert("1234567890123456");
+        assert_eq!(editor.text, "12");
+        assert!(editor.error.is_empty());
+    }
+
+    #[test]
+    fn hex_editor_accepts_six_digits_with_or_without_prefix() {
+        let mut app = app();
+        set_editor(&mut app, Target::Hex, "#287A70");
+        assert_eq!(parse(&app), Ok(0x287A70 as f32));
+        set_editor(&mut app, Target::Hex, "287a70");
+        assert_eq!(parse(&app), Ok(0x287A70 as f32));
+        set_editor(&mut app, Target::Hex, "#287A7");
+        assert!(parse(&app).is_err());
+    }
+
+    #[test]
+    fn invalid_characters_are_rejected_without_dropping_the_cursor() {
+        let mut app = app();
+        set_editor(&mut app, Target::Setting(SliderId::StartupDelay), "12");
+        let editor = app.settings_ui.editor.as_mut().unwrap();
+        editor.insert("x");
+        assert_eq!(editor.text, "12");
+        assert!(!editor.error.is_empty());
+    }
+}

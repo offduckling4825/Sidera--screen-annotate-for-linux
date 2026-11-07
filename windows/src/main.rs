@@ -102,16 +102,40 @@ fn main() {
     log("main start");
     win32::init_dpi();
     log("dpi ok");
-    if let Err(error) = run() {
+    let result = run();
+    sidera_core::process_block::stop_daemon();
+    if let Err(error) = result {
         fatal(&error);
     }
 }
 
+fn close_native_settings(rt: &sidera_core::Rt, app: &mut App, ip: &mut Ip) {
+    if let Some(plat) = rt.backend.as_any().downcast_ref::<Win32Plat>() {
+        plat.close_settings_window();
+    }
+    app.settings_ui.native_size = None;
+    app.settings_ui.native_dirty.set(false);
+    app.settings_open = false;
+    app.process_block_open = false;
+    app.process_input_active = false;
+    app.confirm_quit = false;
+    app.show_diag = false;
+    app.settings_ui.editor = None;
+    app.settings_ui.picker = None;
+    app.settings_ui.dialog = None;
+    app.settings_ui.closing_at = 0;
+    app.settings_ui.overlay_closing_at = 0;
+    rt.backend.set_text_input(false);
+    ip.pending_ui = None;
+    ip.slider = None;
+    ip.panel_scroll = None;
+    ip.picker_drag = None;
+    app.press = None;
+    sidera_core::apply_input_shape(rt, app);
+    rt.redraw_full(app);
+}
+
 fn run() -> Result<(), String> {
-    let _single = match single_instance()? {
-        Some(handle) => handle,
-        None => return Ok(()),
-    };
     log("run start");
     if std::env::var("SIDERA_AUTOSTART_TEST").is_ok() {
         log(&format!("autostart before={}", ui::is_autostart()));
@@ -121,6 +145,17 @@ fn run() -> Result<(), String> {
         log(&format!("autostart cleared={}", ui::is_autostart()));
         return Ok(());
     }
+    if app::launched_by_autostart() {
+        let delay = app::load_startup_delay();
+        if delay > 0 {
+            log(&format!("autostart delay {delay}s"));
+            std::thread::sleep(Duration::from_secs(u64::from(delay)));
+        }
+    }
+    let _single = match single_instance()? {
+        Some(handle) => handle,
+        None => return Ok(()),
+    };
     let plat = Win32Plat::create()?;
     log("window created");
     let (logical_w, logical_h) = plat.logical_size();
@@ -131,6 +166,7 @@ fn run() -> Result<(), String> {
     let mut app = App::new(canvas, logical_w, logical_h);
     app::load_settings(&mut app);
     app.set_scale(scale);
+    sidera_core::process_block::set_daemon_enabled(app.process_block_enabled);
     win32::refresh_theme();
     app.update_system_theme(win32::dark());
     app.hotkey_ok = true;
@@ -167,6 +203,17 @@ fn run() -> Result<(), String> {
             .ok_or("后端类型错误")?
             .dump_png(&path)?;
         log(&format!("dumped {path}"));
+        return Ok(());
+    }
+
+    if std::env::var("SIDERA_SETTINGS_SMOKE").is_ok() {
+        let plat = rt.backend.as_any().downcast_ref::<Win32Plat>().unwrap();
+        if let Some((w, h)) = plat.create_settings_window() {
+            app.settings_ui.native_size = Some((w, h));
+        }
+        open_settings(&rt, &mut app);
+        plat.paint_settings(&app, &rt.fonts, rt.icon.as_ref());
+        log("settings smoke ok");
         return Ok(());
     }
 
@@ -226,7 +273,25 @@ fn run() -> Result<(), String> {
                 WinEvent::Tray(action) => {
                     log(&format!("tray {action:?}"));
                     match action {
-                    TrayAction::Settings => open_settings(&rt, &mut app),
+                    TrayAction::Settings => {
+                        let plat = rt.backend.as_any().downcast_ref::<Win32Plat>().unwrap();
+                        if plat.settings_window_open() {
+                            app.settings_ui.closing_at = 0;
+                            app.settings_ui.native_dirty.set(true);
+                            plat.raise_settings_window();
+                        } else {
+                            let size = plat.create_settings_window();
+                            if let Some((w, h)) = size {
+                                app.settings_ui.native_size = Some((w, h));
+                            }
+                            open_settings(&rt, &mut app);
+                            if size.is_some() {
+                                sidera_core::apply_input_shape(&rt, &app);
+                                rt.clear_overlay(&app);
+                                app.settings_ui.native_dirty.set(true);
+                            }
+                        }
+                    }
                     TrayAction::Toggle => {
                         if app.mode == 0 {
                             switch_to_draw(&rt, &mut app, 1);
@@ -250,10 +315,53 @@ fn run() -> Result<(), String> {
                         rt.redraw_full(&app);
                     }
                 }
-                WinEvent::DisplayChanged => {}
+                WinEvent::DisplayChanged => {
+                    if let Some(plat) = rt.backend.as_any().downcast_ref::<Win32Plat>() {
+                        if let Some((w, h, scale)) = plat.refresh_display() {
+                            app.configure_geometry(w, h, scale);
+                            if plat.settings_window_open() {
+                                plat.close_settings_window();
+                                if let Some((w, h)) = plat.create_settings_window() {
+                                    app.settings_ui.native_size = Some((w, h));
+                                    app.settings_ui.native_dirty.set(true);
+                                }
+                            }
+                            sidera_core::apply_input_shape(&rt, &app);
+                            rt.redraw_full(&app);
+                        }
+                    }
+                }
                 WinEvent::ValueKey(key) => { sidera_core::text_input_key(&rt, &mut app, key); }
+                WinEvent::SettingsClose => {
+                    if app.settings_ui.closing_at == 0 {
+                        app.settings_ui.closing_at = sidera_core::app::now_ms();
+                        app.settings_ui.native_dirty.set(true);
+                    }
+                }
+                WinEvent::SettingsResized => {
+                    if let Some(plat) = rt.backend.as_any().downcast_ref::<Win32Plat>() {
+                        if let Some((w, h)) = plat.settings_logical_size() {
+                            app.settings_ui.native_size = Some((w, h));
+                            app.settings_ui.native_dirty.set(true);
+                        }
+                    }
+                }
                 WinEvent::Quit => return Ok(()),
             }
+        }
+
+        if let Some(plat) = rt.backend.as_any().downcast_ref::<Win32Plat>() {
+            if let Some(size) = plat.settings_logical_size() {
+                if app.settings_ui.native_size != Some(size) {
+                    app.settings_ui.native_size = Some(size);
+                    app.settings_ui.native_dirty.set(true);
+                }
+            }
+        }
+        if app.settings_ui.closing_at > 0
+            && sidera_core::app::now_ms() - app.settings_ui.closing_at >= 120
+        {
+            close_native_settings(&rt, &mut app, &mut ip);
         }
 
         tick(
@@ -265,13 +373,24 @@ fn run() -> Result<(), String> {
             win32::dark(),
         );
         rt.end_batch(&app);
+        if app.settings_ui.native_dirty.get() {
+            app.settings_ui.native_dirty.set(false);
+            if let Some(plat) = rt.backend.as_any().downcast_ref::<Win32Plat>() {
+                plat.paint_settings(&app, &rt.fonts, rt.icon.as_ref());
+            }
+        }
         rt.backend.flush();
 
         let busy = app.is_drawing
             || ip.dragging
             || ip.slider.is_some()
+            || ip.pending_ui.is_some()
             || app.press.is_some()
             || app.launch.active()
+            || sidera_core::ui::sidebar_animating(&app)
+            || app.settings_ui.animating()
+            || app.settings_ui.native_dirty.get()
+            || app.open_anim != 0
             || app.page_picker.is_some();
         std::thread::sleep(Duration::from_millis(if busy { 4 } else { 12 }));
     }

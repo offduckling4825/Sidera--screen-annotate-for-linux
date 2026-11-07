@@ -9,7 +9,7 @@
 轻量、免费、开源：把注意力留给课堂。
 
 [![CI](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml/badge.svg)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml)
-[![阶段](https://img.shields.io/badge/3.1-Electro-stable-b98237?style=flat-square)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux)
+[![阶段](https://img.shields.io/badge/3.2-Electro.rc-b98237?style=flat-square)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux)
 [![平台](https://img.shields.io/badge/platform-Linux-5a6f69?style=flat-square)](#桌面与安装包兼容性)
 [![许可](https://img.shields.io/badge/license-GPL_v3-5a6f69?style=flat-square)](LICENSE)
 
@@ -27,8 +27,8 @@
 
 | 版本 | 技术栈 | 版本号 | 建议场景 |
 | --- | --- | --- | --- |
-| **Rust 版（主推，active）** | 纯 Rust，**不依赖 Qt / libX11**，tiny-skia 软件渲染 | `3.1-Electro-stable` | X11 与 Wayland 通吃；老机器、国产化教室机；追求轻量与无重量级依赖 |
-| **C++ / Qt5 版（legacy）** | C++17 + Qt5 | `3.1-Electro-stable` | 经典实现；长期在 X11 教室环境验证 |
+| **Rust 版（主推，active）** | 纯 Rust，**不依赖 Qt / libX11**，tiny-skia 软件渲染 | `3.2-Electro.rc` | X11 与 Wayland 通吃；老机器、国产化教室机；追求轻量与无重量级依赖 |
+| **C++ / Qt5 版（legacy）** | C++17 + Qt5 | `3.2-Electro.rc` | 经典实现；长期在 X11 教室环境验证 |
 
 > Rust 运行时只依赖 `libc6` 与 `libgcc-s1`。C++ 与 Rust 包使用相同的 `sidera` 包名，安装会替换已有版本，**二选一安装**。
 
@@ -114,13 +114,13 @@ getconf GNU_LIBC_VERSION
 Rust 版（主推）与 C++ / Qt5 版（legacy）现共用同一版本号与 `sidera` 包名，**二选一安装**：
 
 ```sh
-sudo apt install ./sidera_3.1-Electro-stable_amd64.deb   # amd64
-sudo apt install ./sidera_3.1-Electro-stable_arm64.deb   # arm64
+sudo apt install ./sidera_3.2-Electro.rc_amd64.deb   # amd64
+sudo apt install ./sidera_3.2-Electro.rc_arm64.deb   # arm64
 ```
 
 > 也可以直接用 `dpkg -i`，但推荐 `apt install ./xxx.deb` 以自动补齐依赖。不要跳过依赖检查或替换系统 libc。
 
-RPM / Arch 包可由源码构建（见下），分别产出 `sidera-3.1-Electro_stable.<arch>.rpm` 与 `sidera-3.1_electro_stable-1-<arch>.pkg.tar.zst`（这两种包格式不允许版本号里带 `-`，用 `_` 代替）。
+RPM / Arch 包可由源码构建（见下），分别产出 `sidera-3.2-Electro.rc.<arch>.rpm`（RPM 拆成 `Version: 3.2` + `Release: Electro.rc`）与 `sidera-3.2_electro_rc-1-<arch>.pkg.tar.zst`（Arch `pkgver` 不允许 `-`，用 `_` 代替）。
 
 ### 2. 选择桌面入口
 
@@ -138,7 +138,7 @@ RPM / Arch 包可由源码构建（见下），分别产出 `sidera-3.1-Electro_
 sidera-wps-addin-install
 ```
 
-随后**先打开 Sidera**，在设置中开启“WPS 联动”，再打开 WPS 演示。首次登记或更新加载项后需要重新打开 WPS；可用性取决于 WPS 版本提供的加载项 API。详见 [WPS 加载项说明](wps-addin/README.md) 与 [教室部署指南](README.classroom.md)。
+随后**先打开 Sidera**（Rust 版默认启用 WPS 联动；C++ 版在设置中开启“WPS 联动”），再打开 WPS 演示。首次登记或更新加载项后需要重新打开 WPS；可用性取决于 WPS 版本提供的加载项 API。详见 [WPS 加载项说明](wps-addin/README.md) 与 [教室部署指南](README.classroom.md)。
 
 启动失败时查看 `${XDG_STATE_HOME:-$HOME/.local/state}/sidera/startup-error.log`。课堂诊断日志写入 `~/sidera-diagnostic.log`，可在“设置 → 诊断信息 / 日志”中直接查看带 `[INFO]/[WARN]/[ERROR]` 级别的最近记录。提交日志前请移除用户名、课件路径及个人信息。
 

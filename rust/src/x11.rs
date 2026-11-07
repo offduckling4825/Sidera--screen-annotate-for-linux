@@ -27,22 +27,6 @@ pub const XK_SHIFT_L: u32 = 0xffe1;
 pub const XK_BACKSPACE: u32 = 0xff08;
 pub const XK_RETURN: u32 = 0xff0d;
 
-fn wps_presentation_title(title: &str) -> bool {
-    let title = title.trim().to_lowercase();
-    let document = title.rsplit_once(" - ")
-        .filter(|(_, suffix)| matches!(*suffix, "wps office" | "wps presentation" | "wps 演示" | "wps演示"))
-        .map_or(title.as_str(), |(document, _)| document)
-        .trim_end_matches([' ', '*']);
-    document.rsplit_once('.').is_some_and(|(_, extension)| matches!(extension,
-        "dps" | "dpt" | "ppt" | "pptx" | "pptm" | "pps" | "ppsx" | "ppsm" | "pot" | "potx" | "potm"))
-        || ["演示文稿", "presentation"].into_iter().any(|prefix| {
-            document.strip_prefix(prefix).is_some_and(|number| {
-                let number = number.trim();
-                !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
-            })
-        })
-}
-
 pub struct X11 {
     pub conn: RustConnection,
     #[allow(dead_code)]
@@ -410,15 +394,25 @@ impl X11 {
                 _ => {}
             }
         }
-        let shifted = usize::from(modifiers.contains(KeyButMask::SHIFT));
-        let symbol = symbols.get(shifted).copied().filter(|&symbol| symbol != 0)
-            .or_else(|| symbols.first().copied())?;
+        // Pick the XKB level for Shift and AltGr/Mod5 instead of assuming a
+        // two-column US map. Caps Lock only changes the case of letters.
+        let shift = modifiers.contains(KeyButMask::SHIFT);
+        let altgr = modifiers.contains(KeyButMask::MOD5) || modifiers.contains(KeyButMask::MOD3);
+        let group = if altgr { 2 } else { 0 };
+        let level = group + usize::from(shift);
+        let symbol = symbols.get(level).copied().filter(|&symbol| symbol != 0)
+            .or_else(|| symbols.get(group).copied().filter(|&symbol| symbol != 0))
+            .or_else(|| symbols.first().copied().filter(|&symbol| symbol != 0))?;
         let unicode = match symbol {
             0x20..=0x7e | 0xa0..=0xff => symbol,
             0x01000100..=0x0110ffff => symbol & 0x00ffffff,
             _ => return None,
         };
-        char::from_u32(unicode).filter(|ch| !ch.is_control()).map(Key::Character)
+        let mut ch = char::from_u32(unicode).filter(|ch| !ch.is_control())?;
+        if modifiers.contains(KeyButMask::LOCK) && !altgr && ch.is_ascii_alphabetic() {
+            ch = if shift { ch.to_ascii_lowercase() } else { ch.to_ascii_uppercase() };
+        }
+        Some(Key::Character(ch))
     }
 
     pub fn fake_key(&self, keycode: Keycode) {
@@ -682,21 +676,13 @@ impl X11 {
     fn is_wps_presentation_window(&self, window: Window) -> bool {
         let Some(class) = xproto::get_property(&self.conn, false, window, AtomEnum::WM_CLASS,
             AtomEnum::STRING, 0, 64).ok().and_then(|cookie| cookie.reply().ok()) else { return false };
-        let class = String::from_utf8_lossy(&class.value).to_ascii_lowercase();
-        let fields = || class.split('\0');
-        if fields().any(|name| matches!(name, "wpp" | "wps-office-wpp" | "com.kingsoft.wps.wpp")) {
-            return true;
-        }
-        // Integrated WPS uses one WM_CLASS for Writer, Spreadsheets and
-        // Presentation. Its active document title changes even within a tabbed window.
-        if !fields().any(|name| matches!(name, "wpsoffice" | "wps-office" | "com.kingsoft.wpsoffice" | "wps")) {
-            return false;
-        }
+        let class = String::from_utf8_lossy(&class.value);
         let read_title = |atom| xproto::get_property(&self.conn, false, window, atom,
             AtomEnum::ANY, 0, 1024).ok().and_then(|cookie| cookie.reply().ok())
             .filter(|reply| !reply.value.is_empty() && reply.format == 8);
-        read_title(self.net_wm_name).or_else(|| read_title(AtomEnum::WM_NAME.into()))
-            .is_some_and(|title| wps_presentation_title(&String::from_utf8_lossy(&title.value)))
+        let title = read_title(self.net_wm_name).or_else(|| read_title(AtomEnum::WM_NAME.into()))
+            .map(|title| String::from_utf8_lossy(&title.value).into_owned()).unwrap_or_default();
+        crate::wps::presentation_window(&class, &title)
     }
 
     fn is_office_window(&self, w: Window) -> bool {
@@ -1176,6 +1162,28 @@ impl crate::backend::Backend for X11Plat {
     }
     fn device_pixel_ratio(&self) -> f64 {
         self.scale.get()
+    }
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use crate::wps::presentation_window;
+
+    const CASES: &str =
+        include_str!("../../compat/gnome-extension/tests/wps-presentation-cases.json");
+
+    #[test]
+    fn shared_wps_presentation_vectors_match_the_gnome_extension() {
+        let cases: Vec<serde_json::Value> = serde_json::from_str(CASES).unwrap();
+        for case in cases {
+            let instance = case["instance"].as_str().unwrap();
+            let class = case["class"].as_str().unwrap();
+            let title = case["title"].as_str().unwrap();
+            let expected = case["expected"].as_bool().unwrap();
+            let window_class = format!("{instance}\0{class}\0");
+            assert_eq!(presentation_window(&window_class, title), expected,
+                "{window_class:?} {title:?}");
+        }
     }
 }
 

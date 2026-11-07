@@ -3,13 +3,13 @@ run-name: Release packages for ${{ inputs.release_tag || github.ref_name }}
 
 on:
   push:
-    tags: ['v3.0-Electro-testing-custom*']
+    tags: ['v3.2-Electro.rc']
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing custom release tag
+        description: Existing release tag
         required: true
-        default: v3.0-Electro-testing-custom20261025.35
+        default: v3.2-Electro.rc
         type: string
 
 permissions:
@@ -47,11 +47,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v3\.0-Electro-testing-custom[0-9]{8}\.[0-9]+$ ]]
+          [[ "$RELEASE_TAG" =~ ^v3\.2-Electro\.rc$ ]]
           test "$(uname -m)" = "$EXPECTED_MACHINE"
           test "$(dpkg --print-architecture)" = "$DEB_ARCH"
           version="${RELEASE_TAG#v}"
-          echo "SIDERA_VERSION=${version/-custom/+custom}" >> "$GITHUB_ENV"
+          echo "SIDERA_VERSION=${version}" >> "$GITHUB_ENV"
 
       - name: Checkout the exact application tag
         uses: actions/checkout@v4
