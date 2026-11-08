@@ -248,7 +248,6 @@ pub struct WlPlat {
     back: RefCell<Pixmap>,
     vk: Rc<RefCell<Option<ZwpVirtualKeyboardV1>>>,
     pointer: RefCell<Option<ZwlrVirtualPointerV1>>,
-    pending_click: Cell<Option<(i32, i32)>>,
     dirty: Cell<Option<(i32, i32, i32, i32)>>, // 脏区域包围盒（物理）x0,y0,x1,y1
     input_dirty: Cell<bool>,
 }
@@ -276,19 +275,6 @@ impl WlPlat {
         // Do not clear, resize or destroy in-flight storage here. The next flush
         // replaces a released slot and submits the fully repainted new canvas.
         self.dirty.set(Some((0, 0, pw, ph)));
-    }
-
-    fn forward_click(&self) {
-        let Some((x, y)) = self.pending_click.take() else { return };
-        let Some(pointer) = self.pointer.borrow().clone() else { return };
-        let (w,h) = self.logical.get();
-        if w <= 0 || h <= 0 { return; }
-        let time = crate::app::now_ms() as u32;
-        pointer.motion_absolute(time, x.clamp(0,w-1) as u32, y.clamp(0,h-1) as u32, w as u32, h as u32);
-        pointer.button(time, 0x111, wl_pointer::ButtonState::Pressed);
-        pointer.frame();
-        pointer.button(time.wrapping_add(1), 0x111, wl_pointer::ButtonState::Released);
-        pointer.frame();
     }
 
     fn union_dirty(&self, x: i32, y: i32, w: i32, h: i32) {
@@ -360,7 +346,6 @@ impl Backend for WlPlat {
             if self.input_dirty.replace(false) {
                 self.layer.commit();
             }
-            self.forward_click();
             return;
         };
         let mut frames = self.frames.borrow_mut();
@@ -393,7 +378,6 @@ impl Backend for WlPlat {
         self.layer.commit();
         self.dirty.set(None);
         self.input_dirty.set(false);
-        self.forward_click();
     }
     fn set_text_input(&self, on: bool) {
         self.layer.set_keyboard_interactivity(if on {
@@ -467,8 +451,6 @@ impl Backend for WlPlat {
     fn can_inject_keys_without_prompt(&self) -> bool {
         self.vk.borrow().is_some() || self.uinput.borrow().is_some()
     }
-    fn virtual_right_click(&self, x: i32, y: i32) { self.pending_click.set(Some((x,y))); }
-    fn can_forward_right_click(&self) -> bool { self.pointer.borrow().is_some() }
     fn screenshot(&self) -> Option<(Vec<u8>, u32, u32)> {
         None
     }

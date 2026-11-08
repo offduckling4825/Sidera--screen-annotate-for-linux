@@ -35,7 +35,7 @@ fn quit_rect(app:&App)->R {
     if has_sidebar(app) {R {x:p.x+16,y:p.y+p.h-96,w:136,h:44}}
     else {R {x:p.x+p.w-136,y:p.y+8,w:120,h:36}}
 }
-fn count(tab:Tab)->usize {match tab {Tab::Appearance=>5,Tab::General=>7,Tab::Addins=>3,Tab::About=>5}}
+fn count(tab:Tab)->usize {match tab {Tab::Appearance=>5,Tab::General=>6,Tab::Addins=>3,Tab::About=>5}}
 fn addins_notice_rect(app:&App)->Option<R> {
     if app.settings_ui.tab!=Tab::Addins {return None;}
     let body=content_rect(app);
@@ -79,7 +79,7 @@ pub fn controls(app:&App)->Vec<(SetHit,R)> {
             }
             if let Some(r)=row(app,1){out.push((SetHit::ThemeAccent,r));}
         }
-        Tab::General=>for (hit,i) in [(SetHit::Autostart,0),(SetHit::RightClick,3),(SetHit::ProcessBlock,6)] {if let Some(r)=row(app,i){out.push((hit,r));}},
+        Tab::General=>for (hit,i) in [(SetHit::Autostart,0),(SetHit::ProcessBlock,5)] {if let Some(r)=row(app,i){out.push((hit,r));}},
         Tab::Addins=>for (hit,i) in [(SetHit::WpsRegister,1),(SetHit::WpsRemove,2)] {if let Some(r)=row(app,i){out.push((hit,r));}},
         Tab::About=>{
             for (hit,i) in [(SetHit::License,2),(SetHit::Repository,3)] {if let Some(r)=row(app,i){out.push((hit,r));}}
@@ -105,8 +105,8 @@ pub fn sliders(app:&App)->Vec<SliderDef> {
             (SliderId::Position,4,0.0,100.0,value_input::position(app),1.0,"工具栏垂直位置",false)],
         Tab::General=>vec![(SliderId::StartupDelay,1,5.0,20.0,app.startup_delay as f32,1.0,"自动启动延迟",false),
             (SliderId::AutoExpand,2,1.0,20.0,app.sidebar_expand_minutes as f32,1.0,"自动展开时间",false),
-            (SliderId::Threshold,4,20.0,260.0,app.large_touch_threshold as f32,10.0,"大触点阈值",false),
-            (SliderId::EraseScale,5,0.8,2.5,app.large_erase_scale10 as f32/10.0,0.1,"大触点橡皮倍率",true)],
+            (SliderId::Threshold,3,20.0,260.0,app.large_touch_threshold as f32,10.0,"大触点阈值",false),
+            (SliderId::EraseScale,4,0.8,2.5,app.large_erase_scale10 as f32/10.0,0.1,"大触点橡皮倍率",true)],
         _=>Vec::new(),
     };
     values.into_iter().filter_map(|(id,index,min,max,value,step,label,signed)| {
@@ -243,8 +243,7 @@ fn draw_content(app:&App,fonts:&Fonts,ctx:&mut Ctx,icon:Option<&Pixmap>) {
                     text(ctx,fonts,&format!("#{:06X}",app.theme.accent.rgb()),R {x:sw.x+29,w:sw.w-32,..sw},11.0,palette.text);
                 }
                 (Tab::General,0)=>{card(ctx,fonts,r,"开机自动启动","登录桌面后启动",62);toggle(ctx,app,r,ui::Control::Setting(SetHit::Autostart),app.settings_ui.autostart);},
-                (Tab::General,3)=>{card(ctx,fonts,r,"右键切回光标","书写时恢复桌面操作",62);toggle(ctx,app,r,ui::Control::Setting(SetHit::RightClick),app.right_click_cursor_on);},
-                (Tab::General,6)=>card(ctx,fonts,r,"进程屏蔽  ›","选择需要暂停的进程",0),
+                (Tab::General,5)=>card(ctx,fonts,r,"进程屏蔽  ›","选择需要暂停的进程",0),
                 (Tab::Addins,0)=>{card(ctx,fonts,r,"WPS 联动","始终开启，打开 WPS 后自动连接",94);text(ctx,fonts,if app.wps_connected {"● 已连接"}else{"○ 等待连接"},R {x:r.x+r.w-98,w:84,..r},12.0,palette.muted);},
                 (Tab::Addins,1)=>card(ctx,fonts,r,"重新登记加载项  ›","修复当前用户的 WPS 加载项登记",0),
                 (Tab::Addins,2)=>card(ctx,fonts,r,"清除加载项登记  ›","停止放映联动，可重新登记恢复",0),
@@ -258,7 +257,7 @@ fn draw_content(app:&App,fonts:&Fonts,ctx:&mut Ctx,icon:Option<&Pixmap>) {
         for s in sliders(app) {
             let spec=value_input::spec(app,Target::Setting(s.id));let compact=body.w<460;
             let detail=match s.id {SliderId::AutoExpand=>"收起后等待 1–20 分钟，默认 2 分钟".into(),SliderId::Position=>"从顶部到下方 · 也可拖动工具栏".into(),_=>format!("{}–{} {}",spec.min,spec.max,spec.unit)};
-            let index=match s.id {SliderId::Alpha=>2,SliderId::Scale=>3,SliderId::Position=>4,SliderId::StartupDelay=>1,SliderId::AutoExpand=>2,SliderId::Threshold=>4,SliderId::EraseScale=>5};
+            let index=match s.id {SliderId::Alpha=>2,SliderId::Scale=>3,SliderId::Position=>4,SliderId::StartupDelay=>1,SliderId::AutoExpand=>2,SliderId::Threshold=>3,SliderId::EraseScale=>4};
             let r=row(app,index).unwrap();
             if compact {text(ctx,fonts,s.label,R {x:r.x+12,y:r.y,w:r.w-24,h:22},13.0,palette.text);}else{card(ctx,fonts,r,s.label,&detail,286);}
             ctx.fill_round(s.track,1.5,c(palette.border));let x=s.track.x+(s.track.w as f32*s.t()).round() as i32;
@@ -507,9 +506,22 @@ pub fn draw_inspector(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
         let page=app.settings_ui.inspector_page.min(pages-1);
         text(ctx,fonts,if pages>1 {"支持滚轮与上下滑动翻页"}else{"全部内容"},R { x:p.x+22,y:p.y+48,w:p.w-44,h:20 },12.0,palette.muted);
         let body=inspector_body_rect(app);
-        for (i,line) in lines.iter().skip(page*size).take(size).enumerate() {
-            text(ctx,fonts,line,R {y:body.y+i as i32*20,h:20,..body},13.0,
-                if line.contains("[ERROR]") { palette.danger } else { palette.text });
+        let draw_page = |ctx: &mut Ctx, page: usize, offset: i32| {
+            for (i,line) in lines.iter().skip(page*size).take(size).enumerate() {
+                let y = body.y + i as i32*20 + offset;
+                if y < body.y || y + 20 > body.y + body.h { continue; }
+                text(ctx,fonts,line,R {y,h:20,..body},13.0,
+                    if line.contains("[ERROR]") { palette.danger } else { palette.text });
+            }
+        };
+        match app.settings_ui.inspector_slide(page) {
+            Some((from, t)) => {
+                let direction = page as i32 - from as i32;
+                let current = (direction as f32 * body.h as f32 * (1.0 - t)).round() as i32;
+                draw_page(ctx, from, current - direction * body.h);
+                draw_page(ctx, page, current);
+            }
+            None => draw_page(ctx, page, 0),
         }
         let footer=inspector_pager_rect(app);
         ctx.stroke_line(((p.x+18) as f32,(footer.y-8) as f32),((p.x+p.w-18) as f32,(footer.y-8) as f32),alpha(palette.border,120),1.0);
@@ -571,6 +583,17 @@ pub fn process_controls(app: &App) -> Vec<(ui::ProcessHit,R)> {
     }
     out
 }
+/// Row rectangles for one animation frame. Hit testing keeps using
+/// `process_controls` so a settling slide never changes what a tap selects.
+fn process_control_rows(app:&App, start:usize, dy:i32, count:usize) -> Vec<(ui::ProcessHit,R)> {
+    use ui::ProcessHit as H;
+    let rows=ui::process_rows(app); let list=process_list_rect(app);
+    let start=start.min(rows.len().saturating_sub(1));
+    rows.iter().skip(start).take(count).enumerate().map(|(offset,(row,_,_))| {
+        let hit=match row { ui::ProcessRow::Rule(i)=>H::Rule(*i),ui::ProcessRow::Proc(i)=>H::Proc(*i) };
+        (hit,R {x:list.x+1,y:list.y+offset as i32*52+1+dy,w:list.w-8,h:list.h.min(50)})
+    }).collect()
+}
 fn draw_process_pager(app:&App,fonts:&Fonts,ctx:&mut Ctx,start:usize,total:usize) {
     use ui::ProcessHit as H;
     let p=ctx.palette;let r=process_pager_rect(app);let visual=R {y:r.y+6,h:32,..r};
@@ -602,10 +625,13 @@ pub fn draw_process(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
         text(ctx,fonts,"启用后暂停匹配进程，关闭屏蔽会恢复",R {x:p.x+20,y:p.y+44,w:p.w-40,h:20},12.0,palette.muted);
         let rows=ui::process_rows(app);let list=process_list_rect(app);let visible=process_visible_rows(app);
         let start=app.process_scroll.min(rows.len().saturating_sub(visible));
+        let visual=app.settings_ui.process_scroll_visual(app.process_scroll);
+        let draw_start=(visual.floor().max(0.0) as usize).min(rows.len().saturating_sub(1));
+        let dy=-((visual-draw_start as f32)*52.0).round() as i32;
         let group=R {h:if rows.is_empty() {list.h}else{rows.len().min(visible) as i32*52},..list};
         ui::surface(ctx,group,8.0,c(palette.paper),alpha(palette.border,160));
-        draw_process_pager(app,fonts,ctx,start,rows.len());
         for (hit,r) in process_controls(app) {
+            if matches!(hit, H::Rule(_) | H::Proc(_)) { continue; }
             match hit {
                 H::Enable => {
                     text(ctx,fonts,if app.process_block_enabled {"已启用"}else{"未启用"},R {w:r.w-54,..r},13.0,palette.muted);
@@ -622,20 +648,6 @@ pub fn draw_process(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
                     let visual=R {y:r.y+4,h:36,..r};
                     ui::surface(ctx,visual,6.0,c(palette.surface),c(if app.process_input_active {palette.accent_line}else{palette.border}));
                     text(ctx,fonts,if app.process_input.is_empty() {"按进程名或路径添加"}else{&app.process_input},R {x:r.x+10,w:r.w-20,..r},13.0,if app.process_input.is_empty(){palette.muted}else{palette.text});
-                }
-                H::Rule(i) | H::Proc(i) => {
-                    let key=if matches!(hit,H::Rule(_)) {ui::ProcessRow::Rule(i)}else{ui::ProcessRow::Proc(i)};
-                    let Some((_,label,detail))=rows.iter().find(|(row,_,_)|*row==key) else {continue};
-                    let selected=matches!(hit,H::Rule(_)) || app.process_scan.get(i).is_some_and(|proc|app.process_rules.iter().any(|rule|crate::process_block::matches(rule,proc)));
-                    if r.y>list.y+1 {ctx.stroke_line(((r.x+12) as f32,(r.y-1) as f32),((r.x+r.w-8) as f32,(r.y-1) as f32),alpha(palette.border,90),1.0);}
-                    let badge=R {x:r.x+12,y:r.y+13,w:24,h:24};
-                    ctx.fill_round(badge,6.0,c(if selected {palette.accent_light}else{palette.surface}));
-                    icons::draw(ctx,if selected {Glyph::Check}else{Glyph::Document},(badge.x+4) as f32,(badge.y+4) as f32,16.0,c(palette.muted),c(palette.muted));
-                    text(ctx,fonts,label,R {x:r.x+46,y:r.y+4,w:r.w-116,h:23},14.0,palette.text);
-                    text(ctx,fonts,detail,R {x:r.x+46,y:r.y+27,w:r.w-116,h:17},11.0,palette.muted);
-                    let action=R {x:r.x+r.w-60,y:r.y+11,w:52,h:28};
-                    ui::surface(ctx,action,5.0,c(palette.surface),alpha(palette.border,120));
-                    ctx.text_center(fonts,action,if selected {"移除"}else{"添加"},12.0,c(if selected {palette.danger}else{palette.text}));
                 }
                 H::ScrollUp | H::ScrollDown=>{},
                 H::Scan if r.w<60=>{
@@ -654,6 +666,23 @@ pub fn draw_process(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
                 }
             }
         }
+        for (hit, r) in process_control_rows(app, draw_start, dy, visible + 1) {
+            if r.y < list.y || r.y + r.h > list.y + list.h { continue; }
+            let i = match hit { H::Rule(i) | H::Proc(i) => i, _ => continue };
+            let key = if matches!(hit, H::Rule(_)) { ui::ProcessRow::Rule(i) } else { ui::ProcessRow::Proc(i) };
+            let Some((_, label, detail)) = rows.iter().find(|(row, _, _)| *row == key) else { continue };
+            let selected = matches!(hit, H::Rule(_)) || app.process_scan.get(i).is_some_and(|proc| app.process_rules.iter().any(|rule| crate::process_block::matches(rule, proc)));
+            if r.y > list.y + 1 { ctx.stroke_line(((r.x + 12) as f32, (r.y - 1) as f32), ((r.x + r.w - 8) as f32, (r.y - 1) as f32), alpha(palette.border, 90), 1.0); }
+            let badge = R { x: r.x + 12, y: r.y + 13, w: 24, h: 24 };
+            ctx.fill_round(badge, 6.0, c(if selected { palette.accent_light } else { palette.surface }));
+            icons::draw(ctx, if selected { Glyph::Check } else { Glyph::Document }, (badge.x + 4) as f32, (badge.y + 4) as f32, 16.0, c(palette.muted), c(palette.muted));
+            text(ctx, fonts, label, R { x: r.x + 46, y: r.y + 4, w: r.w - 116, h: 23 }, 14.0, palette.text);
+            text(ctx, fonts, detail, R { x: r.x + 46, y: r.y + 27, w: r.w - 116, h: 17 }, 11.0, palette.muted);
+            let action = R { x: r.x + r.w - 60, y: r.y + 11, w: 52, h: 28 };
+            ui::surface(ctx, action, 5.0, c(palette.surface), alpha(palette.border, 120));
+            ctx.text_center(fonts, action, if selected { "移除" } else { "添加" }, 12.0, c(if selected { palette.danger } else { palette.text }));
+        }
+        draw_process_pager(app, fonts, ctx, start, rows.len());
         if rows.is_empty() {
             let rules=app.settings_ui.process_view==state::ProcessView::Rules;
             let top=list.y+(list.h-48)/2;

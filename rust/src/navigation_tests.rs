@@ -11,7 +11,6 @@ impl Backend for TestBackend {
     fn fake_key(&self, _: Key) { self.keys.set(self.keys.get() + 1); }
     fn start_presentation(&self) -> bool { self.keys.set(self.keys.get() + 1); true }
     fn can_inject_keys_without_prompt(&self) -> bool { self.direct_keys }
-    fn virtual_right_click(&self, _: i32, _: i32) {}
     fn screenshot(&self) -> Option<(Vec<u8>, u32, u32)> { None }
     fn is_presentation_fullscreen(&self) -> bool { false }
     fn presentation_foreground(&self) -> Option<bool> { self.foreground }
@@ -767,6 +766,29 @@ fn collapsed_edge_tabs_stay_hidden_until_the_user_expands_them() {
             assert_eq!(ui::sidebar_rect(&app, right), expanded);
         }
     }
+}
+
+#[test]
+fn expanding_a_tucked_sidebar_reopens_drawing_tools_when_ink_exists() {
+    let (rt, mut app, _) = ui_fixture();
+    app.canvas.data_mut()[0..4].copy_from_slice(&[255, 0, 0, 255]);
+    app.page_has_ink = true;
+    app.mode = 1;
+    app.drawing_tools.set_expanded(true);
+    collapse_sidebars(&rt, &mut app);
+    assert!(app.collapsed);
+    assert!(!app.drawing_tools.expanded(), "tucking the sidebar folds the tools");
+    expand_sidebars(&rt, &mut app);
+    assert!(app.drawing_tools.expanded(), "ink must reopen the tools after expanding");
+
+    let (rt, mut app, _) = ui_fixture();
+    app.canvas.data_mut().fill(0);
+    app.page_has_ink = false;
+    app.mode = 1;
+    app.drawing_tools.set_expanded(true);
+    collapse_sidebars(&rt, &mut app);
+    expand_sidebars(&rt, &mut app);
+    assert!(!app.drawing_tools.expanded(), "a blank page keeps the tools folded");
 }
 
 #[test]

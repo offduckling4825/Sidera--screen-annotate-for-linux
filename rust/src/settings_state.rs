@@ -101,7 +101,11 @@ pub struct State {
     pub autostart: bool,
     pub inspector: Inspector,
     pub inspector_page: usize,
+    pub inspector_page_from: usize,
+    pub inspector_page_at: i64,
     pub process_view: ProcessView,
+    pub process_scroll_from: f32,
+    pub process_scroll_at: i64,
     pub recent: Vec<u32>,
     pub toast: String,
     pub toast_until: i64,
@@ -141,9 +145,29 @@ impl State {
     pub fn palette(&self, target: Palette) -> Palette {
         self.theme_from.map(|(from, start)| from.blend(target, ease(start, 220))).unwrap_or(target)
     }
+    pub fn begin_inspector_page(&mut self, from: usize) {
+        self.inspector_page_from = from;
+        self.inspector_page_at = now_ms();
+    }
+    /// Current page and the progress (0..1) of a vertical page slide.
+    pub fn inspector_slide(&self, page: usize) -> Option<(usize, f32)> {
+        if self.inspector_page_at == 0 || self.inspector_page_from == page { return None; }
+        let t = ease(self.inspector_page_at, 140);
+        (t < 1.0).then_some((self.inspector_page_from, t))
+    }
+    pub fn begin_process_scroll(&mut self, from: f32) {
+        self.process_scroll_from = from;
+        self.process_scroll_at = now_ms();
+    }
+    pub fn process_scroll_visual(&self, target: usize) -> f32 {
+        let target = target as f32;
+        if self.process_scroll_at == 0 { return target; }
+        self.process_scroll_from + (target - self.process_scroll_from) * ease(self.process_scroll_at, 140)
+    }
     pub fn animating(&self) -> bool {
         let now = now_ms();
-        [self.tab_at, self.opened_at, self.overlay_at, self.overlay_closing_at, self.closing_at]
+        [self.tab_at, self.opened_at, self.overlay_at, self.overlay_closing_at, self.closing_at,
+            self.inspector_page_at, self.process_scroll_at]
             .iter().any(|start| *start > 0 && now - *start <= 230)
             || self.theme_from.is_some_and(|(_, start)| now - start <= 230)
             || self.toggle.is_some_and(|(_, _, start)| now - start <= 180)

@@ -43,8 +43,8 @@ use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP,
-    MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEINPUT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
+    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+    MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
     RegisterHotKey, ReleaseCapture, SendInput, SetCapture, UnregisterHotKey, VK_DOWN, VK_ESCAPE, VK_F5, VK_SHIFT,
     VK_UP, GetKeyState, SetFocus, VK_CONTROL, VK_MENU,
 };
@@ -59,7 +59,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetWindowTextW, GetWindowThreadProcessId,
     GetWindowLongPtrW, HTCLIENT, HTTRANSPARENT, HWND_TOPMOST, IDC_ARROW, IDI_APPLICATION,
     LoadCursorW, LoadIconW, LoadImageW, MF_STRING, MSG, PM_REMOVE, PeekMessageW,
-    PostMessageW, PostQuitMessage, RegisterClassW, SetCursorPos, SetForegroundWindow,
+    PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow,
     TrackPopupMenu, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
     SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN,
     SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
@@ -701,7 +701,14 @@ impl Win32Plat {
                 Some(0)
             }
             WM_ERASEBKGND => Some(1),
-            WM_SIZE => { self.enqueue(WinEvent::SettingsResized); Some(0) }
+            WM_SIZE => {
+                // SIZE_MINIMIZED behaves like closing: the overlay ignores input
+                // while the native settings window exists, so keeping it open
+                // while iconified would leave the sidebar unreachable.
+                if wparam as u32 == 1 { self.enqueue(WinEvent::SettingsClose); }
+                else { self.enqueue(WinEvent::SettingsResized); }
+                Some(0)
+            }
             WM_CLOSE => { self.enqueue(WinEvent::SettingsClose); Some(0) }
             WM_DESTROY => { self.enqueue(WinEvent::SettingsClose); Some(0) }
             WM_MOUSEMOVE => {
@@ -1209,20 +1216,6 @@ impl Backend for Win32Plat {
         true
     }
 
-    fn virtual_right_click(&self, x: i32, y: i32) {
-        let px = self.origin.get().0 + (x as f64 * self.scale.get()).round() as i32;
-        let py = self.origin.get().1 + (y as f64 * self.scale.get()).round() as i32;
-        unsafe {
-            SetCursorPos(px, py);
-            send_mouse(MOUSEEVENTF_RIGHTDOWN);
-            send_mouse(MOUSEEVENTF_RIGHTUP);
-        }
-    }
-
-    fn can_forward_right_click(&self) -> bool {
-        true
-    }
-
     fn screenshot(&self) -> Option<(Vec<u8>, u32, u32)> {
         unsafe {
             let screen = GetDC(null_mut());
@@ -1433,22 +1426,6 @@ unsafe fn send_keys(keys: &[(u16, bool)]) {
     }
 }
 
-unsafe fn send_mouse(flags: u32) {
-    let input = INPUT {
-        r#type: INPUT_MOUSE,
-        Anonymous: INPUT_0 {
-            mi: MOUSEINPUT {
-                dx: 0,
-                dy: 0,
-                mouseData: 0,
-                dwFlags: flags,
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
-    };
-    SendInput(1, &input, size_of::<INPUT>() as i32);
-}
 
 unsafe fn load_tray_icon() -> (HICON, bool) {
     if let Ok(exe) = std::env::current_exe() {

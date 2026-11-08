@@ -199,8 +199,6 @@ impl Backend for GnomePlat {
         self.command(json!({"type":"key", "key":"StartShow"}));
         true
     }
-    fn virtual_right_click(&self, x: i32, y: i32) { self.command(json!({"type":"rightClick", "x":x, "y":y})); }
-    fn can_forward_right_click(&self) -> bool { true }
     fn set_text_input(&self, on: bool) { self.command(json!({"type":"text_input", "enabled":on})); }
     fn set_input_region(&self, rects: &[IRect], full: bool) {
         let old = self.input.borrow();

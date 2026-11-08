@@ -1,6 +1,6 @@
 // ============================================================
 // Sidera - X11 后端封装（x11rb，纯 Rust，不需要 libX11/libXtst）
-// 覆盖：ARGB 覆盖层窗口、XShape 输入穿透、XTest 假键/虚拟右键、
+// 覆盖：ARGB 覆盖层窗口、XShape 输入穿透、XTest 假键、
 //       全局热键、WPS 全屏检测、截图、合成器检测
 // ============================================================
 use x11rb::connection::Connection;
@@ -26,6 +26,19 @@ pub const XK_F5: u32 = 0xffc2;
 pub const XK_SHIFT_L: u32 = 0xffe1;
 pub const XK_BACKSPACE: u32 = 0xff08;
 pub const XK_RETURN: u32 = 0xff0d;
+
+/// Snap ratios that are within 8% of an integer back to it. UKUI and similar
+/// themes can report a slightly off Xft.dpi while the desktop is at 100%,
+/// which would otherwise apply a fractional scale and soften every glyph.
+pub(crate) fn normalize_scale(scale: f64) -> f64 {
+    let scale = scale.clamp(1.0, 4.0);
+    let whole = scale.round();
+    if (scale - whole).abs() <= 0.08 * whole {
+        whole.clamp(1.0, 4.0)
+    } else {
+        scale
+    }
+}
 
 pub struct X11 {
     pub conn: RustConnection,
@@ -457,40 +470,6 @@ impl X11 {
         let _ = self.conn.flush();
     }
 
-    pub fn virtual_right_click(&self, x: i32, y: i32) {
-        let _ = xtest::fake_input(
-            &self.conn,
-            xproto::MOTION_NOTIFY_EVENT,
-            0,
-            0,
-            self.root,
-            x as i16,
-            y as i16,
-            0,
-        );
-        let _ = xtest::fake_input(
-            &self.conn,
-            xproto::BUTTON_PRESS_EVENT,
-            3,
-            0,
-            self.root,
-            x as i16,
-            y as i16,
-            0,
-        );
-        let _ = xtest::fake_input(
-            &self.conn,
-            xproto::BUTTON_RELEASE_EVENT,
-            3,
-            0,
-            self.root,
-            x as i16,
-            y as i16,
-            0,
-        );
-        let _ = self.conn.flush();
-    }
-
     /// 抓取 Ctrl+Shift+D 全局热键（含 NumLock/CapsLock 组合）
     pub fn grab_hotkey(&self) -> bool {
         if self.key_d == 0 {
@@ -519,30 +498,40 @@ impl X11 {
     }
 
     /// 检测 X11 设备缩放（逻辑像素 → 物理像素的比例）。
-    /// 优先 SIDERA_SCALE 覆盖，其次根窗口 Xft.dpi，再退回 QT/GDK 环境变量。
+    /// 优先 SIDERA_SCALE 覆盖，其次显式工具包缩放，再退回根窗口 Xft.dpi。
+    /// 部分桌面（如 UKUI）在 100% 下也会报告略高于 96 的 Xft.dpi；接近整数
+    /// 的比例会吸附到整数，避免无意义的分数缩放让界面发虚。
     pub fn detect_scale(&self) -> f64 {
         if let Ok(v) = std::env::var("SIDERA_SCALE") {
             if let Ok(f) = v.parse::<f64>() {
                 if f > 0.1 {
-                    return f.clamp(1.0, 4.0);
+                    return normalize_scale(f);
+                }
+            }
+        }
+        let mut candidate = 1.0_f64;
+        for key in ["QT_SCALE_FACTOR", "GDK_SCALE"] {
+            if let Ok(v) = std::env::var(key) {
+                if let Ok(f) = v.parse::<f64>() {
+                    if f > 0.1 {
+                        candidate = candidate.max(f);
+                    }
                 }
             }
         }
         if let Ok(dpi) = self.xft_dpi() {
             if dpi > 1.0 {
-                return (dpi / 96.0).clamp(1.0, 4.0);
+                candidate = candidate.max(dpi / 96.0);
             }
         }
-        for key in ["QT_SCALE_FACTOR", "GDK_SCALE"] {
-            if let Ok(v) = std::env::var(key) {
-                if let Ok(f) = v.parse::<f64>() {
-                    if f > 0.1 {
-                        return f.clamp(1.0, 4.0);
-                    }
+        if let Ok(v) = std::env::var("GDK_DPI_SCALE") {
+            if let Ok(f) = v.parse::<f64>() {
+                if f > 0.1 {
+                    candidate = candidate.max(f);
                 }
             }
         }
-        1.0
+        normalize_scale(candidate)
     }
 
     /// 读取根窗口 RESOURCE_MANAGER 里的 Xft.dpi
@@ -1125,20 +1114,10 @@ impl crate::backend::Backend for X11Plat {
         // Xwayland 的 XTEST 可能经 libei 请求 RemoteDesktop 权限。
         !self.x11.is_xwayland || self.key_injector.borrow().is_some()
     }
-    fn virtual_right_click(&self, x: i32, y: i32) {
-        // Xwayland XTEST can start a RemoteDesktop authorization request.
-        if self.x11.is_xwayland { return; }
-        let sc = self.scale.get();
-        self.x11.virtual_right_click(
-            ((x as f64) * sc).round() as i32,
-            ((y as f64) * sc).round() as i32,
-        );
-    }
     fn screenshot(&self) -> Option<(Vec<u8>, u32, u32)> {
         // Xwayland's root image omits native Wayland windows. Use Screenshot portal.
         if self.x11.is_xwayland { None } else { self.x11.screenshot() }
     }
-    fn can_forward_right_click(&self) -> bool { !self.x11.is_xwayland }
     fn description(&self) -> &'static str {
         if self.x11.is_xwayland { "XWayland 兼容模式" } else { "原生 X11" }
     }
@@ -1171,6 +1150,18 @@ mod presentation_tests {
 
     const CASES: &str =
         include_str!("../../compat/gnome-extension/tests/wps-presentation-cases.json");
+
+    #[test]
+    fn scale_noise_snaps_to_integer_without_losing_fractional_scaling() {
+        assert_eq!(super::normalize_scale(1.0), 1.0);
+        assert_eq!(super::normalize_scale(1.0417), 1.0);
+        assert_eq!(super::normalize_scale(1.0625), 1.0);
+        assert_eq!(super::normalize_scale(1.25), 1.25);
+        assert_eq!(super::normalize_scale(1.5), 1.5);
+        assert_eq!(super::normalize_scale(2.0), 2.0);
+        assert_eq!(super::normalize_scale(0.5), 1.0);
+        assert_eq!(super::normalize_scale(9.0), 4.0);
+    }
 
     #[test]
     fn shared_wps_presentation_vectors_match_the_gnome_extension() {

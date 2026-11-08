@@ -481,30 +481,6 @@ fn run_application() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // 调试：验证 XTest 指针移动是否生效（判断 XWayland 下能否注入事件）
-    if std::env::var("SIDERA_TEST_XTEST").is_ok() {
-        use x11rb::protocol::xproto;
-        let before = xproto::query_pointer(&x11.conn, x11.root)
-            .ok()
-            .and_then(|c| c.reply().ok());
-        x11.virtual_right_click(123, 456); // 内部会先 fake motion
-        std::thread::sleep(Duration::from_millis(300));
-        let after = xproto::query_pointer(&x11.conn, x11.root)
-            .ok()
-            .and_then(|c| c.reply().ok());
-        if let (Some(b), Some(a)) = (before, after) {
-            log::info!(
-                "[XTEST] pointer before=({},{}) after=({},{})",
-                b.root_x,
-                b.root_y,
-                a.root_x,
-                a.root_y
-            );
-        }
-        x11.destroy_window(win);
-        return Ok(());
-    }
-
     // Shared, non-blocking startup card; the normal event loop drives its exit.
     begin_launch(&rt, &mut app);
 

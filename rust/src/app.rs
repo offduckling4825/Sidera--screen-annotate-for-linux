@@ -9,7 +9,7 @@ use crate::page_cache::PageCache;
 use tiny_skia::{Color, Pixmap};
 
 // ---------------- 常量（与原 C++ app.h 对齐） ----------------
-pub const VERSION: &str = "3.2-Electro.rc";
+pub const VERSION: &str = "3.2-Electro-rc.2";
 // 侧边栏基准尺寸（与 C++ 版对齐：56/34/24/19；可在设置里用「侧边栏大小」缩放）
 pub const SB_BASE_W: f64 = 56.0;
 pub const SB_BASE_BTN: f64 = 34.0;
@@ -47,8 +47,8 @@ pub const COLORS: [(u8, u8, u8); 10] = [
     (0xFF, 0x6D, 0x00),
     (0, 0, 0),
 ];
-pub const PEN_SIZES: [i32; 3] = [3, 5, 10];
-pub const ERASER_SIZES: [i32; 3] = [30, 60, 80];
+pub const PEN_SIZES: [i32; 4] = [2, 3, 5, 10];
+pub const ERASER_SIZES: [i32; 4] = [20, 30, 60, 80];
 
 pub fn now_ms() -> i64 {
     use std::sync::OnceLock;
@@ -176,7 +176,6 @@ pub struct App {
     // 手掌/大触点橡皮
     pub palm_erase_preview: Vec<(i32, i32)>,
     pub palm_erase_w: i32,
-    pub right_click_cursor_on: bool,
     pub large_touch_threshold: f64,
     pub large_erase_scale10: i32,
 
@@ -273,8 +272,8 @@ impl App {
             sidebar_anim_from: 0.0,
             sidebar_collapsed_since: None,
             cur_color: 0,
-            cur_pen: 1,
-            cur_eraser: 1,
+            cur_pen: 2,
+            cur_eraser: 2,
             is_drawing: false,
             last_pt: (0, 0),
             stroke_start_ms: 0,
@@ -308,7 +307,6 @@ impl App {
             wb_limit_msg_until: 0,
             palm_erase_preview: Vec::new(),
             palm_erase_w: PALM_ERASE_WIDTH,
-            right_click_cursor_on: true,
             large_touch_threshold: DEFAULT_LARGE_TOUCH_THRESHOLD,
             large_erase_scale10: DEFAULT_LARGE_ERASE_SCALE10,
             t_prev_pos: HashMap::new(),
@@ -848,6 +846,9 @@ fn load_main_settings(app: &mut App) {
 }
 
 fn parse_settings(app: &mut App, content: &str) {
+    // Earlier builds stored the three eraser widths [30,60,80] by index. This
+    // build prepends a 20px tier, so legacy files must shift their index once.
+    let legacy_eraser_index = !content.lines().any(|line| line.trim().starts_with("configVersion="));
     for line in content.lines() {
         let line = line.trim();
         let Some(eq) = line.find('=') else { continue };
@@ -882,7 +883,6 @@ fn parse_settings(app: &mut App, content: &str) {
                     app.sidebar_alpha = n.clamp(30, 255) as u8;
                 }
             }
-            "rightClickCursor" => app.right_click_cursor_on = v == "1",
             "whiteboardDots" => app.whiteboard_dots = v == "1",
             "whiteboardDotSize" => {
                 if let Ok(n) = v.parse::<i32>() { app.whiteboard_dot_size = n.clamp(1, 10); }
@@ -891,7 +891,10 @@ fn parse_settings(app: &mut App, content: &str) {
             // Pen choices last only for this session; ignore values saved by older versions.
             "penColor" | "penSize" => {}
             "eraserSize" => {
-                if let Ok(n) = v.parse::<usize>() { app.cur_eraser = n.min(ERASER_SIZES.len() - 1); }
+                if let Ok(n) = v.parse::<usize>() {
+                    let n = if legacy_eraser_index { n.saturating_add(1) } else { n };
+                    app.cur_eraser = n.min(ERASER_SIZES.len() - 1);
+                }
             }
             "largeTouchThreshold" => {
                 if let Ok(n) = v.parse::<i32>() {
@@ -926,14 +929,13 @@ pub fn save_settings(app: &App) {
 
 fn serialize_settings(app: &App) -> String {
     format!(
-        "wpsDebug={}\nwpsTestMode={}\nstartupDelay={}\nsidebarExpandMinutes={}\nsbScale={:.2}\nsidebarAlpha={}\nrightClickCursor={}\nwhiteboardDots={}\nwhiteboardDotSize={}\nprocessBlock={}\neraserSize={}\nlargeTouchThreshold={}\nlargeEraseScale10={}\ntheme={}\nthemeAccent={}\n",
+        "configVersion=2\nwpsDebug={}\nwpsTestMode={}\nstartupDelay={}\nsidebarExpandMinutes={}\nsbScale={:.2}\nsidebarAlpha={}\nwhiteboardDots={}\nwhiteboardDotSize={}\nprocessBlock={}\neraserSize={}\nlargeTouchThreshold={}\nlargeEraseScale10={}\ntheme={}\nthemeAccent={}\n",
         1,
         1,
         app.startup_delay,
         app.sidebar_expand_minutes.clamp(1,20),
         app.sb_scale,
         app.sidebar_alpha,
-        if app.right_click_cursor_on { 1 } else { 0 },
         if app.whiteboard_dots { 1 } else { 0 },
         app.whiteboard_dot_size,
         if app.process_block_enabled { 1 } else { 0 },
@@ -1305,11 +1307,17 @@ mod theme_tests {
         assert!(!saved.contains("penColor=") && !saved.contains("penSize="));
         parse_settings(&mut loaded, &saved);
         assert_eq!(loaded.cur_color, 0);
-        assert_eq!(loaded.cur_pen, 1);
+        assert_eq!(loaded.cur_pen, 2);
         assert_eq!(loaded.cur_eraser, 0);
         parse_settings(&mut loaded, "penColor=5\npenSize=2\n");
         assert_eq!(loaded.cur_color, 0);
-        assert_eq!(loaded.cur_pen, 1);
+        assert_eq!(loaded.cur_pen, 2);
+        // Legacy indexes referred to [30,60,80]; they shift by one for the 20px tier.
+        for (legacy, expected) in [("0", 1), ("1", 2), ("2", 3)] {
+            let mut app = App::new(Pixmap::new(10, 10).unwrap(), 10, 10);
+            parse_settings(&mut app, &format!("eraserSize={legacy}\n"));
+            assert_eq!(app.cur_eraser, expected, "legacy eraserSize={legacy}");
+        }
     }
 
     #[test]

@@ -1,6 +1,7 @@
 Name:           sidera
 Version:        3.2
-Release:        Electro.rc
+# RPM 的 Version/Release 字段用 '-' 分隔，故用 '.' 表示 rc.2。
+Release:        Electro.rc.2
 Summary:        Linux 屏幕批注与教学演示工具（Rust，X11/Wayland，WPS 联动）
 
 License:        GPL-3.0-only

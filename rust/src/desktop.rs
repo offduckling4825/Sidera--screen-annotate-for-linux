@@ -115,7 +115,7 @@ struct Controls {
     mode: i32, saved_mode: i32, collapsed: bool, whiteboard: bool, whiteboard_bg: i32,
     drawing_tools: bool, saved_drawing_tools: bool,
     page: i32, color: usize, pen: usize, eraser: usize, wps: bool, wps_test: bool, linked_show: bool,
-    alpha: u8, scale: f64, right_click: bool,
+    alpha: u8, scale: f64,
     sidebar_expand_minutes: u32,
     recent_colors: Vec<u32>,
     threshold: f64, erase_scale: i32,
@@ -129,7 +129,6 @@ impl Controls {
             color: app.cur_color, pen: app.cur_pen, eraser: app.cur_eraser,
             wps: app.wps_debug, wps_test: app.wps_test_mode, alpha: app.sidebar_alpha, scale: app.sb_scale,
             linked_show: app.wps_debug && app.wps_connected && app.wps_real_pos > 0,
-            right_click: app.right_click_cursor_on,
             sidebar_expand_minutes: app.sidebar_expand_minutes,
             recent_colors: app.settings_ui.recent.clone(),
             theme: app.theme,
@@ -158,7 +157,6 @@ impl Controls {
         a.sidebar_alpha = self.alpha; a.sb_scale = self.scale;
         a.sidebar_expand_minutes = self.sidebar_expand_minutes;
         a.settings_ui.recent.clone_from(&self.recent_colors);
-        a.right_click_cursor_on = self.right_click;
         a.large_touch_threshold = self.threshold; a.large_erase_scale10 = self.erase_scale;
         crate::apply_input_shape(&output.rt, a);
         output.rt.redraw_full(a);

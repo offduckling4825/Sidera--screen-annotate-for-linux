@@ -37,7 +37,7 @@ impl Window {
                 Err(error) => log::info!("原生设置窗口不可用：{error}"),
             }
         }
-        Ok(Rc::new(Self::X11(Box::new(X11Window::open(app)?))))
+        Ok(Rc::new(Self::X11(Box::new(X11Window::open(app, rt.backend.device_pixel_ratio())?))))
     }
 
     pub(crate) fn raise(&self) {
@@ -84,6 +84,9 @@ pub(crate) struct X11Window {
     scale: f64,
     protocols: Atom,
     delete: Atom,
+    wm_state: Atom,
+    net_wm_state: Atom,
+    hidden: Atom,
     dirty: Cell<bool>,
     frame: RefCell<Option<Pixmap>>,
 }
@@ -103,9 +106,9 @@ fn pointer_monitor(x11: &X11) -> Option<(i32, i32, i32, i32)> {
 }
 
 impl X11Window {
-    fn open(app: &App) -> XResult<Self> {
+    fn open(app: &App, scale: f64) -> XResult<Self> {
         let x11 = X11::connect()?;
-        let scale = x11.detect_scale();
+        let scale = crate::x11::normalize_scale(scale);
         let pixels = |logical: i32| (f64::from(logical) * scale).round() as i32;
         let (mon_x, mon_y, mon_w, mon_h) = pointer_monitor(&x11)
             .unwrap_or((0, 0, x11.width, x11.height));
@@ -120,6 +123,9 @@ impl X11Window {
         };
         let protocols = atom(b"WM_PROTOCOLS")?;
         let delete = atom(b"WM_DELETE_WINDOW")?;
+        let wm_state = atom(b"WM_STATE")?;
+        let net_wm_state = atom(b"_NET_WM_STATE")?;
+        let hidden = atom(b"_NET_WM_STATE_HIDDEN")?;
         let net_name = atom(b"_NET_WM_NAME")?;
         let net_type = atom(b"_NET_WM_WINDOW_TYPE")?;
         let net_type_dialog = atom(b"_NET_WM_WINDOW_TYPE_DIALOG")?;
@@ -135,6 +141,7 @@ impl X11Window {
                 .background_pixel(0xff000000 | app.palette().paper)
                 .border_pixel(0)
                 .event_mask(EventMask::EXPOSURE | EventMask::STRUCTURE_NOTIFY
+                    | EventMask::PROPERTY_CHANGE
                     | EventMask::FOCUS_CHANGE | EventMask::KEY_PRESS | EventMask::BUTTON_PRESS
                     | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION | EventMask::LEAVE_WINDOW),
         )?.check()?;
@@ -172,9 +179,31 @@ impl X11Window {
         x11.conn.flush()?;
         Ok(Self {
             x11, id, gc, size: Cell::new((width as u16, height as u16)), scale,
-            protocols, delete, dirty: Cell::new(true),
+            protocols, delete, wm_state, net_wm_state, hidden, dirty: Cell::new(true),
             frame: RefCell::new(None),
         })
+    }
+
+    /// Minimised/withdrawn settings must behave like a closed window: while the
+    /// native window exists the overlay deliberately refuses all input, so an
+    /// iconified window would leave the sidebar permanently unusable.
+    fn is_iconified(&self) -> bool {
+        let iconic = || -> Option<u32> {
+            let reply = xproto::get_property(&self.x11.conn, false, self.id,
+                self.wm_state, AtomEnum::ANY, 0, 2).ok()?.reply().ok()?;
+            let state = reply.value32()?.next();
+            state
+        };
+        if iconic() == Some(3) { // IconicState
+            return true;
+        }
+        let hidden = || -> Option<bool> {
+            let reply = xproto::get_property(&self.x11.conn, false, self.id,
+                self.net_wm_state, AtomEnum::ATOM, 0, 16).ok()?.reply().ok()?;
+            let hidden = reply.value32()?.any(|atom| atom == self.hidden);
+            Some(hidden)
+        };
+        hidden() == Some(true)
     }
 
     fn raise(&self) {
@@ -234,6 +263,16 @@ impl X11Window {
                 Event::ClientMessage(event) if event.type_ == self.protocols
                     && event.data.as_data32()[0] == self.delete => Close,
                 Event::DestroyNotify(_) => Close,
+                // Iconify/withdraw is reported as UnmapNotify plus a WM_STATE or
+                // _NET_WM_STATE_HIDDEN update. Treat it as closing so the
+                // overlay's input region is restored for the sidebar.
+                Event::UnmapNotify(_) => {
+                    if self.is_iconified() { Close } else { continue }
+                }
+                Event::PropertyNotify(event) if event.atom == self.wm_state
+                    || event.atom == self.net_wm_state => {
+                    if self.is_iconified() { Close } else { continue }
+                }
                 Event::ConfigureNotify(event) => {
                     let size = (event.width, event.height);
                     if self.size.replace(size) == size { continue; }

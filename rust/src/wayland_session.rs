@@ -92,7 +92,7 @@ impl WlState {
         let platform = WlPlat { compositor: self.compositor.clone(), layer: layer.clone(),conn:self.conn.clone(),qh:qh.clone(),
             frames:RefCell::new(ShmFrames::new(&self.shm)),logical:Cell::new((0,0)),dims:Cell::new((0,0)),scale:Cell::new(scale),
             viewport:RefCell::new(viewport),uinput:self.uinput.clone(),back:RefCell::new(Pixmap::new(1,1).unwrap()),
-            vk:self.vk.clone(),pointer:RefCell::new(None),pending_click:Cell::new(None),dirty:Cell::new(None),input_dirty:Cell::new(false) };
+            vk:self.vk.clone(),pointer:RefCell::new(None),dirty:Cell::new(None),input_dirty:Cell::new(false) };
         self.desktop.add(id.clone(),Box::new(platform));
         self.surfaces.push(OutputSurface {id,output,surface,fractional});
         // No input or pixels before the compositor acknowledges the layer size.

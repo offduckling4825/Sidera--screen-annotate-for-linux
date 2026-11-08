@@ -44,9 +44,6 @@ pub trait Backend: 'static {
     fn can_inject_keys_without_prompt(&self) -> bool {
         false
     }
-    /// 在 (x,y) 注入一次鼠标右键
-    fn virtual_right_click(&self, x: i32, y: i32);
-    fn can_forward_right_click(&self) -> bool { false }
     /// 全屏截图，返回 RGBA
     fn screenshot(&self) -> Option<(Vec<u8>, u32, u32)>;
     /// 后端自己处理异步截图；true 表示请求已受理。

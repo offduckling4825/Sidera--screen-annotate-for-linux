@@ -72,7 +72,6 @@ pub enum SetHit {
     WpsRegister,
     ProcessBlock,
     ThemeAccent,
-    RightClick,
     ClearLog,
     SysInfo,
     Quit,
@@ -264,12 +263,12 @@ pub fn control_rect(app: &App, control: Control) -> Option<R> {
             let p = pen_popup_rect(app);
             Some(R { x: p.x + 16 + (i % 4) as i32 * 48, y: p.y + 46 + (i / 4) as i32 * 48, w: 38, h: 38 })
         }
-        Control::Popup(PopupHit::PenSize(i)) if app.pen_popup_visible && i < 3 => {
-            let p = pen_popup_rect(app); let bw = (p.w - 52) / 3;
+        Control::Popup(PopupHit::PenSize(i)) if app.pen_popup_visible && i < crate::app::PEN_SIZES.len() => {
+            let p = pen_popup_rect(app); let bw = tier_button_width(p.w, crate::app::PEN_SIZES.len());
             Some(R { x: p.x + 16 + i as i32 * (bw + 10), y: p.y + 214, w: bw, h: 48 })
         }
-        Control::Popup(PopupHit::EraserSize(i)) if app.eraser_popup_visible && i < 3 => {
-            let p = eraser_popup_rect(app); let bw = (p.w - 52) / 3;
+        Control::Popup(PopupHit::EraserSize(i)) if app.eraser_popup_visible && i < crate::app::ERASER_SIZES.len() => {
+            let p = eraser_popup_rect(app); let bw = tier_button_width(p.w, crate::app::ERASER_SIZES.len());
             Some(R { x: p.x + 16 + i as i32 * (bw + 10), y: p.y + 46, w: bw, h: 48 })
         }
         Control::Popup(PopupHit::ClearAll) if app.eraser_popup_visible => {
@@ -627,8 +626,13 @@ pub fn page_picker_hit(app: &App, x: i32, y: i32) -> Option<PagePickerHit> {
         .find(|hit| page_picker_control_rect(app, *hit).contains(x, y))
 }
 
+fn tier_button_width(popup_w: i32, tiers: usize) -> i32 {
+    let gaps = 10 * (tiers.max(1) as i32 - 1);
+    (popup_w - 32 - gaps) / tiers.max(1) as i32
+}
+
 pub fn pen_popup_rect(app: &App) -> R {
-    let w = 260;
+    let w = 296;
     let h = 286;
     let sb = sidebar_rect(app, app.popup_on_right);
     let x = if app.popup_on_right {
@@ -646,7 +650,7 @@ pub fn pen_popup_rect(app: &App) -> R {
 }
 
 pub fn eraser_popup_rect(app: &App) -> R {
-    let w = 280;
+    let w = 308;
     let h = 184;
     let sb = sidebar_rect(app, app.popup_on_right);
     let x = if app.popup_on_right {
@@ -708,12 +712,13 @@ pub fn pen_popup_hit(app: &App, x: i32, y: i32) -> Option<PopupHit> {
         }
     }
     let sy = p.y + 214;
-    let bw = (p.w - 32 - 20) / 3;
-    for i in 0..3 {
+    let tiers = crate::app::PEN_SIZES.len();
+    let bw = tier_button_width(p.w, tiers);
+    for i in 0..tiers {
         let bx = p.x + 16 + i as i32 * (bw + 10);
         let rr = R { x: bx, y: sy, w: bw, h: 48 };
         if rr.contains(x, y) {
-            return Some(PopupHit::PenSize(i as usize));
+            return Some(PopupHit::PenSize(i));
         }
     }
     None
@@ -725,12 +730,13 @@ pub fn eraser_popup_hit(app: &App, x: i32, y: i32) -> Option<PopupHit> {
         return None;
     }
     let sy = p.y + 46;
-    let bw = (p.w - 32 - 20) / 3;
-    for i in 0..3 {
+    let tiers = crate::app::ERASER_SIZES.len();
+    let bw = tier_button_width(p.w, tiers);
+    for i in 0..tiers {
         let bx = p.x + 16 + i as i32 * (bw + 10);
         let rr = R { x: bx, y: sy, w: bw, h: 48 };
         if rr.contains(x, y) {
-            return Some(PopupHit::EraserSize(i as usize));
+            return Some(PopupHit::EraserSize(i));
         }
     }
     let cy = p.y + 110;
@@ -1520,7 +1526,10 @@ fn draw_btn(app: &App, fonts: &Fonts, ctx: &mut Ctx, k: Btn, r: R) {
             };
             // 21 / 24 / 27 logical pixels at default scale: visible size cues,
             // with a fixed centre and fixed hit target at every toolbar scale.
-            let factor = if k == Btn::Eraser { [0.88, 1.0, 1.12][app.cur_eraser.min(2)] } else { 1.0 };
+            let factor = if k == Btn::Eraser {
+                let last = (crate::app::ERASER_SIZES.len() - 1).max(1) as f32;
+                0.86 + 0.26 * app.cur_eraser.min(crate::app::ERASER_SIZES.len() - 1) as f32 / last
+            } else { 1.0 };
             let size = (app.sb_icon() as f32 * factor).min(r.w.min(r.h) as f32 * 0.82);
             let x = r.x as f32 + (r.w as f32 - size) / 2.0;
             let y = r.y as f32 + (r.h as f32 - size) / 2.0;
@@ -1667,11 +1676,13 @@ fn draw_pen_popup(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
     ctx.text(fonts, names[app.cur_color.min(9)], (p.x + 124) as f32, (p.y + 177) as f32, 20.0, c(palette.text));
     let sy = p.y + 214;
     ctx.text(fonts, "画笔粗细", (p.x + 16) as f32, (sy - 14) as f32, 19.0, c(palette.muted));
-    let bw = (p.w - 52) / 3;
-    for (i, label) in ["细 3", "中 5", "粗 10"].iter().enumerate() {
+    let tiers = crate::app::PEN_SIZES.len();
+    let bw = tier_button_width(p.w, tiers);
+    for i in 0..tiers {
         let r = R { x: p.x + 16 + i as i32 * (bw + 10), y: sy, w: bw, h: 48 };
         choice(ctx, r, i == app.cur_pen);
-        ctx.text_center(fonts, R { h: 28, ..r }, label, 18.0, c(palette.text));
+        let label = crate::app::PEN_SIZES[i].to_string();
+        ctx.text_center(fonts, R { h: 28, ..r }, &label, 18.0, c(palette.text));
         let a = ((r.x + r.w / 2 - 12) as f32, (r.y + 36) as f32);
         let b = ((r.x + r.w / 2 + 12) as f32, (r.y + 36) as f32);
         let width = crate::app::PEN_SIZES[i] as f32;
@@ -1687,17 +1698,19 @@ fn draw_eraser_popup(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
     panel(ctx, p, 16.0, t);
     if t < 0.02 { return; }
     ctx.text(fonts, "橡皮大小", (p.x + 16) as f32, (p.y + 32) as f32, 21.0, c(palette.text));
-    let size = [22.0, 27.0, 32.0][app.cur_eraser.min(2)];
+    let size = 20.0 + crate::app::ERASER_SIZES[app.cur_eraser.min(crate::app::ERASER_SIZES.len() - 1)] as f32 * 0.15;
     icons::draw(ctx, Glyph::Eraser, p.x as f32 + p.w as f32 - 30.0 - size / 2.0,
         p.y as f32 + 24.0 - size / 2.0, size, c(palette.text), c(palette.eraser));
-    let bw = (p.w - 52) / 3;
-    for (i, label) in ["小 30", "中 60", "大 80"].iter().enumerate() {
+    let tiers = crate::app::ERASER_SIZES.len();
+    let bw = tier_button_width(p.w, tiers);
+    for i in 0..tiers {
         let r = R { x: p.x + 16 + i as i32 * (bw + 10), y: p.y + 46, w: bw, h: 48 };
         choice(ctx, r, i == app.cur_eraser);
-        let size = [20.0, 25.0, 30.0][i];
+        let size = 16.0 + crate::app::ERASER_SIZES[i] as f32 * 0.16;
         icons::draw(ctx, Glyph::Eraser, r.x as f32 + 19.0 - size / 2.0, r.y as f32 + 24.0 - size / 2.0,
             size, c(palette.text), c(palette.eraser));
-        ctx.text_center(fonts, R { x: r.x + 33, w: r.w - 37, ..r }, label, 18.0, c(palette.text));
+        let label = crate::app::ERASER_SIZES[i].to_string();
+        ctx.text_center(fonts, R { x: r.x + 33, w: r.w - 37, ..r }, &label, 18.0, c(palette.text));
     }
     let r = R { x: p.x + 16, y: p.y + 110, w: p.w - 32, h: 48 };
     surface(ctx, r, 10.0, c(palette.danger_light), alpha(palette.danger, 75));
@@ -1826,7 +1839,6 @@ mod tests {
                 }
                 for expected in [SetHit::Autostart,
                     SetHit::WpsRemove, SetHit::WpsRegister, SetHit::ProcessBlock, SetHit::ThemeAccent,
-                    SetHit::RightClick,
                     SetHit::Logs, SetHit::SysInfo, SetHit::License, SetHit::Repository, SetHit::Quit, SetHit::Done] {
                     assert!(reached.contains(&expected), "unreachable {expected:?} at {w}x{h}");
                 }

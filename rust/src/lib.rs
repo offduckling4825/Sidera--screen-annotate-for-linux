@@ -143,7 +143,6 @@ pub struct Ip {
     pub ignore_core_pointer: bool,
     pub last_touch_pos: (i32, i32),
     pub ignored_touch: HashSet<i32>,
-    pub pending_right_click: Option<(i32, i32)>,
     pub pending_ui: Option<ui::Control>,
     pub ui_touch: Option<i32>,
     pub rejected_touch: HashSet<i32>,
@@ -171,7 +170,6 @@ impl Default for Ip {
             ignore_core_pointer: false,
             last_touch_pos: (0, 0),
             ignored_touch: HashSet::new(),
-            pending_right_click: None,
             pending_ui: None,
             ui_touch: None,
             rejected_touch: HashSet::new(),
@@ -323,9 +321,6 @@ impl Rt {
     }
     pub fn fake_key(&self, key: Key) {
         self.backend.fake_key(key);
-    }
-    pub fn virtual_right_click(&self, x: i32, y: i32) {
-        self.backend.virtual_right_click(x, y);
     }
     pub fn has_compositor(&self) -> bool {
         self.backend.has_compositor()
@@ -587,6 +582,12 @@ pub fn expand_sidebars(rt: &Rt, app: &mut App) {
         return;
     }
     app.set_sidebar_collapsed(false);
+    // 收缩侧栏会强制收起画笔组；重新展开时必须按实际笔迹恢复它，
+    // 否则画布有笔迹时工具组仍停留在收起状态。
+    if !app.whiteboard {
+        app.drawing_tools.request_page_update();
+        resolve_drawing_tools_auto_update(rt, app);
+    }
     apply_input_shape(rt, app);
     rt.redraw_full(app);
     log::info!("[INFO] 侧边栏已展开");
@@ -722,7 +723,8 @@ pub fn on_scroll(rt: &Rt, app: &mut App, ip: &Ip, x: i32, y: i32, pages: f64) {
             let rows = ui::process_rows(app).len();
             let visible = ui::process_visible_rows(app);
             let max = rows.saturating_sub(visible);
-            app.process_scroll = (app.process_scroll as i64 + step as i64).clamp(0, max as i64) as usize;
+            let target = (app.process_scroll as i64 + step as i64).clamp(0, max as i64) as usize;
+            animate_process_scroll(app, target);
             rt.redraw(app, ui::process_block_rect(app));
         }
         return;
@@ -737,6 +739,14 @@ pub fn on_scroll(rt: &Rt, app: &mut App, ip: &Ip, x: i32, y: i32, pages: f64) {
     if app.page_picker.is_none() || !ui::page_picker_control_rect(app, ui::PagePickerHit::Wheel).contains(x, y) { return; }
     if let Some(picker) = app.page_picker.as_mut() { picker.scroll(pages, Instant::now()); }
     rt.redraw(app, ui::page_picker_rect(app));
+}
+
+/// Animate the process-block list to a new row. The target is applied
+/// immediately for hit testing; only the rendered offset eases over 140ms.
+fn animate_process_scroll(app: &mut App, target: usize) {
+    let from = app.settings_ui.process_scroll_visual(app.process_scroll);
+    app.process_scroll = target;
+    app.settings_ui.begin_process_scroll(from);
 }
 
 pub fn go_next(rt: &Rt, app: &mut App, wps: Option<&WpsBridge>) {
@@ -901,8 +911,8 @@ pub fn collect_system_info(rt: &Rt, app: &App) -> String {
     s.push_str(&format!("显示后端: {}\n", rt.backend.description()));
     s.push_str(&format!("界面主题: {}（当前{}）\n", app.theme.preference.label(),
         if app.theme.dark() { "深色" } else { "浅色" }));
-    s.push_str(&format!("直接翻页按键: {}\n右键转发: {}\nCtrl+Shift+D: {}\n",
-        rt.backend.can_inject_keys_without_prompt(), rt.backend.can_forward_right_click(), app.hotkey_ok));
+    s.push_str(&format!("直接翻页按键: {}\nCtrl+Shift+D: {}\n",
+        rt.backend.can_inject_keys_without_prompt(), app.hotkey_ok));
     s.push_str(&format!(
         "点击区域控制: {}\n",
         if rt.shape_available() {
@@ -972,6 +982,7 @@ pub fn add_process_input(app: &mut App) {
     app.settings_ui.process_view=settings_state::ProcessView::Rules;
     app.process_scroll=app.process_rules.iter().position(|rule|rule==&value).unwrap_or(0)
         .saturating_sub(ui::process_visible_rows(app).saturating_sub(1));
+    app.settings_ui.process_scroll_at = 0;
 }
 
 fn handle_process_hit(rt: &Rt, app: &mut App, ip: &mut Ip, x: i32, y: i32) {
@@ -984,6 +995,7 @@ fn handle_process_hit(rt: &Rt, app: &mut App, ip: &mut Ip, x: i32, y: i32) {
             set_process_keyboard(rt,app,false);
             app.settings_ui.process_view=view;
             app.process_scroll=0;
+            app.settings_ui.process_scroll_at = 0;
         }
         ui::ProcessHit::Enable => {
             app.settings_ui.begin_toggle(ui::Control::Process(ui::ProcessHit::Enable), app.process_block_enabled);
@@ -1001,13 +1013,18 @@ fn handle_process_hit(rt: &Rt, app: &mut App, ip: &mut Ip, x: i32, y: i32) {
         ui::ProcessHit::Scan => {
             app.process_scan = process_block::scan();
             app.process_scroll = 0;
+            app.settings_ui.process_scroll_at = 0;
         }
-        ui::ProcessHit::ScrollUp => app.process_scroll = app.process_scroll.saturating_sub(ui::process_visible_rows(app)),
+        ui::ProcessHit::ScrollUp => {
+            let target = app.process_scroll.saturating_sub(ui::process_visible_rows(app));
+            animate_process_scroll(app, target);
+        }
         ui::ProcessHit::ScrollDown => {
             let max = ui::process_rows(app)
                 .len()
                 .saturating_sub(ui::process_visible_rows(app));
-            app.process_scroll = (app.process_scroll + ui::process_visible_rows(app)).min(max);
+            let target = (app.process_scroll + ui::process_visible_rows(app)).min(max);
+            animate_process_scroll(app, target);
         }
         ui::ProcessHit::Rule(index) => {
             if index < app.process_rules.len() {
@@ -1038,6 +1055,7 @@ fn handle_process_hit(rt: &Rt, app: &mut App, ip: &mut Ip, x: i32, y: i32) {
     }
     ip.pending_ui = None;
     app.process_scroll = app.process_scroll.min(ui::process_rows(app).len().saturating_sub(ui::process_visible_rows(app)));
+    app.settings_ui.process_scroll_at = 0;
     apply_input_shape(rt, app);
     rt.redraw_full(app);
 }
@@ -1213,6 +1231,7 @@ fn show_inspector(app: &mut App, kind: settings_state::Inspector, text: String) 
     app.show_diag = true;
     app.settings_ui.inspector = kind;
     app.settings_ui.inspector_page = 0;
+    app.settings_ui.inspector_page_at = 0;
     app.settings_ui.overlay_at = now_ms();
 }
 
@@ -1265,17 +1284,13 @@ pub fn handle_settings_hit(rt: &Rt, app: &mut App, hit: SetHit) {
             app.settings_ui.process_view=if app.process_rules.is_empty() {settings_state::ProcessView::Running}else{settings_state::ProcessView::Rules};
             app.process_input_active = false;
             app.process_scroll = 0;
+            app.settings_ui.process_scroll_at = 0;
             app.settings_ui.overlay_at = now_ms();
         }
         SetHit::ThemeAccent => {
             app.settings_ui.picker = Some(settings_state::ColorDraft::new(app.theme.accent.rgb()));
             app.settings_ui.overlay_at = now_ms();
             app.settings_ui.overlay_closing_at = 0;
-        }
-        SetHit::RightClick => {
-            app.settings_ui.begin_toggle(ui::Control::Setting(hit), app.right_click_cursor_on);
-            app.right_click_cursor_on = !app.right_click_cursor_on;
-            app::save_settings(app);
         }
         SetHit::ClearLog => app.settings_ui.show_dialog(Dialog::ClearLogs),
         SetHit::Logs => {
@@ -1288,7 +1303,11 @@ pub fn handle_settings_hit(rt: &Rt, app: &mut App, hit: SetHit) {
         SetHit::InspectorPage(delta) => {
             let pages = settings_panel::inspector_lines(app, &rt.fonts).len().div_ceil(settings_panel::inspector_page_size(app)).max(1);
             let page=app.settings_ui.inspector_page.min(pages-1);
-            app.settings_ui.inspector_page = (page as i64 + delta as i64).clamp(0, pages as i64 - 1) as usize;
+            let next = (page as i64 + delta as i64).clamp(0, pages as i64 - 1) as usize;
+            if next != page {
+                app.settings_ui.begin_inspector_page(page);
+                app.settings_ui.inspector_page = next;
+            }
         }
         SetHit::InspectorClose => { app.show_diag = false; }
         SetHit::Quit => { app.confirm_quit = true; app.settings_ui.overlay_at = now_ms(); }
@@ -1639,10 +1658,6 @@ fn activate_press(
     // 画布区域
     if app.mode != 0 {
         if button == 3 {
-            if !app.whiteboard && app.right_click_cursor_on && app.mode == 1 {
-                switch_to_cursor(rt, app);
-                if rt.backend.can_forward_right_click() { ip.pending_right_click = Some((x, y)); }
-            }
             return;
         }
         // 落在弹窗/菜单等 UI 上：不落笔
@@ -1780,9 +1795,11 @@ pub fn on_motion(rt: &Rt, app: &mut App, ip: &mut Ip, x: i32, y: i32) {
             if app.process_block_open {
                 let max=ui::process_rows(app).len().saturating_sub(ui::process_visible_rows(app));
                 app.process_scroll=(initial as i64+(start-y) as i64/52).clamp(0,max as i64) as usize;
+                app.settings_ui.process_scroll_at = 0;
             } else if app.show_diag {
                 let pages=settings_panel::inspector_lines(app,&rt.fonts).len().div_ceil(settings_panel::inspector_page_size(app)).max(1);
                 app.settings_ui.inspector_page=(initial as i64+(start-y) as i64/72).clamp(0,pages as i64-1) as usize;
+                app.settings_ui.inspector_page_at = 0;
             } else if app.settings_open {
                 let max=ui::settings_layout(app).pages.saturating_sub(1);
                 app.settings_page=(initial as i64+(start-y) as i64/72).clamp(0,max as i64) as usize;
@@ -1977,12 +1994,6 @@ pub fn on_release(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, 
         if activate { activate_press(rt, app, ip, wps, x, y, 1); }
         if let Some(r) = ui::control_rect(app, control) { rt.redraw(app, r); }
         return;
-    }
-    if button == 3 {
-        if let Some((x, y)) = ip.pending_right_click.take() {
-            rt.backend.flush();
-            rt.virtual_right_click(x, y);
-        }
     }
     if ip.slider.is_some() {
         ip.slider = None;
