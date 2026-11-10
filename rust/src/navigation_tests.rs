@@ -1055,30 +1055,9 @@ fn startup_reveal_keeps_its_center_and_fits_the_screen_at_every_frame() {
     }
 }
 #[test]
-fn more_button_toggles_and_outside_click_dismisses_cursor_popups() {
-    let (rt, mut app, _) = fixture(false);
-    app.configure_geometry(640, 360, 1.0);
-    app.mode = 0;
-    app.more_settings_entry = true;
-    let mut ip = Ip::default();
-    let more = ui::sidebar_buttons(&app, false)
-        .into_iter()
-        .find(|(button, _)| *button == Btn::More)
-        .unwrap()
-        .1;
-    let (x, y) = (more.x + more.w / 2, more.y + more.h / 2);
-    on_press(&rt, &mut app, &mut ip, None, x, y, 1);
-    on_release(&rt, &mut app, &mut ip, None, x, y, 1);
-    assert!(app.more_menu_open);
-    on_press(&rt, &mut app, &mut ip, None, x, y, 1);
-    on_release(&rt, &mut app, &mut ip, None, x, y, 1);
-    assert!(
-        !app.more_menu_open,
-        "clicking the More button again must close the menu"
-    );
-
+fn outside_click_dismisses_cursor_popups() {
+    let (rt, mut app, mut ip) = ui_fixture();
     app.pen_popup_visible = true;
-    app.more_menu_open = false;
     apply_input_shape(&rt, &app);
     assert!(dismiss_capture(&app));
     on_press(&rt, &mut app, &mut ip, None, 320, 300, 1);

@@ -22,6 +22,7 @@ pub const XK_ESCAPE: u32 = 0xff1b;
 pub const XK_UP: u32 = 0xff52;
 pub const XK_DOWN: u32 = 0xff54;
 pub const XK_D: u32 = 0x0064;
+pub const XK_P: u32 = 0x0070;
 pub const XK_F5: u32 = 0xffc2;
 pub const XK_SHIFT_L: u32 = 0xffe1;
 pub const XK_BACKSPACE: u32 = 0xff08;
@@ -60,6 +61,7 @@ pub struct X11 {
     pub key_up: Keycode,
     pub key_down: Keycode,
     pub key_d: Keycode,
+    pub key_p: Keycode,
     pub key_f5: Keycode,
     pub key_shift: Keycode,
     pub atom_touch_major: Atom,
@@ -133,6 +135,7 @@ impl X11 {
             key_up: 0,
             key_down: 0,
             key_d: 0,
+            key_p: 0,
             key_f5: 0,
             key_shift: 0,
             atom_touch_major,
@@ -143,6 +146,7 @@ impl X11 {
         x.key_up = x.keysym_to_keycode(XK_UP);
         x.key_down = x.keysym_to_keycode(XK_DOWN);
         x.key_d = x.keysym_to_keycode(XK_D);
+        x.key_p = x.keysym_to_keycode(XK_P);
         x.key_f5 = x.keysym_to_keycode(XK_F5);
         x.key_shift = x.keysym_to_keycode(XK_SHIFT_L);
         x.conn.flush()?;
@@ -245,6 +249,19 @@ impl X11 {
         x: i32,
         y: i32,
     ) -> XResult<()> {
+        self.put_pixmap_depth(win, gc, pm, x, y, self.argb_depth)
+    }
+
+    /// Upload a pixmap to a drawable that may use an opaque (non-ARGB) visual.
+    pub fn put_pixmap_depth(
+        &self,
+        win: Window,
+        gc: Gcontext,
+        pm: &tiny_skia::Pixmap,
+        x: i32,
+        y: i32,
+        depth: u8,
+    ) -> XResult<()> {
         let src = pm.data();
         let mut buf = Vec::with_capacity(src.len());
         for px in src.chunks_exact(4) {
@@ -263,7 +280,7 @@ impl X11 {
             x as i16,
             y as i16,
             0,
-            self.argb_depth,
+            depth,
             &buf,
         )?;
         self.conn.flush()?;
@@ -495,6 +512,28 @@ impl X11 {
         }
         let _ = self.conn.flush();
         true
+    }
+
+    /// 在放映期间抓取 WPS 的“画笔”快捷键（Ctrl+P），改由 Sidera 切换画笔。
+    /// 不在放映时释放，避免影响其他程序的打印快捷键。
+    pub fn set_pen_hotkey(&self, on: bool) {
+        if self.key_p == 0 { return; }
+        let mods = ModMask::CONTROL;
+        let combos = [
+            mods,
+            mods | ModMask::from(1u16 << 1),  // Mod2 (NumLock)
+            mods | ModMask::from(1u16),       // Lock (CapsLock)
+            mods | ModMask::from(1u16 << 1) | ModMask::from(1u16),
+        ];
+        for m in combos {
+            if on {
+                let _ = xproto::grab_key(&self.conn, false, self.root, m, self.key_p,
+                    xproto::GrabMode::ASYNC, xproto::GrabMode::ASYNC);
+            } else {
+                let _ = xproto::ungrab_key(&self.conn, self.key_p, self.root, m);
+            }
+        }
+        let _ = self.conn.flush();
     }
 
     /// 检测 X11 设备缩放（逻辑像素 → 物理像素的比例）。
@@ -1135,6 +1174,9 @@ impl crate::backend::Backend for X11Plat {
     }
     fn grab_hotkey(&self) -> bool {
         self.x11.grab_hotkey()
+    }
+    fn set_pen_hotkey(&self, on: bool) {
+        self.x11.set_pen_hotkey(on);
     }
     fn set_scale(&self, s: f64) {
         self.scale.set(s.clamp(1.0, 4.0));

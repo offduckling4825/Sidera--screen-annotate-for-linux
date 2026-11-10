@@ -465,7 +465,19 @@ pub fn inspector_controls(app: &App) -> Vec<(SetHit, R)> {
     out.push((SetHit::InspectorClose,R { x:p.x+p.w-110,y:p.y+p.h-62,w:92,h:44 }));
     out
 }
-pub fn inspector_lines(app: &App, fonts: &Fonts) -> Vec<String> { wrapped(fonts,&app.diag_text,13.0,inspector_body_rect(app).w) }
+pub fn inspector_lines(app: &App, fonts: &Fonts) -> std::rc::Rc<Vec<String>> {
+    use std::hash::{Hash, Hasher};
+    let width = inspector_body_rect(app).w;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    app.diag_text.hash(&mut hasher);
+    let key = (hasher.finish(), width);
+    if let Some((cached_key, lines)) = app.settings_ui.inspector_cache.borrow().as_ref() {
+        if *cached_key == key { return lines.clone(); }
+    }
+    let lines = std::rc::Rc::new(wrapped(fonts, &app.diag_text, 13.0, width));
+    *app.settings_ui.inspector_cache.borrow_mut() = Some((key, lines.clone()));
+    lines
+}
 pub fn inspector_page_size(app: &App) -> usize { (inspector_body_rect(app).h/20).max(1) as usize }
 pub fn inspector_can_page(app:&App,fonts:&Fonts,delta:i32)->bool {
     let pages=inspector_lines(app,fonts).len().div_ceil(inspector_page_size(app)).max(1);

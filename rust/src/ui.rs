@@ -39,7 +39,7 @@ pub enum Btn {
     Next,
     Exit,
     Whiteboard,
-    More,
+    Screenshot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -50,11 +50,6 @@ pub enum PopupHit {
     ClearAll,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum MoreHit {
-    Screenshot,
-    Settings,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SetHit {
@@ -93,7 +88,7 @@ pub enum SliderId {
 impl SliderId {
     pub fn default_value(self) -> f32 {
         match self {
-            Self::Position => 50.0,
+            Self::Position => crate::app::DEFAULT_SIDEBAR_POSITION,
             Self::AutoExpand => crate::app::DEFAULT_SIDEBAR_EXPAND_MINUTES as f32,
             Self::Alpha => crate::app::DEFAULT_SIDEBAR_ALPHA as f32,
             Self::Scale => crate::app::DEFAULT_SB_SCALE as f32,
@@ -122,7 +117,7 @@ pub enum Control {
     Process(ProcessHit),
     Dialog(crate::settings_state::DialogHit),
     Picker(crate::settings_state::PickerHit),
-    Sidebar(Btn, bool), Popup(PopupHit), More(MoreHit), Setting(SetHit),
+    Sidebar(Btn, bool), Popup(PopupHit), Setting(SetHit),
     Slider(SliderId), Confirm(ConfirmHit), DiagClose,
     PageCount(bool), PagePicker(PagePickerHit), Whiteboard(WhiteboardControl),
 }
@@ -198,7 +193,6 @@ pub fn control_at(app: &App, x: i32, y: i32) -> Option<Control> {
         return settings_slider_hit(app, x, y).map(|s| Control::Slider(s.id))
             .or_else(|| settings_hit(app, x, y).map(Control::Setting));
     }
-    if app.more_menu_open { return more_menu_hit(app, x, y).map(Control::More); }
     if app.whiteboard {
         if let Some(hit) = whiteboard_control_hit(app, x, y) { return Some(Control::Whiteboard(hit)); }
     }
@@ -251,11 +245,6 @@ pub fn control_rect(app: &App, control: Control) -> Option<R> {
         Control::Sidebar(b, right) => sidebar_buttons(app, right).into_iter().find(|(k, _)| *k == b).map(|(_, r)| r),
         Control::Setting(hit) if app.settings_open => settings_controls(app).into_iter().find(|(k, _)| *k == hit).map(|(_, r)| r),
         Control::Slider(id) if app.settings_open => settings_sliders(app).into_iter().find(|s| s.id == id).map(|s| s.hit),
-        Control::More(hit) if app.more_menu_open => {
-            let m = more_menu_rect(app);
-            let offset = if hit == MoreHit::Screenshot { 0 } else { 48 };
-            Some(R { x: m.x, y: m.y + offset, w: m.w, h: if offset == 0 { 48 } else { m.h - 48 } })
-        }
         Control::Whiteboard(WhiteboardControl::Dots) if app.whiteboard => Some(whiteboard_dots_toggle_rect(app)),
         Control::Whiteboard(WhiteboardControl::DotSize) if app.whiteboard => Some(whiteboard_dot_slider_rect(app)),
         Control::Whiteboard(WhiteboardControl::DotValue) if app.whiteboard => Some(whiteboard_dot_value_rect(app)),
@@ -376,6 +365,29 @@ fn rounded_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Pat
     pb.finish()
 }
 
+/// Align 1-device-pixel horizontal/vertical lines to pixel centers. A stroke at
+/// an integer coordinate covers two rows/columns at 50% each and looks fuzzy;
+/// adding half a device pixel makes separators crisp without changing geometry.
+fn snap_axis_line(tr: &Transform, mut a: (f32, f32), mut b: (f32, f32), w: f32) -> ((f32, f32), (f32, f32)) {
+    if tr.kx.abs() > 0.01 || tr.ky.abs() > 0.01 || tr.sx == 0.0 || tr.sy == 0.0 {
+        return (a, b);
+    }
+    let dev_w = w * ((tr.sx.abs() + tr.sy.abs()) * 0.5);
+    if (dev_w - 1.0).abs() > 0.2 {
+        return (a, b);
+    }
+    if (a.1 - b.1).abs() < 0.01 {
+        let snapped = (a.1 * tr.sy + tr.ty).floor() + 0.5;
+        let y = (snapped - tr.ty) / tr.sy;
+        a.1 = y; b.1 = y;
+    } else if (a.0 - b.0).abs() < 0.01 {
+        let snapped = (a.0 * tr.sx + tr.tx).floor() + 0.5;
+        let x = (snapped - tr.tx) / tr.sx;
+        a.0 = x; b.0 = x;
+    }
+    (a, b)
+}
+
 pub struct Ctx<'a> {
     pub pm: &'a mut Pixmap,
     pub tr: Transform,
@@ -410,6 +422,7 @@ impl<'a> Ctx<'a> {
         }
     }
     pub fn stroke_line(&mut self, a: (f32, f32), b: (f32, f32), c: Color, w: f32) {
+        let (a, b) = snap_axis_line(&self.tr, a, b, w);
         let st = Stroke {
             width: w,
             line_cap: LineCap::Round,
@@ -564,7 +577,7 @@ fn expanded_sidebar_buttons(app: &App, right: bool) -> Vec<(Btn, R)> {
     }
     if app.drawing_tools.fraction() >= 1.0 { v.extend(drawing_tool_buttons(app, right)); }
     y += app.drawing_tools_height();
-    for k in [Btn::Prev, Btn::Next, Btn::Exit, Btn::Whiteboard, Btn::More] {
+    for k in [Btn::Prev, Btn::Next, Btn::Exit, Btn::Whiteboard, Btn::Screenshot] {
         v.push((k, R { x: bx, y, w: btn, h: btn }));
         y += btn + 6;
         if k == Btn::Prev { y += app.sidebar_page_space(); }
@@ -667,28 +680,6 @@ pub fn eraser_popup_rect(app: &App) -> R {
     }
 }
 
-pub fn more_menu_rect(app: &App) -> R {
-    let sb = sidebar_rect(app, app.popup_on_right);
-    let w = 170;
-    let h = if app.more_settings_entry { 104 } else { 56 };
-    let x = if app.popup_on_right {
-        sb.x - w - 8
-    } else {
-        sb.x + sb.w + 8
-    };
-    let more_y = sidebar_buttons(app, app.popup_on_right)
-        .iter()
-        .find(|(k, _)| *k == Btn::More)
-        .map(|(_, r)| r.y)
-        .unwrap_or(sb.y);
-    let y = more_y.clamp(0, (app.screen_h - h).max(0));
-    R {
-        x: x.clamp(0, (app.screen_w - w).max(0)),
-        y,
-        w,
-        h,
-    }
-}
 
 pub fn pen_popup_hit(app: &App, x: i32, y: i32) -> Option<PopupHit> {
     let p = pen_popup_rect(app);
@@ -747,19 +738,6 @@ pub fn eraser_popup_hit(app: &App, x: i32, y: i32) -> Option<PopupHit> {
     None
 }
 
-pub fn more_menu_hit(app: &App, x: i32, y: i32) -> Option<MoreHit> {
-    let m = more_menu_rect(app);
-    if !m.contains(x, y) {
-        return None;
-    }
-    if y < m.y + 48 {
-        Some(MoreHit::Screenshot)
-    } else if app.more_settings_entry {
-        Some(MoreHit::Settings)
-    } else {
-        None
-    }
-}
 
 pub fn whiteboard_bar_rect(app: &App) -> R {
     let w = 340.min((app.screen_w - 96).max(240));
@@ -1278,9 +1256,6 @@ pub fn render_region(
             draw_eraser_popup(app, fonts, &mut ctx);
         }
         if app.page_picker.is_some() { draw_page_picker(app, fonts, &mut ctx); }
-        if app.more_menu_open {
-            draw_more_menu(fonts, &mut ctx, app);
-        }
         if app.settings_open {
             draw_settings(app, fonts, &mut ctx, icon);
         }
@@ -1519,7 +1494,7 @@ fn draw_btn(app: &App, fonts: &Fonts, ctx: &mut Ctx, k: Btn, r: R) {
         Btn::Collapse => {
             ctx.text_multiline_center(fonts, r, "收起", (btn * 0.49).max(11.0), c(palette.muted));
         }
-        Btn::Cursor | Btn::Pen | Btn::Eraser | Btn::Prev | Btn::Next | Btn::More => {
+        Btn::Cursor | Btn::Pen | Btn::Eraser | Btn::Prev | Btn::Next => {
             let glyph = match k {
                 Btn::Cursor => Glyph::Cursor, Btn::Pen => Glyph::Pen, Btn::Eraser => Glyph::Eraser,
                 Btn::Prev => Glyph::Up, Btn::Next => Glyph::Down, _ => Glyph::More,
@@ -1542,6 +1517,7 @@ fn draw_btn(app: &App, fonts: &Fonts, ctx: &mut Ctx, k: Btn, r: R) {
         }
         Btn::Clear => draw_button_label(fonts, ctx, r, "清除", c(palette.danger)),
         Btn::Restore => draw_button_label(fonts, ctx, r, "恢复", ink),
+        Btn::Screenshot => draw_button_label(fonts, ctx, r, "截图", ink),
         Btn::Undo => ctx.text_center(fonts, r, "撤回", (btn * 0.49).max(11.0), ink),
         Btn::Whiteboard => {
             if app.whiteboard {
@@ -1717,24 +1693,6 @@ fn draw_eraser_popup(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
     ctx.text_center(fonts, r, "清空当前页", 20.0, c(palette.danger));
 }
 
-fn draw_more_menu(fonts: &Fonts, ctx: &mut Ctx, app: &App) {
-    let palette = ctx.palette;
-    let m = more_menu_rect(app);
-    let t = anim_t(app);
-    panel(ctx, m, 14.0, t);
-    if t < 0.02 { return; }
-    let mut rows = vec![(0, Glyph::Camera, "截图")];
-    if app.more_settings_entry { rows.push((1, Glyph::Settings, "设置")); }
-    if rows.len() > 1 {
-        ctx.stroke_line(((m.x + 14) as f32, (m.y + 48) as f32),
-            ((m.x + m.w - 14) as f32, (m.y + 48) as f32), c(palette.border), 1.0);
-    }
-    for (row, glyph, label) in rows {
-        let y = m.y + row * 48;
-        icons::draw(ctx, glyph, (m.x + 18) as f32, (y + 12) as f32, 24.0, c(palette.accent), c(palette.accent));
-        ctx.text(fonts, label, (m.x + 58) as f32, (y + 31) as f32, 21.0, c(palette.text));
-    }
-}
 
 fn draw_whiteboard_controls(app: &App, fonts: &Fonts, ctx: &mut Ctx) {
     let palette = ctx.palette;
@@ -1794,6 +1752,21 @@ fn draw_settings(app: &App, fonts: &Fonts, ctx: &mut Ctx, icon: Option<&Pixmap>)
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn one_pixel_axis_lines_snap_to_half_pixels() {
+        let identity = Transform::from_scale(1.0, 1.0);
+        let ((x1, y1), (x2, y2)) = snap_axis_line(&identity, (0.0, 10.0), (20.0, 10.0), 1.0);
+        assert_eq!((x1, y1), (0.0, 10.5));
+        assert_eq!((x2, y2), (20.0, 10.5));
+        let ((x1, y1), (x2, y2)) = snap_axis_line(&identity, (10.0, 0.0), (10.0, 20.0), 1.0);
+        assert_eq!((x1, y1), (10.5, 0.0));
+        assert_eq!((x2, y2), (10.5, 20.0));
+        // Two device pixels already land on the grid; do not shift them.
+        let double = Transform::from_scale(2.0, 2.0);
+        let (_, (_, y2)) = snap_axis_line(&double, (0.0, 10.0), (20.0, 10.0), 1.0);
+        assert_eq!(y2, 10.0);
+    }
+
     use super::*;
 
     fn app() -> App {
@@ -1937,24 +1910,6 @@ mod tests {
     }
 
     #[test]
-    fn more_menu_items_hittable() {
-        let mut app = app();
-        app.more_menu_open = true;
-        let m = more_menu_rect(&app);
-        assert_eq!(
-            more_menu_hit(&app, m.x + m.w / 2, m.y + 18),
-            Some(MoreHit::Screenshot)
-        );
-        assert_eq!(more_menu_hit(&app, m.x + m.w / 2, m.y + 54), None);
-        app.more_settings_entry = true;
-        let m = more_menu_rect(&app);
-        assert_eq!(
-            more_menu_hit(&app, m.x + m.w / 2, m.y + 54),
-            Some(MoreHit::Settings)
-        );
-    }
-
-    #[test]
     fn themes_cover_every_panel_and_startup_cache_at_multiple_scales() {
         let fonts = Fonts::load();
         for scale in [1.0, 1.5, 2.0] {
@@ -1963,18 +1918,17 @@ mod tests {
             for preference in [theme::Preference::Light, theme::Preference::Dark] {
                 a.apply_theme(theme::Theme { preference, system_dark: false, ..Default::default() });
                 a.settings_ui.theme_from = None;
-                for panel in 0..7 {
+                for panel in 0..6 {
                     a.settings_open = panel == 0;
                     a.pen_popup_visible = panel == 1;
                     a.eraser_popup_visible = panel == 2;
-                    a.more_menu_open = panel == 3;
-                    a.confirm_quit = panel == 4;
-                    a.show_diag = panel == 5;
-                    a.page_picker = (panel == 6).then(|| crate::page_picker::PagePicker::new(
+                    a.confirm_quit = panel == 3;
+                    a.show_diag = panel == 4;
+                    a.page_picker = (panel == 5).then(|| crate::page_picker::PagePicker::new(
                         6, 24, crate::page_picker::Source::Wps(1)));
                     let r = match panel {
                         0 => settings_rect(&a), 1 => pen_popup_rect(&a), 2 => eraser_popup_rect(&a),
-                        3 => more_menu_rect(&a), 4 => confirm_rect(&a), 5 => diag_rect(&a),
+                        3 => confirm_rect(&a), 4 => diag_rect(&a),
                         _ => page_picker_rect(&a),
                     };
                     let pixels = render_region(&a, &fonts, None, r.x, r.y, r.w, r.h).unwrap();

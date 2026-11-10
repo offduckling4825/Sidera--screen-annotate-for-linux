@@ -150,8 +150,6 @@ fn main() {
         a.eraser_popup_visible = true;
         add("eraser", "橡皮 · 清空", capture(&a, &fonts, None, ui::eraser_popup_rect(&a)), 1400, 48);
         a.eraser_popup_visible = false;
-        a.more_menu_open = true;
-        add("more", "更多操作", capture(&a, &fonts, None, ui::more_menu_rect(&a)), 1400, 300);
 
         let mut a = fresh(preference);
         a.page_picker = Some(page_picker::PagePicker::new(6, 24, page_picker::Source::Wps(1)));

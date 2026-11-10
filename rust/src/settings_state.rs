@@ -1,5 +1,9 @@
 //! Settings navigation, draft colours, finite transitions and versioned appearance storage.
 use crate::{app::{App, now_ms}, ui::Control, ui_theme::{Accent, Palette, Preference}};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+type InspectorCache = RefCell<Option<((u64, i32), Rc<Vec<String>>)>>;
 
 pub const REPOSITORY: &str = "https://github.com/offduckling4825/Sidera--screen-annotate-for-linux";
 pub const LICENSE_URL: &str = "https://www.gnu.org/licenses/gpl-3.0.html";
@@ -106,6 +110,8 @@ pub struct State {
     pub process_view: ProcessView,
     pub process_scroll_from: f32,
     pub process_scroll_at: i64,
+    /// Wrapped diagnostics/log lines, keyed by (text hash, body width).
+    pub inspector_cache: InspectorCache,
     pub recent: Vec<u32>,
     pub toast: String,
     pub toast_until: i64,
@@ -166,9 +172,11 @@ impl State {
     }
     pub fn animating(&self) -> bool {
         let now = now_ms();
-        [self.tab_at, self.opened_at, self.overlay_at, self.overlay_closing_at, self.closing_at,
-            self.inspector_page_at, self.process_scroll_at]
+        [self.tab_at, self.opened_at, self.overlay_at, self.overlay_closing_at, self.closing_at]
             .iter().any(|start| *start > 0 && now - *start <= 230)
+            // Scrolling finishes at 140ms; stop repainting immediately after.
+            || [self.inspector_page_at, self.process_scroll_at]
+                .iter().any(|start| *start > 0 && now - *start <= 140)
             || self.theme_from.is_some_and(|(_, start)| now - start <= 230)
             || self.toggle.is_some_and(|(_, _, start)| now - start <= 180)
             || self.editor.as_ref().is_some_and(|editor|now-editor.opened_at<=160)

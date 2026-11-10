@@ -77,6 +77,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 const HOTKEY_TOGGLE: i32 = 1;
 const HOTKEY_QUIT: i32 = 2;
+const HOTKEY_PEN: i32 = 3;
 const WM_APP_TRAY: u32 = 0x8001;
 const TRAY_ID: u32 = 1;
 
@@ -97,6 +98,7 @@ pub enum WinEvent {
     Wheel(i32, i32, f64),
     Touch { id: i32, kind: TouchKind, x: i32, y: i32, diameter: f64 },
     ToggleMode,
+    PenMode,
     Tray(TrayAction),
     Quit,
     ThemeChanged,
@@ -968,6 +970,7 @@ impl Win32Plat {
                 match wparam as i32 {
                     HOTKEY_TOGGLE => self.enqueue(WinEvent::ToggleMode),
                     HOTKEY_QUIT => self.enqueue(WinEvent::Quit),
+                    HOTKEY_PEN => self.enqueue(WinEvent::PenMode),
                     _ => {}
                 }
                 Some(0)
@@ -1071,6 +1074,7 @@ impl Drop for Win32Plat {
         unsafe {
             UnregisterHotKey(self.input_hwnd, HOTKEY_TOGGLE);
             UnregisterHotKey(self.input_hwnd, HOTKEY_QUIT);
+            UnregisterHotKey(self.input_hwnd, HOTKEY_PEN);
             tray_delete(self.input_hwnd);
             if self.tray_icon_owned && !self.tray_icon.is_null() {
                 DestroyIcon(self.tray_icon);
@@ -1091,6 +1095,19 @@ impl Drop for Win32Plat {
             }
             DestroyWindow(self.input_hwnd);
             DestroyWindow(self.visual_hwnd);
+        }
+    }
+}
+
+impl Win32Plat {
+    /// Own Ctrl+P only while a WPS slideshow is visible.
+    pub fn set_pen_hotkey(&self, on: bool) {
+        unsafe {
+            if on {
+                RegisterHotKey(self.input_hwnd, HOTKEY_PEN, MOD_CONTROL | MOD_NOREPEAT, 'P' as u32);
+            } else {
+                UnregisterHotKey(self.input_hwnd, HOTKEY_PEN);
+            }
         }
     }
 }
@@ -1308,6 +1325,9 @@ impl Backend for Win32Plat {
         true
     }
 
+    fn set_pen_hotkey(&self, on: bool) {
+        Win32Plat::set_pen_hotkey(self, on);
+    }
     fn grab_hotkey(&self) -> bool {
         true
     }

@@ -3,13 +3,13 @@ run-name: Release packages for ${{ inputs.release_tag || github.ref_name }}
 
 on:
   push:
-    tags: ['v3.2-Electro-rc.2']
+    tags: ['v3.2-Electro.rc.4']
   workflow_dispatch:
     inputs:
       release_tag:
         description: Existing release tag
         required: true
-        default: v3.2-Electro-rc.2
+        default: v3.2-Electro.rc.4
         type: string
 
 permissions:

@@ -18,6 +18,11 @@ stage_files() {
   install -d "$root/usr/share/sidera/wps-addin"
   cp -a "$REPO/wps-addin/." "$root/usr/share/sidera/wps-addin/"
 
+  if [ -f "$REPO/rust/assets/fonts/NotoSansCJKsc-Regular.otf" ]; then
+    install -Dm644 "$REPO/rust/assets/fonts/NotoSansCJKsc-Regular.otf" "$root/usr/share/sidera/fonts/NotoSansCJKsc-Regular.otf"
+    install -Dm644 "$REPO/rust/assets/fonts/LICENSE-OFL.txt" "$root/usr/share/sidera/fonts/LICENSE-OFL.txt"
+  fi
+
   install -Dm644 "$REPO/LICENSE" "$root/usr/share/licenses/sidera/LICENSE"
   install -Dm644 "$REPO/README.classroom.md" "$root/usr/share/doc/sidera/README.classroom.md"
 

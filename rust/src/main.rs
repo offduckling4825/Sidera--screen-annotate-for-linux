@@ -105,19 +105,24 @@ fn handle_event(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, ev
         Event::KeyPress(e) => {
             if (app.settings_ui.editor.is_some() || (app.process_block_open && app.process_input_active))
                 && process_key(rt, app, e.detail, e.state) { return; }
+            let x11_plat = rt.backend.as_any().downcast_ref::<x11::X11Plat>();
             let mods = KeyButMask::CONTROL | KeyButMask::SHIFT;
-            let key_d = rt
-                .backend
-                .as_any()
-                .downcast_ref::<x11::X11Plat>()
-                .map(|p| p.x11.key_d)
-                .unwrap_or(0);
+            let key_d = x11_plat.map(|p| p.x11.key_d).unwrap_or(0);
             if e.detail == key_d && (e.state & mods) == mods {
                 if app.mode != 0 {
                     switch_to_cursor(rt, app);
                 } else {
                     switch_to_draw(rt, app, 1);
                 }
+            } else if !keyboard_evdev::active()
+                && x11_plat.is_some_and(|p| e.detail == p.x11.key_p)
+                && (e.state & KeyButMask::CONTROL) == KeyButMask::CONTROL
+                && (app.wps_fullscreen || wps.is_some_and(|w| w.showing()))
+            {
+                // Fallback when /dev/input is unavailable: the X11 grab caught
+                // Ctrl+P. Reset WPS in case the grab failed and WPS also saw it.
+                if let Some(w) = wps { let _ = w.enqueue("CURSOR"); }
+                if app.mode == 1 { switch_to_cursor(rt, app); } else { switch_to_draw(rt, app, 1); }
             }
         }
         Event::XinputRawTouchBegin(e) | Event::XinputRawTouchUpdate(e) => {
@@ -239,6 +244,14 @@ fn run_application() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    #[cfg(unix)]
+    {
+        keyboard_evdev::start();
+        // The watcher opens devices asynchronously; report its state shortly after.
+        let probe = keyboard_evdev::active();
+        log::info!("[KEYS] evdev 键盘观察{}", if probe { "已启用" } else { "暂不可用（继续热插拔扫描）" });
+    }
+
     system_theme::start();
     tray::start();
     let fonts = Fonts::load();
@@ -279,12 +292,16 @@ fn run_application() -> Result<(), Box<dyn std::error::Error>> {
     let logical_w = ((x11.width as f64) / scale).round().max(1.0) as i32;
     let logical_h = ((x11.height as f64) / scale).round().max(1.0) as i32;
     log::info!(
-        "[INFO] 平台: x11  屏幕 {}x{} (物理 {}x{})  缩放 {}",
+        "[INFO] 平台: x11  屏幕 {}x{} (物理 {}x{})  缩放 {}  SIDERA_SCALE={} QT_SCALE_FACTOR={} GDK_SCALE={} GDK_DPI_SCALE={}",
         logical_w,
         logical_h,
         x11.width,
         x11.height,
-        scale
+        scale,
+        std::env::var("SIDERA_SCALE").unwrap_or_else(|_| "-".into()),
+        std::env::var("QT_SCALE_FACTOR").unwrap_or_else(|_| "-".into()),
+        std::env::var("GDK_SCALE").unwrap_or_else(|_| "-".into()),
+        std::env::var("GDK_DPI_SCALE").unwrap_or_else(|_| "-".into()),
     );
 
     let (win, gc) = x11.create_overlay().map_err(|e| format!("创建 X11 覆盖层失败：{e}"))?;

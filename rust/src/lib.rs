@@ -32,6 +32,7 @@ pub mod wps;
 #[cfg(unix)] pub mod desktop;
 #[cfg(unix)] pub mod gnome;
 #[cfg(unix)] pub mod instance;
+#[cfg(unix)] pub mod keyboard_evdev;
 #[cfg(unix)] pub mod portal;
 #[cfg(unix)] mod settings_window;
 #[cfg(unix)] mod settings_wayland;
@@ -54,7 +55,7 @@ use crate::app::{now_ms, App};
 use crate::backend::{Backend, IRect, Key};
 use crate::gesture::TouchKind;
 use crate::text::Fonts;
-use crate::ui::{Btn, MoreHit, PopupHit, R, SetHit};
+use crate::ui::{Btn, PopupHit, R, SetHit};
 use crate::wps::{WpsBridge, WpsEvent};
 
 static INPUT_GROUP_STATE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
@@ -426,9 +427,6 @@ pub fn apply_input_shape(rt: &Rt, app: &App) {
         if app.eraser_popup_visible {
             rects.extend(rect_of(app, ui::eraser_popup_rect(app), 4));
         }
-        if app.more_menu_open {
-            rects.extend(rect_of(app, ui::more_menu_rect(app), 4));
-        }
         if app.page_picker.is_some() { rects.extend(rect_of(app, ui::page_picker_rect(app), 4)); }
         rt.set_input_region(&rects, false);
     } else {
@@ -442,12 +440,10 @@ pub fn close_all_popups(rt: &Rt, app: &mut App) {
     let regions = [
         app.pen_popup_visible.then(|| ui::pen_popup_rect(app)),
         app.eraser_popup_visible.then(|| ui::eraser_popup_rect(app)),
-        app.more_menu_open.then(|| ui::more_menu_rect(app)),
         app.page_picker.as_ref().map(|_| ui::page_picker_rect(app)),
     ];
     app.pen_popup_visible = false;
     app.eraser_popup_visible = false;
-    app.more_menu_open = false;
     if app.page_picker.take().is_some() {
         if app.settings_ui.editor.as_ref().is_some_and(|e|e.target==value_input::Target::Page) {
             app.settings_ui.editor=None;
@@ -480,9 +476,6 @@ pub fn over_ui(app: &App, x: i32, y: i32) -> bool {
     if app.eraser_popup_visible && ui::eraser_popup_rect(app).contains(x, y) {
         return true;
     }
-    if app.more_menu_open && ui::more_menu_rect(app).contains(x, y) {
-        return true;
-    }
     if app.settings_open && ui::settings_rect(app).contains(x, y) {
         return true;
     }
@@ -500,7 +493,6 @@ pub fn dismiss_capture(app: &App) -> bool {
     app.mode == 0
         && (app.pen_popup_visible
             || app.eraser_popup_visible
-            || app.more_menu_open
             || app.page_picker.is_some())
 }
 
@@ -913,6 +905,12 @@ pub fn collect_system_info(rt: &Rt, app: &App) -> String {
         if app.theme.dark() { "深色" } else { "浅色" }));
     s.push_str(&format!("直接翻页按键: {}\nCtrl+Shift+D: {}\n",
         rt.backend.can_inject_keys_without_prompt(), app.hotkey_ok));
+    #[cfg(unix)]
+    s.push_str(&format!("WPS 画笔快捷键: {}\n", if keyboard_evdev::active() {
+        "evdev 键盘监听"
+    } else {
+        "evdev 不可用（X11 尝试抓取回退）"
+    }));
     s.push_str(&format!(
         "点击区域控制: {}\n",
         if rt.shape_available() {
@@ -921,9 +919,20 @@ pub fn collect_system_info(rt: &Rt, app: &App) -> String {
             "扩展不可用!"
         }
     ));
+    let (logical_w, logical_h) = rt.screen_size();
+    let scale = app.scale.max(0.01);
+    let physical_w = (logical_w as f64 * scale).round() as i32;
+    let physical_h = (logical_h as f64 * scale).round() as i32;
     s.push_str(&format!(
-        "屏幕: {}x{}\n",
-        rt.screen_size().0, rt.screen_size().1
+        "屏幕: 逻辑 {}x{} / 物理 {}x{}（缩放 {:.2}x）\n",
+        logical_w, logical_h, physical_w, physical_h, scale
+    ));
+    s.push_str(&format!(
+        "缩放来源: SIDERA_SCALE={} QT_SCALE_FACTOR={} GDK_SCALE={} GDK_DPI_SCALE={}\n",
+        std::env::var("SIDERA_SCALE").unwrap_or_else(|_| "-".into()),
+        std::env::var("QT_SCALE_FACTOR").unwrap_or_else(|_| "-".into()),
+        std::env::var("GDK_SCALE").unwrap_or_else(|_| "-".into()),
+        std::env::var("GDK_DPI_SCALE").unwrap_or_else(|_| "-".into()),
     ));
     s.push_str(&format!(
         "模式: {}\n",
@@ -1084,15 +1093,24 @@ pub fn open_settings(rt: &Rt, app: &mut App) {
     app.open_anim = now_ms();
     close_all_popups(rt, app);
     #[cfg(unix)]
-    if !app.launch.active() && !app.show_input_group_prompt {
-        match settings_window::Window::open(rt, app) {
-            Ok(window) => {
-                app.settings_ui.window = Some(window);
-                // The annotation canvas stays intact while the preferences
-                // window is open. Clear only its presentation surface.
-                rt.render(app, R { x: 0, y: 0, w: app.screen_w, h: app.screen_h });
+    {
+        let force_overlay = std::env::var_os("SIDERA_SETTINGS_OVERLAY").is_some();
+        if force_overlay {
+            crate::diag_log::info("设置窗口：按要求使用覆盖层绘制");
+        } else if !app.launch.active() && !app.show_input_group_prompt {
+            match settings_window::Window::open(rt, app) {
+                Ok(window) => {
+                    app.settings_ui.window = Some(window);
+                    crate::diag_log::info("设置窗口：使用原生 X11/Wayland 窗口");
+                    // The annotation canvas stays intact while the preferences
+                    // window is open. Clear only its presentation surface.
+                    rt.render(app, R { x: 0, y: 0, w: app.screen_w, h: app.screen_h });
+                }
+                Err(error) => {
+                    log::info!("独立设置窗口不可用，使用原有设置面板：{error}");
+                    crate::diag_log::warn(&format!("设置窗口回退到覆盖层：{error}"));
+                }
             }
-            Err(error) => log::info!("独立设置窗口不可用，使用原有设置面板：{error}"),
         }
     }
     apply_input_shape(rt, app);
@@ -1572,21 +1590,6 @@ fn activate_press(
         if button == 1 { open_page_picker(rt, app, right); }
         return;
     }
-    if app.more_menu_open {
-        if let Some(hit) = ui::more_menu_hit(app, x, y) {
-            app.more_menu_open = false;
-            match hit {
-                MoreHit::Screenshot => do_screenshot(rt),
-                MoreHit::Settings => open_settings(rt, app),
-            }
-        } else {
-            app.more_menu_open = false;
-            rt.redraw_full(app);
-        }
-        apply_input_shape(rt, app);
-        rt.redraw_full(app);
-        return;
-    }
     if app.pen_popup_visible {
         if let Some(hit) = ui::pen_popup_hit(app, x, y) {
             match hit {
@@ -1769,14 +1772,7 @@ pub fn handle_btn(rt: &Rt, app: &mut App, wps: Option<&WpsBridge>, k: Btn, right
             apply_input_shape(rt, app);
             rt.redraw_full(app);
         }
-        Btn::More => {
-            let was = app.more_menu_open;
-            close_all_popups(rt, app);
-            app.more_menu_open = !was;
-            if app.more_menu_open { app.open_anim = now_ms(); }
-            apply_input_shape(rt, app);
-            rt.redraw_full(app);
-        }
+        Btn::Screenshot => do_screenshot(rt),
     }
     let _ = right;
 }
@@ -1792,19 +1788,36 @@ pub fn on_motion(rt: &Rt, app: &mut App, ip: &mut Ip, x: i32, y: i32) {
             ip.panel_scroll=Some((start,initial,true));
             ip.pending_ui=None;
             app.press=None;
+            let mut changed = false;
             if app.process_block_open {
                 let max=ui::process_rows(app).len().saturating_sub(ui::process_visible_rows(app));
-                app.process_scroll=(initial as i64+(start-y) as i64/52).clamp(0,max as i64) as usize;
-                app.settings_ui.process_scroll_at = 0;
+                let next=(initial as i64+(start-y) as i64/52).clamp(0,max as i64) as usize;
+                if next != app.process_scroll {
+                    app.process_scroll=next;
+                    app.settings_ui.process_scroll_at = 0;
+                    changed = true;
+                }
             } else if app.show_diag {
                 let pages=settings_panel::inspector_lines(app,&rt.fonts).len().div_ceil(settings_panel::inspector_page_size(app)).max(1);
-                app.settings_ui.inspector_page=(initial as i64+(start-y) as i64/72).clamp(0,pages as i64-1) as usize;
-                app.settings_ui.inspector_page_at = 0;
+                let next=(initial as i64+(start-y) as i64/72).clamp(0,pages as i64-1) as usize;
+                if next != app.settings_ui.inspector_page {
+                    app.settings_ui.inspector_page=next;
+                    app.settings_ui.inspector_page_at = 0;
+                    changed = true;
+                }
             } else if app.settings_open {
                 let max=ui::settings_layout(app).pages.saturating_sub(1);
-                app.settings_page=(initial as i64+(start-y) as i64/72).clamp(0,max as i64) as usize;
+                let next=(initial as i64+(start-y) as i64/72).clamp(0,max as i64) as usize;
+                if next != app.settings_page {
+                    app.settings_page=next;
+                    changed = true;
+                }
             }
-            rt.redraw_full(app);
+            if changed {
+                if app.process_block_open { rt.redraw(app, ui::process_block_rect(app)); }
+                else if app.show_diag { rt.redraw(app, ui::diag_rect(app)); }
+                else { rt.redraw(app, ui::settings_rect(app)); }
+            }
             return;
         }
     }
@@ -2256,8 +2269,43 @@ pub fn poll_wps(enabled: bool, whiteboard: bool, test_mode: bool, wps_bridge: &m
     }
 }
 
+/// Ctrl+P from evdev: toggle Sidera and ask the add-in to reset WPS to its
+/// presentation arrow pointer. Manual WPS pen clicks never take this path.
+#[cfg(unix)]
+fn handle_pen_shortcut(rt: &Rt, app: &mut App, wps: Option<&WpsBridge>) {
+    if app.launch.active() || app.whiteboard || app.settings_open
+        || app.settings_ui.modal() || app.confirm_quit || app.show_diag
+        || app.settings_ui.editor.is_some()
+    {
+        return;
+    }
+    if let Some(w) = wps {
+        let _ = w.enqueue("CURSOR");
+    }
+    if app.mode == 1 {
+        switch_to_cursor(rt, app);
+    } else {
+        switch_to_draw(rt, app, 1);
+    }
+}
+
 pub fn tick_shared(rt: &Rt, app: &mut App, _ip: &mut Ip,
     wps_bridge: Option<&WpsBridge>, update: &WpsUpdate, t: &mut Timers, system_dark: bool) {
+    // WPS presentation is reported by the add-in on Wayland (where there is
+    // no X11 fullscreen state) and by fullscreen detection on X11/Windows.
+    let presenting = app.wps_fullscreen || wps_bridge.is_some_and(|w| w.showing());
+    if presenting != app.pen_hotkey_grabbed {
+        // X11/XWayland grab the key before WPS sees it; native Wayland and
+        // Windows implement their own mechanism (or use the bridge reset).
+        // Keeping the X11 grab also protects presentations when the add-in is
+        // not connected, so WPS never enters its own pen mode.
+        rt.backend.set_pen_hotkey(presenting);
+        app.pen_hotkey_grabbed = presenting;
+    }
+    #[cfg(unix)]
+    if keyboard_evdev::take_pen_shortcut() && presenting {
+        handle_pen_shortcut(rt, app, wps_bridge);
+    }
     if app.update_system_theme(system_dark) {
         rt.redraw_preferences(app, app.previewing_sidebars());
     }
@@ -2515,9 +2563,6 @@ pub fn tick_shared(rt: &Rt, app: &mut App, _ip: &mut Ip,
         }
         if app.eraser_popup_visible {
             rt.redraw(app, ui::eraser_popup_rect(app));
-        }
-        if app.more_menu_open {
-            rt.redraw(app, ui::more_menu_rect(app));
         }
     }
 }

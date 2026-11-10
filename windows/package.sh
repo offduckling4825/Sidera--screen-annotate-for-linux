@@ -18,6 +18,13 @@ fi
 if [ -f "$HERE/assets/sidera.ico" ]; then
   cp -f "$HERE/assets/sidera.ico" "$DIST/sidera.ico"
 fi
+FONTS="$HERE/../rust/assets/fonts"
+if [ -d "$FONTS" ]; then
+  rm -rf "$DIST/fonts"
+  mkdir -p "$DIST/fonts"
+  cp -f "$FONTS/NotoSansCJKsc-Regular.otf" "$DIST/fonts/"
+  cp -f "$FONTS/LICENSE-OFL.txt" "$DIST/fonts/"
+fi
 ADDIN="$HERE/../wps-addin"
 if [ -d "$ADDIN" ]; then
   rm -rf "$DIST/wps-addin"
@@ -41,12 +48,13 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
     icon = os.path.join(dist, "sidera.ico")
     if os.path.exists(icon):
         z.write(icon, "sidera.ico")
-    addin = os.path.join(dist, "wps-addin")
-    if os.path.isdir(addin):
-        for root, _, files in os.walk(addin):
-            for name in files:
-                full = os.path.join(root, name)
-                z.write(full, os.path.relpath(full, dist))
+    for folder in ("wps-addin", "fonts"):
+        path = os.path.join(dist, folder)
+        if os.path.isdir(path):
+            for root, _, files in os.walk(path):
+                for name in files:
+                    full = os.path.join(root, name)
+                    z.write(full, os.path.relpath(full, dist))
 print(out)
 PY
 

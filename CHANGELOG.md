@@ -2,6 +2,25 @@
 
 记录本仓库 `custom` 分支的用户可见变化。上游发行版请查看[原项目](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/releases)。
 
+## 未发布 · 3.2-Electro.rc.4 课堂修复（2026-11-10）
+
+- 设置界面在整数缩放下对 1px 横向/纵向线条和文字原点做像素对齐，修复线条与文字发虚。
+- 新增设置窗口诊断：记录原生/覆盖层路径、缩放与窗口尺寸；`SIDERA_DUMP_SETTINGS` 导出实际画面，`SIDERA_SETTINGS_OVERLAY=1` 强制覆盖层对比。
+- Ctrl+P 改为 evdev 识别物理快捷键（X11 / XWayland / Wayland 通用）；只有真实快捷键才切换 Sidera，并通过 WPS 加载项把 WPS 指针复位为光标，手动点 WPS 画笔不再触发。
+- 默认画笔尺寸 5、橡皮 60 改为显式常量并加入回归测试。
+- 以上逻辑 Linux 与 Windows 同步（Windows 保留 RegisterHotKey 作为快捷键来源）。
+
+## 未发布 · 3.2-Electro.rc.3 课堂问题修复（2026-11-09）
+
+- 修复设置界面的运行日志/系统诊断拖动卡顿：缓存换行文本，拖动只在页码实际变化时重绘。
+- 诊断信息同时显示逻辑/物理分辨率与缩放来源；补充 X11 设置窗口和 Wayland configure 缩放日志。
+- X11 设置窗口改用不透明根视觉，避免 UKUI 等合成器对 ARGB 窗口的模糊处理。
+- 默认侧边栏垂直位置明确为 50%。
+- WPS 放映时抢占 `Ctrl+P`（WPS 自带画笔快捷键），改为切换 Sidera 画笔模式；非放映时释放，不影响打印。
+- 内置 Noto Sans CJK SC 字体（OFL-1.1），优先于系统字体加载；DEB/RPM/Arch/Windows 包均自带。
+- 移除侧边栏“更多”子菜单，截图改为最下方独立按钮，标注“截图”。
+- 版本号更新为 `3.2-Electro.rc.3`。
+
 ## 未发布 · 3.2-Electro-rc.2 课堂问题修复（2026-11-08）
 
 - 修复画笔模式下收起再展开侧边栏时，画布已有笔迹但画笔组仍保持收起；展开时按实际笔迹自动恢复。

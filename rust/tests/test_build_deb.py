@@ -15,7 +15,7 @@ import unittest
 
 
 REPO = Path(__file__).resolve().parents[2]
-VERSION = "3.2-Electro-rc.2"
+VERSION = "3.2-Electro.rc.4"
 
 
 def elf_fixture(machine, elf_class=2, byte_order=1, kind=2):
@@ -58,6 +58,7 @@ class BuildDebTests(unittest.TestCase):
             shutil.copyfile(REPO / name, repo / name)
 
         shutil.copytree(REPO / "wps-addin", repo / "wps-addin")
+        shutil.copytree(REPO / "rust/assets/fonts", repo / "rust/assets/fonts")
         shutil.copytree(REPO / "compat/gnome-extension", repo / "compat/gnome-extension")
         (repo / "tools").mkdir()
         shutil.copyfile(REPO / "tools/deb_dependencies.py", repo / "tools/deb_dependencies.py")

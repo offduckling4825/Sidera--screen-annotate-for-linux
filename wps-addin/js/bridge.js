@@ -147,6 +147,13 @@ function bridgeState(allowEnd) {
             // -1 immediately made the toolbar flap between Start and End.
             st.pos = _lastShowPos
         }
+        if (v && st.pos > 0) {
+            try {
+                var pointer = Number(v.PointerType)
+                if (isFinite(pointer) && window._sideraPointerBaseline === undefined)
+                    window._sideraPointerBaseline = pointer
+            } catch (e) {}
+        }
         if (!BRIDGE_FULL) { return st }
         var pages
         if (v) {
@@ -248,10 +255,45 @@ function bridgeFetch(path, onResult, signal, onText) {
             .catch(function () { if (onResult) onResult(false) })
     } catch (e) { if (onResult) onResult(false) }
 }
+function bridgePointerBaseline() {
+    var baseline = window._sideraPointerBaseline
+    if (typeof baseline === 'number' && isFinite(baseline)) return baseline
+    // Prefer WPS enum constants when the JS API exposes them.
+    try {
+        var types = window.wps && window.wps.PpSlideShowPointerType
+        if (types && isFinite(Number(types.ppSlideShowPointerArrow)))
+            return Number(types.ppSlideShowPointerArrow)
+    } catch (e) {}
+    try {
+        var app = bridgeApplication()
+        if (app && isFinite(Number(app.ppSlideShowPointerArrow)))
+            return Number(app.ppSlideShowPointerArrow)
+    } catch (e) {}
+    // PowerPoint-compatible value; used only if no baseline was recorded.
+    return 1
+}
+function bridgeSetPointerArrow(view) {
+    var target = bridgePointerBaseline()
+    try {
+        view.PointerType = target
+    } catch (e) {
+        bridgeChannelLog('CURSOR failed')
+        return false
+    }
+    // WPS may handle the physical shortcut after this command; settle again.
+    setTimeout(function () {
+        try {
+            var current = bridgeView()
+            if (current) current.PointerType = target
+        } catch (e) {}
+    }, 140)
+    bridgeChannelLog('CURSOR ' + target)
+    return true
+}
 function bridgeCmd(cmd) {
     var jump = /^GOTO ([1-9][0-9]{0,9}) ([1-9][0-9]{0,9})$/.exec(cmd)
-    if (!jump && cmd !== 'START' && cmd !== 'NEXT' && cmd !== 'PREV' && cmd !== 'EXIT') return
-    if (!BRIDGE_FULL && cmd !== 'NEXT' && cmd !== 'PREV') return
+    if (!jump && cmd !== 'START' && cmd !== 'NEXT' && cmd !== 'PREV' && cmd !== 'EXIT' && cmd !== 'CURSOR') return
+    if (!BRIDGE_FULL && cmd !== 'NEXT' && cmd !== 'PREV' && cmd !== 'CURSOR') return
     try {
         var v = bridgeView()
         if (jump) {
@@ -267,6 +309,8 @@ function bridgeCmd(cmd) {
             window._sideraStartingUntil = Date.now() + 3000
             // 使用 WPS 自身的“当页开始”，执行时读取当前页；不改文档放映范围。
             target.ExecuteMso(BRIDGE_START_COMMAND)
+        } else if (cmd == 'CURSOR') {
+            if (!v || !bridgeSetPointerArrow(v)) throw new Error('WPS pointer is not writable')
         } else {
             if (!v) throw new Error('No slideshow')
             if (cmd == 'NEXT') v.Next()
@@ -594,6 +638,7 @@ function startBridge() {
                                 setTimeout(function () { bridgePushIfChanged(ev, false, allowEnd) }, 180)
                             }
                         }
+                        if (ev === 'SlideShowEnd') window._sideraPointerBaseline = undefined
                         api.AddApiEventListener(ev, handler)
                         handlers[ev] = handler
                     } catch (e) { eventsReady = false }

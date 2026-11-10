@@ -1,9 +1,11 @@
-Sidera · Windows 版（3.2-Electro.rc）
+Sidera · Windows 版（3.2-Electro.rc.4）
 
 运行：双击 sidera.exe
 要求：Windows 10 x64 或更高（仅验证单显示器场景）
 
 快捷键：Ctrl+Shift+D 切换画笔/光标，Ctrl+Shift+Q 退出。
+WPS 放映中 Ctrl+P 由 Sidera 接管为切换画笔。
+自带中文字体：fonts/NotoSansCJKsc-Regular.otf。
 当前包含：共享核心、透明覆盖层、画笔/橡皮/白板/工具栏、
 鼠标与触摸输入、截图、系统主题、单实例、托盘菜单、注册表自启动、
 原生设置窗口、WPS 放映前台检测、进程扫描与进程屏蔽。

@@ -263,6 +263,7 @@ fn run() -> Result<(), String> {
                     kind,
                     diameter,
                 ),
+                WinEvent::PenMode => { switch_to_draw(&rt, &mut app, 1); }
                 WinEvent::ToggleMode => {
                     if app.mode == 0 {
                         switch_to_draw(&rt, &mut app, 1);

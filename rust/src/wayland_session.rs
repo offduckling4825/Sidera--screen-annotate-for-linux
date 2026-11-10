@@ -213,6 +213,8 @@ impl LayerShellHandler for WlState {
         let platform = self.desktop.outputs[&id].rt.backend.as_any().downcast_ref::<WlPlat>().unwrap();
         let scale = platform.scale.get();
         if !crate::app::valid_geometry(w,h,scale) { log::error!("忽略过大 Wayland 输出：{w}x{h}@{scale}"); return; }
+        log::info!("[WAYLAND] output {id} configure={}x{} scale={:.3} output-logical={}x{} fallback={}x{}",
+            configure.new_size.0, configure.new_size.1, scale, w, h, fallback.0, fallback.1);
         platform.on_configure(w,h);
         self.desktop.configure(&id,w,h,scale);
     }

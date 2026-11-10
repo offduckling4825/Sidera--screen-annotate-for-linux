@@ -713,6 +713,12 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
         return;
     }
     if line.starts_with("COMMAND_FAILED ") {
+        // A failed pointer reset must not block page navigation.
+        if line.trim_start_matches("COMMAND_FAILED ").trim() == "CURSOR" {
+            wps_log(line);
+            crate::diag_log::warn("WPS 画笔指针复位失败（CURSOR）");
+            return;
+        }
         let mut s = shared.lock().unwrap();
         s.command_failed_until = now_ms() + 3000;
         s.start_pending_until = 0;
@@ -1221,9 +1227,9 @@ impl WpsBridge {
     pub fn enqueue(&self, cmd: &str) -> bool {
         let mut s = self.shared.lock().unwrap();
         let start = cmd == "START";
-        if !matches!(cmd, "START" | "NEXT" | "PREV" | "EXIT") || !s.connected
+        if !matches!(cmd, "START" | "NEXT" | "PREV" | "EXIT" | "CURSOR") || !s.connected
             || now_ms() - s.last_seen > 3000 || s.whiteboard
-            || (!s.test_mode && !matches!(cmd, "NEXT" | "PREV"))
+            || (!s.test_mode && !matches!(cmd, "NEXT" | "PREV" | "CURSOR"))
             || (start && (!s.can_start || s.real_pos > 0 || now_ms() < s.start_pending_until))
             || (!start && s.real_pos < 1)
             || now_ms() < s.command_failed_until {

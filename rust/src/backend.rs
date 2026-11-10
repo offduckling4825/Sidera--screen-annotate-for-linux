@@ -64,6 +64,8 @@ pub trait Backend: 'static {
     fn grab_hotkey(&self) -> bool {
         false
     }
+    /// 在 WPS 放映期间抢占“画笔”快捷键（Ctrl+P）。
+    fn set_pen_hotkey(&self, _on: bool) {}
     /// 窗口尺寸变化（Wayland layer 配置回调），逻辑尺寸
     fn on_configure(&self, _w: i32, _h: i32) {}
     /// 设备缩放变化（X11 DPI / Wayland fractional scale）

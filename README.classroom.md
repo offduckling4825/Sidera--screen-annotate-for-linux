@@ -4,7 +4,7 @@
 
 ## 安装前
 
-核对发行版、CPU 架构、系统 libc 与桌面会话。`3.2-Electro-rc.2` 提供 **amd64 与 ARM64**，均以对应架构的 Ubuntu 22.04 为构建基线；实际依赖以包的 `Depends` 和 Release 内 `BUILDINFO-对应架构.md` 为准。构建基线不等于所有桌面都已验收，学校 ARM64 / glibc 2.31 环境仍需单独构建。
+核对发行版、CPU 架构、系统 libc 与桌面会话。`3.2-Electro.rc.4` 提供 **amd64 与 ARM64**，均以对应架构的 Ubuntu 22.04 为构建基线；实际依赖以包的 `Depends` 和 Release 内 `BUILDINFO-对应架构.md` 为准。构建基线不等于所有桌面都已验收，学校 ARM64 / glibc 2.31 环境仍需单独构建。
 
 匹配系统请按 [README 的安装步骤](README.md#安装与开始使用) 下载、校验并用 apt 安装；不要强制跳过依赖。Rust 与旧 C++ 版使用同一个 `sidera` 包名，安装会覆盖原版本。
 

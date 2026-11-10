@@ -87,7 +87,9 @@ pub(crate) struct X11Window {
     wm_state: Atom,
     net_wm_state: Atom,
     hidden: Atom,
+    depth: u8,
     dirty: Cell<bool>,
+    dumped: Cell<bool>,
     frame: RefCell<Option<Pixmap>>,
 }
 
@@ -114,6 +116,14 @@ impl X11Window {
             .unwrap_or((0, 0, x11.width, x11.height));
         let width = pixels(860).min((mon_w - 40).max(1)).max(1);
         let height = pixels(620).min((mon_h - 72).max(1)).max(1);
+        log::info!(
+            "[SETTINGS] X11 scale={scale:.3} monitor={mon_w}x{mon_h}@({mon_x},{mon_y}) physical={width}x{height} logical={:.0}x{:.0}",
+            f64::from(width) / scale, f64::from(height) / scale
+        );
+        crate::diag_log::info(&format!(
+            "设置窗口：原生 X11 scale={scale:.3} physical={width}x{height} logical={:.0}x{:.0}",
+            f64::from(width) / scale, f64::from(height) / scale
+        ));
         let window_x = (mon_x + (mon_w - width) / 2).clamp(i16::MIN as i32, i16::MAX as i32);
         let window_y = (mon_y + (mon_h - height) / 2).clamp(i16::MIN as i32, i16::MAX as i32);
         let id = x11.conn.generate_id()?;
@@ -132,12 +142,18 @@ impl X11Window {
         let net_pid = atom(b"_NET_WM_PID")?;
         let net_icon = atom(b"_NET_WM_ICON")?;
         let utf8 = atom(b"UTF8_STRING")?;
+        // The settings window is fully opaque. Using the root visual avoids
+        // compositor effects that some desktops (e.g. UKUI) apply to ARGB
+        // windows and makes the 1:1 pixel mapping unambiguous.
+        let (visual, depth) = {
+            let screen = &x11.conn.setup().roots[x11.screen_num];
+            (screen.root_visual, screen.root_depth)
+        };
         x11.conn.create_window(
-            x11.argb_depth, id, x11.root,
+            depth, id, x11.root,
             window_x as i16, window_y as i16,
-            width as u16, height as u16, 0, WindowClass::INPUT_OUTPUT, x11.argb_visual,
+            width as u16, height as u16, 0, WindowClass::INPUT_OUTPUT, visual,
             &CreateWindowAux::new()
-                .colormap(x11.cmap)
                 .background_pixel(0xff000000 | app.palette().paper)
                 .border_pixel(0)
                 .event_mask(EventMask::EXPOSURE | EventMask::STRUCTURE_NOTIFY
@@ -179,7 +195,8 @@ impl X11Window {
         x11.conn.flush()?;
         Ok(Self {
             x11, id, gc, size: Cell::new((width as u16, height as u16)), scale,
-            protocols, delete, wm_state, net_wm_state, hidden, dirty: Cell::new(true),
+            protocols, delete, wm_state, net_wm_state, hidden, depth, dirty: Cell::new(true),
+            dumped: Cell::new(false),
             frame: RefCell::new(None),
         })
     }
@@ -204,6 +221,24 @@ impl X11Window {
             Some(hidden)
         };
         hidden() == Some(true)
+    }
+
+    fn dump_settings_png(pm: &Pixmap, path: &str) {
+        let mut rgba = Vec::with_capacity(pm.data().len());
+        for px in pm.pixels() {
+            let alpha = u32::from(px.alpha());
+            let un = |c: u8| {
+                if alpha == 0 { return 0; }
+                ((u32::from(c) * 255 + alpha / 2).checked_div(alpha).unwrap_or(0)).min(255) as u8
+            };
+            rgba.extend_from_slice(&[un(px.red()), un(px.green()), un(px.blue()), px.alpha()]);
+        }
+        if let Some(img) = image::RgbaImage::from_raw(pm.width(), pm.height(), rgba) {
+            match img.save(path) {
+                Ok(()) => crate::diag_log::info(&format!("设置窗口画面已导出：{path}")),
+                Err(error) => crate::diag_log::warn(&format!("导出设置窗口失败：{error}")),
+            }
+        }
     }
 
     fn raise(&self) {
@@ -238,18 +273,23 @@ impl X11Window {
         if resize { *cache = Pixmap::new(width.into(), height.into()); }
         let Some(frame) = cache.as_mut() else { return };
         ui::draw_settings_window(app, &rt.fonts, rt.icon.as_ref(), frame, self.scale as f32);
+        if !self.dumped.replace(true) {
+            if let Some(path) = std::env::var_os("SIDERA_DUMP_SETTINGS") {
+                Self::dump_settings_png(frame, &path.to_string_lossy());
+            }
+        }
         // Respect the server's request limit when the window is maximized.
         let limit = self.x11.conn.maximum_request_bytes().saturating_sub(64);
         let rows = (limit / (usize::from(width) * 4)).max(1);
         if rows >= usize::from(height) {
-            let _ = self.x11.put_pixmap(self.id, self.gc, frame, 0, 0);
+            let _ = self.x11.put_pixmap_depth(self.id, self.gc, frame, 0, 0, self.depth);
             return;
         }
         for y in (0..u32::from(height)).step_by(rows) {
             let lines = (u32::from(height) - y).min(rows as u32);
             let rect = IntRect::from_xywh(0, y as i32, width.into(), lines).unwrap();
             if let Some(strip) = frame.clone_rect(rect) {
-                let _ = self.x11.put_pixmap(self.id, self.gc, &strip, 0, y as i32);
+                let _ = self.x11.put_pixmap_depth(self.id, self.gc, &strip, 0, y as i32, self.depth);
             }
         }
     }

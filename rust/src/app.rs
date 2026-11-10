@@ -9,7 +9,7 @@ use crate::page_cache::PageCache;
 use tiny_skia::{Color, Pixmap};
 
 // ---------------- 常量（与原 C++ app.h 对齐） ----------------
-pub const VERSION: &str = "3.2-Electro-rc.2";
+pub const VERSION: &str = "3.2-Electro.rc.4";
 // 侧边栏基准尺寸（与 C++ 版对齐：56/34/24/19；可在设置里用「侧边栏大小」缩放）
 pub const SB_BASE_W: f64 = 56.0;
 pub const SB_BASE_BTN: f64 = 34.0;
@@ -17,6 +17,8 @@ pub const SB_BASE_ICON: f64 = 24.0;
 pub const SB_BASE_DOT: f64 = 19.0;
 pub const DEFAULT_SB_SCALE: f64 = 1.0;
 pub const DEFAULT_SIDEBAR_ALPHA: u8 = 80;
+/// 首次启动时工具栏垂直位置（0 = 顶部，100 = 底部）。
+pub const DEFAULT_SIDEBAR_POSITION: f32 = 50.0;
 pub const DEFAULT_LARGE_TOUCH_THRESHOLD: f64 = 64.0;
 pub const DEFAULT_LARGE_ERASE_SCALE10: i32 = 12;
 pub const DEFAULT_STARTUP_DELAY: u32 = 10;
@@ -49,6 +51,9 @@ pub const COLORS: [(u8, u8, u8); 10] = [
 ];
 pub const PEN_SIZES: [i32; 4] = [2, 3, 5, 10];
 pub const ERASER_SIZES: [i32; 4] = [20, 30, 60, 80];
+/// 首次启动默认画笔 5px、橡皮 60px（数组索引 2）。
+pub const DEFAULT_PEN_INDEX: usize = 2;
+pub const DEFAULT_ERASER_INDEX: usize = 2;
 
 pub fn now_ms() -> i64 {
     use std::sync::OnceLock;
@@ -83,8 +88,6 @@ pub struct App {
     pub mode: i32,
     pub pen_popup_visible: bool,
     pub eraser_popup_visible: bool,
-    pub more_menu_open: bool,
-    pub more_settings_entry: bool,
     pub process_block_open: bool,
     pub process_block_enabled: bool,
     pub process_rules: Vec<String>,
@@ -147,6 +150,8 @@ pub struct App {
 
     // WPS
     pub wps_fullscreen: bool,
+    /// Ctrl+P（WPS 画笔）是否已在本进程内被抢占。
+    pub pen_hotkey_grabbed: bool,
     pub wps_debug: bool,
     pub wps_test_mode: bool,
     pub startup_delay: u32,
@@ -236,8 +241,6 @@ impl App {
             mode: 0,
             pen_popup_visible: false,
             eraser_popup_visible: false,
-            more_menu_open: false,
-            more_settings_entry: false,
             process_block_open: false,
             process_block_enabled: false,
             process_rules: Vec::new(),
@@ -267,13 +270,13 @@ impl App {
             drawing_tools: crate::toolbar::DrawingTools::default(),
             sidebar_drag: None,
             saved_drawing_tools: false,
-            sb_y: ((screen_h - sb_height_of(DEFAULT_SB_SCALE)) / 2).max(0),
+            sb_y: (((screen_h - sb_height_of(DEFAULT_SB_SCALE)) as f32) * DEFAULT_SIDEBAR_POSITION / 100.0).round() as i32,
             sidebar_anim_start: None,
             sidebar_anim_from: 0.0,
             sidebar_collapsed_since: None,
             cur_color: 0,
-            cur_pen: 2,
-            cur_eraser: 2,
+            cur_pen: DEFAULT_PEN_INDEX,
+            cur_eraser: DEFAULT_ERASER_INDEX,
             is_drawing: false,
             last_pt: (0, 0),
             stroke_start_ms: 0,
@@ -283,6 +286,7 @@ impl App {
             theme: crate::ui_theme::Theme::default(),
             hotkey_ok: false,
             wps_fullscreen: false,
+            pen_hotkey_grabbed: false,
             wps_debug: true,
             wps_test_mode: true,
             startup_delay: DEFAULT_STARTUP_DELAY,
@@ -1294,6 +1298,13 @@ mod theme_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn fresh_defaults_are_pen_five_and_eraser_sixty() {
+        let app = App::new(Pixmap::new(10, 10).unwrap(), 10, 10);
+        assert_eq!(app.pen_width(), 5);
+        assert_eq!(app.eraser_width(), 60);
     }
 
     #[test]

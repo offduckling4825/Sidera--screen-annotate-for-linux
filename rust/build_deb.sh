@@ -2,7 +2,7 @@
 # ============================================================
 # Rust 版 Sidera DEB 打包脚本
 #   用法: ./build_deb.sh [amd64|aarch64]
-#   产物: <repo>/sidera_3.2-Electro-rc.2_<amd64|arm64>.deb
+#   产物: <repo>/sidera_3.2-Electro.rc.4_<amd64|arm64>.deb
 #
 # 依赖：dpkg-dev、binutils、python3；必须能解析目标架构的系统库
 # 前置：先用 ./build_container.sh <arch> 编译出二进制
@@ -25,9 +25,9 @@ case "$ARG" in
 esac
 
 PKG_NAME="sidera"
-# 注意：dpkg 要求 Version 以数字开头，故采用 "3.2-Electro-rc.2"；
+# 注意：dpkg 要求 Version 以数字开头，故采用 "3.2-Electro.rc.4"；
 # 如需改版本只改这里即可。
-VERSION="${SIDERA_VERSION:-3.2-Electro-rc.2}"
+VERSION="${SIDERA_VERSION:-3.2-Electro.rc.4}"
 dpkg --validate-version "$VERSION" || exit 1
 [[ "$VERSION" != */* && "$VERSION" != *[[:space:]]* ]] || exit 1
 
@@ -102,6 +102,13 @@ chmod 755 "$PKG_DIR/usr/share/sidera/wps-addin/install.sh" \
           "$PKG_DIR/usr/share/sidera/wps-addin/cleanup-old.sh"
 install -m 755 "$REPO/wps-addin/install.sh" "$PKG_DIR/usr/bin/sidera-wps-addin-install"
 install -m 755 "$REPO/wps-addin/cleanup-old.sh" "$PKG_DIR/usr/bin/sidera-wps-addin-cleanup"
+
+# ---------- 内置中文字体（Noto Sans CJK SC，OFL-1.1）----------
+if [ -f "$REPO/rust/assets/fonts/NotoSansCJKsc-Regular.otf" ]; then
+  install -d "$PKG_DIR/usr/share/sidera/fonts"
+  install -m 644 "$REPO/rust/assets/fonts/NotoSansCJKsc-Regular.otf" "$PKG_DIR/usr/share/sidera/fonts/"
+  install -m 644 "$REPO/rust/assets/fonts/LICENSE-OFL.txt" "$PKG_DIR/usr/share/sidera/fonts/"
+fi
 
 # GNOME's native overlay needs a per-user Shell extension. Package its source,
 # but do not enable it or restart sessions from the root post-install script.

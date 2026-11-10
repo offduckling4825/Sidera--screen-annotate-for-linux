@@ -332,8 +332,6 @@ fn main() {
     paste(&mut board, &crop(&a, &fonts, None, ui::pen_popup_rect(&a)), 300.0, 174.0, 1.0);
     a.pen_popup_visible = false; a.eraser_popup_visible = true; a.cur_eraser = 1;
     paste(&mut board, &crop(&a, &fonts, None, ui::eraser_popup_rect(&a)), 582.0, 174.0, 1.0);
-    a.eraser_popup_visible = false; a.more_menu_open = true;
-    paste(&mut board, &crop(&a, &fonts, None, ui::more_menu_rect(&a)), 582.0, 384.0, 1.0);
 
     label(&mut board, &fonts, "笔尖跟随颜色（图标放大展示）", 300.0, 540.0, 21.0);
     for i in 0..10 {

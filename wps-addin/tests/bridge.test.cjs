@@ -283,3 +283,19 @@ test('WebSocket is the primary channel and commands use the same socket', () => 
   assert.ok(socket.sent.some(message => message.startsWith('EVENT ')));
   assert.ok(socket.sent.some(message => message.startsWith('COMMAND_OK')));
 });
+
+test('CURSOR restores the recorded presentation pointer baseline', () => {
+  const f = fixture();
+  const view = f.app.ActivePresentation.SlideShowWindow.View;
+  view.PointerType = 1;
+  f.context.OnAddinLoad({});
+  f.emit('SlideShowBegin');
+  assert.equal(f.context.window._sideraPointerBaseline, 1);
+  view.PointerType = 2;
+  f.context.bridgeCmd('CURSOR');
+  assert.equal(view.PointerType, 1, 'immediate reset must return to the baseline');
+  const settle = [...f.timeouts.values()];
+  view.PointerType = 2;
+  for (const callback of settle) callback();
+  assert.equal(view.PointerType, 1, 'delayed settle must override a late WPS toggle');
+});

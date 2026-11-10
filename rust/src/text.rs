@@ -82,12 +82,31 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>, depth: u32) {
     }
 }
 
+fn push_bundled(out: &mut Vec<PathBuf>, dir: &Path) {
+    for name in ["NotoSansCJKsc-Regular.otf", "NotoSansCJK-Regular.ttc"] {
+        let path = dir.join(name);
+        if path.is_file() { out.push(path); }
+    }
+}
+
 impl Fonts {
     pub fn load() -> Self {
         static FONTS: std::sync::OnceLock<Fonts> = std::sync::OnceLock::new();
         FONTS.get_or_init(Self::load_system).clone()
     }
     fn load_system() -> Self {
+        // A bundled CJK font guarantees Chinese glyphs even on minimal systems.
+        // It is tried first; system fonts remain as fallback for extra symbols.
+        let mut bundled = Vec::new();
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                push_bundled(&mut bundled, &dir.join("fonts"));
+            }
+        }
+        for dir in ["/usr/share/sidera/fonts", "/usr/local/share/sidera/fonts"] {
+            push_bundled(&mut bundled, Path::new(dir));
+        }
+
         let mut files: Vec<PathBuf> = Vec::new();
         collect(Path::new("/usr/share/fonts"), &mut files, 0);
         collect(Path::new("/usr/local/share/fonts"), &mut files, 0);
@@ -107,6 +126,11 @@ impl Fonts {
             collect(&h.join(".fonts"), &mut files, 0);
         }
         files.sort_by_key(|p| -score(&p.to_string_lossy()));
+        if !bundled.is_empty() {
+            log::info!("[字体] 使用内置字体 {} 个", bundled.len());
+            bundled.extend(files);
+            files = bundled;
+        }
 
         let mut list = Vec::new();
         let samples: Vec<char> = "课堂画笔橡皮清除撤回设置页码跳转开始结束放映白板0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".chars().collect();
@@ -201,6 +225,16 @@ impl Fonts {
             anti_alias: true,
             ..Default::default()
         };
+        // At integer device scales, snap each glyph origin to a whole pixel.
+        // Fractional origins make small CJK text look soft even when the
+        // outline itself is rendered correctly.
+        static TEXT_SNAP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let snap_enabled = *TEXT_SNAP.get_or_init(|| std::env::var_os("SIDERA_NO_TEXT_SNAP").is_none());
+        let snap = snap_enabled
+            && transform.kx.abs() < 0.01 && transform.ky.abs() < 0.01
+            && (transform.sx - transform.sx.round()).abs() < 0.01
+            && (transform.sy - transform.sy.round()).abs() < 0.01
+            && transform.sx != 0.0 && transform.sy != 0.0;
         let mut caret = x;
         for ch in s.chars() {
             let Some(f) = self.pick(ch) else {
@@ -214,7 +248,15 @@ impl Fonts {
             // 否则字宽与字形大小不一致 → 字挤在一起。
             let sc = sf.h_scale_factor();
             if let Some(ol) = f.outline(gid) {
-                let map = |p: &ab_glyph::Point| (caret + p.x * sc, baseline_y - p.y * sc);
+                let (gx, gy) = if snap {
+                    let dx = transform.sx * caret + transform.tx;
+                    let dy = transform.sy * baseline_y + transform.ty;
+                    ((dx.round() - transform.tx) / transform.sx,
+                     (dy.round() - transform.ty) / transform.sy)
+                } else {
+                    (caret, baseline_y)
+                };
+                let map = |p: &ab_glyph::Point| (gx + p.x * sc, gy - p.y * sc);
                 let mut pb = PathBuilder::new();
                 // 轮廓由多段曲线组成且共享端点；只有新轮廓起点才 move_to，
                 // 否则每段都开新子路径，填充时会互相抵消（字变骨架）。
