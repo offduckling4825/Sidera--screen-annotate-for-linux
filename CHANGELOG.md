@@ -2,6 +2,15 @@
 
 记录本仓库 `custom` 分支的用户可见变化。上游发行版请查看[原项目](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/releases)。
 
+## 未发布 · 3.2-Electro.rc.5 课堂修复（2026-11-11）
+
+- 多个 WPS 窗口同时加载同一课件时，只接受正在放映窗口的状态；只读/重复窗口不能结束或跳转当前批注页，避免放映键来回跳和清空笔迹。
+- `EXIT`/`START` 指令被错误的 WPS 窗口取走失败时自动重试，避免退出放映指令丢失。
+- 希沃白板 5（`WM_CLASS=easinote`）可见时自动收起侧边栏并禁止打开；退出或最小化后立即恢复。
+- 设置窗口请求 `_NET_WM_BYPASS_COMPOSITOR=2`，用于 UKUI/KWin 下规避合成缩放/模糊。
+- Wayland 启动卡片的“桌面连接”改为显示物理分辨率，而不是缩放后的逻辑分辨率。
+- 设置窗口诊断保留：`SIDERA_DUMP_SETTINGS`、`SIDERA_SETTINGS_OVERLAY`。
+
 ## 未发布 · 3.2-Electro.rc.4 课堂修复（2026-11-10）
 
 - 设置界面在整数缩放下对 1px 横向/纵向线条和文字原点做像素对齐，修复线条与文字发虚。

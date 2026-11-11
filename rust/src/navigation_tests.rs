@@ -769,6 +769,21 @@ fn collapsed_edge_tabs_stay_hidden_until_the_user_expands_them() {
 }
 
 #[test]
+fn seewo_avoidance_blocks_expanding_and_restores_it() {
+    let (rt, mut app, _) = ui_fixture();
+    app.collapsed = true;
+    app.avoid_active = true;
+    expand_sidebars(&rt, &mut app);
+    assert!(app.collapsed, "avoid mode must refuse to open the toolbar");
+    apply_input_shape(&rt, &app);
+    let backend = rt.backend.as_any().downcast_ref::<TestBackend>().unwrap();
+    assert!(backend.input.borrow().is_empty(), "avoid mode must not capture input");
+    app.avoid_active = false;
+    expand_sidebars(&rt, &mut app);
+    assert!(!app.collapsed);
+}
+
+#[test]
 fn expanding_a_tucked_sidebar_reopens_drawing_tools_when_ink_exists() {
     let (rt, mut app, _) = ui_fixture();
     app.canvas.data_mut()[0..4].copy_from_slice(&[255, 0, 0, 255]);

@@ -1323,6 +1323,7 @@ fn draw_launch_piece(app: &App, ctx: &mut Ctx, target: R, visible: R, r: R,
 }
 
 fn draw_launch_sidebar(app: &App, fonts: &Fonts, ctx: &mut Ctx, right: bool) {
+    if app.avoid_active { return; }
     let palette = ctx.palette;
     let p = app.launch.reveal();
     if p <= 0.0 { return; }
@@ -1347,6 +1348,7 @@ fn draw_launch_sidebar(app: &App, fonts: &Fonts, ctx: &mut Ctx, right: bool) {
 }
 
 fn draw_sidebar(app: &App, fonts: &Fonts, ctx: &mut Ctx, right: bool, progress: f32) {
+    if app.avoid_active && !app.settings_open { return; }
     let palette = ctx.palette;
     let drag = app.sidebar_drag.filter(|drag| drag.right == right);
     let held = drag.is_some();

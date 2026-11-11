@@ -225,18 +225,24 @@ function bridgeStartTarget() {
         return bars
     } catch (e) { return null }
 }
+function bridgeStream() {
+    var stream = window._sideraRequestStream
+    if (!stream) stream = window._sideraRequestStream = {
+        id: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2), sequence: 0 }
+    return stream
+}
 function bridgeStateMessage(name, st) {
     var message = 'EVENT ' + name + ' pos=' + st.pos + ' click=' + st.click + ' ready=' + st.ready
     if (st.page > 0 || st.total > 0) message += ' page=' + st.page + ' total=' + st.total
     if (st.jump === 1 && st.deck > 0) message += ' jump=1 deck=' + st.deck
+    // Identify this add-in instance so multiple WPS windows can be told apart.
+    message += ' sid=' + encodeURIComponent(bridgeStream().id)
     return message
 }
 function bridgeFetch(path, onResult, signal, onText) {
     try {
         if (/^\/(push|poll)\?/.test(path)) {
-            var stream = window._sideraRequestStream
-            if (!stream) stream = window._sideraRequestStream = {
-                id: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2), sequence: 0 }
+            var stream = bridgeStream()
             path += '&sid=' + encodeURIComponent(stream.id) + '&seq=' + (++stream.sequence)
         }
         var options = { cache: 'no-store' }

@@ -2,7 +2,7 @@
 // Sidera - WPS 联动桥（本地 HTTP 127.0.0.1:16666 + 加载项注册 + 心跳）
 // 平台无关；在独立线程运行 TCP 服务，主线程轮询共享状态
 // ============================================================
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::Write;
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -54,6 +54,15 @@ pub enum WpsEvent {
     RealPos(i32),
 }
 
+#[derive(Default)]
+struct SourceState {
+    pos: i32,
+    seen: i64,
+    /// A window that contradicted the active presentation is ignored until it
+    /// emits a slide-change event (proof that it is the window being presented).
+    passive: bool,
+}
+
 pub struct WpsShared {
     pub connected: bool,
     pub last_seen: i64,
@@ -71,7 +80,11 @@ pub struct WpsShared {
     pub negative_since: i64,
     pub queue: VecDeque<(i64, String)>,
     pub command_failed_until: i64,
+    pub command_not_before: i64,
     pub events: Vec<WpsEvent>,
+    sources: HashMap<String, SourceState>,
+    primary: String,
+    failed_attempts: HashMap<String, u8>,
     sequences: BTreeMap<String, u64>,
 }
 
@@ -94,7 +107,11 @@ impl Default for WpsShared {
             negative_since: 0,
             queue: VecDeque::new(),
             command_failed_until: 0,
+            command_not_before: 0,
             events: Vec::new(),
+            sources: HashMap::new(),
+            primary: String::new(),
+            failed_attempts: HashMap::new(),
             sequences: BTreeMap::new(),
         }
     }
@@ -713,13 +730,33 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
         return;
     }
     if line.starts_with("COMMAND_FAILED ") {
+        let cmd = line.trim_start_matches("COMMAND_FAILED ").trim().to_string();
         // A failed pointer reset must not block page navigation.
-        if line.trim_start_matches("COMMAND_FAILED ").trim() == "CURSOR" {
+        if cmd == "CURSOR" {
             wps_log(line);
             crate::diag_log::warn("WPS 画笔指针复位失败（CURSOR）");
             return;
         }
         let mut s = shared.lock().unwrap();
+        if cmd == "EXIT" || cmd == "START" {
+            // Duplicate WPS windows load the add-in more than once. A command
+            // may be taken by the read-only window; retry it so the window that
+            // is actually presenting can execute it.
+            let attempts = {
+                let attempts = s.failed_attempts.entry(cmd.clone()).or_insert(0);
+                *attempts += 1;
+                *attempts
+            };
+            if attempts <= 2 {
+                if !s.queue.iter().any(|(_, queued)| queued == &cmd) {
+                    s.queue.push_back((now_ms(), cmd.clone()));
+                }
+                s.command_not_before = now_ms() + 120;
+                wps_log(&format!("重试指令 {}（第 {} 次）", cmd, attempts));
+                return;
+            }
+            s.failed_attempts.remove(&cmd);
+        }
         s.command_failed_until = now_ms() + 3000;
         s.start_pending_until = 0;
         s.queue.clear();
@@ -727,6 +764,8 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
         return;
     }
     if line.starts_with("COMMAND_OK ") {
+        let cmd = line.trim_start_matches("COMMAND_OK ").trim();
+        shared.lock().unwrap().failed_attempts.remove(cmd);
         wps_log(line);
         return;
     }
@@ -737,6 +776,48 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
     let name = line.split_whitespace().nth(1).unwrap_or("");
     if !matches!(name, "SlideShowState" | "SlideShowBegin" | "SlideShowEnd" | "SlideShowNextSlide" | "SlideShowNextClick" | "SlideShowOnNext" | "SlideShowOnPrevious") { return; }
     let mut s = shared.lock().unwrap();
+    // Multiple WPS windows can load the add-in at once (same deck opened twice,
+    // one copy read-only). Only the window that is actually being presented may
+    // drive the shared page/show state; a contradicting window is marked
+    // passive until it emits its own slide-change event.
+    let now = now_ms();
+    let sid = extract_str(line, "sid=").unwrap_or("legacy").to_string();
+    let slide_event = matches!(name, "SlideShowBegin" | "SlideShowNextSlide"
+        | "SlideShowNextClick" | "SlideShowOnNext" | "SlideShowOnPrevious");
+    {
+        let source = s.sources.entry(sid.clone()).or_default();
+        source.seen = now;
+        if pos > 0 { source.pos = pos; }
+        if slide_event && pos > 0 { source.passive = false; }
+    }
+    if pos > 0 {
+        if s.sources.get(&sid).is_some_and(|source| source.passive) && !slide_event {
+            return;
+        }
+        let primary_fresh = !s.primary.is_empty()
+            && s.sources.get(&s.primary).is_some_and(|source| source.pos > 0 && now - source.seen <= 5000);
+        if s.primary.is_empty() || sid == s.primary || !primary_fresh || slide_event {
+            if s.primary != sid {
+                s.primary = sid.clone();
+                for (key, source) in s.sources.iter_mut() {
+                    if key != &sid { source.passive = true; }
+                }
+            }
+            if let Some(source) = s.sources.get_mut(&sid) {
+                source.passive = false;
+                source.seen = now;
+            }
+        } else {
+            // Another window is still the active source. Ignore this state but
+            // leave the source eligible so a reconnected add-in can take over
+            // once the old source goes stale.
+            return;
+        }
+    } else if !s.primary.is_empty() && sid != s.primary {
+        if let Some(source) = s.sources.get_mut(&sid) { source.passive = true; }
+        return;
+    }
+    s.sources.retain(|key, source| key == &sid || now - source.seen <= 15_000);
     if s.events.len() >= 64 { s.events.drain(..32); }
     let next_deck = extract_num(line, "deck=");
     let changed_deck = name == "SlideShowState" && pos > 0 && s.real_pos > 0
@@ -784,6 +865,13 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
             wps_log("放映结束");
         }
         s.real_pos = -1;
+        s.primary.clear();
+        for (key, source) in s.sources.iter_mut() {
+            source.pos = -1;
+            // After a real end, other windows must not restart the show by
+            // repeating a stale SlideShowState; only a new slide event may.
+            if key != &sid { source.passive = true; }
+        }
         if name == "SlideShowEnd" { s.can_start = false; s.start_pending_until = 0; s.can_jump = false; }
         let (can_start, can_jump) = (s.can_start, s.can_jump);
         s.queue.retain(|(_, cmd)| (can_start && cmd == "START") || (can_jump && cmd.starts_with("GOTO ")));
@@ -805,6 +893,11 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
     }
 }
 
+fn extract_str<'a>(s: &'a str, key: &str) -> Option<&'a str> {
+    s.split_whitespace().find_map(|word| word.strip_prefix(key))
+        .filter(|value| !value.is_empty())
+}
+
 fn extract_num(s: &str, key: &str) -> i32 {
     s.split_whitespace().find_map(|word| word.strip_prefix(key))
         .and_then(|value| value.parse::<i32>().ok()).filter(|n| *n > 0).unwrap_or(-1)
@@ -819,6 +912,7 @@ fn jump_command(cmd: &str) -> Option<(i32, i32)> {
 }
 
 fn take_command(s: &mut WpsShared) -> Option<String> {
+    if now_ms() < s.command_not_before { return None; }
     s.queue.retain(|(created, _)| now_ms() - created <= 1500);
     let playing = s.real_pos > 0;
     let can_start = s.can_start;
@@ -1324,6 +1418,42 @@ impl WpsBridge {
 mod tests {
     use super::*;
 
+    #[test]
+    fn conflicting_duplicate_window_cannot_end_or_jump_the_active_show() {
+        let shared = Arc::new(Mutex::new(WpsShared::default()));
+        handle_line(&shared, "EVENT SlideShowNextSlide pos=1 click=0 ready=0 sid=active");
+        {
+            let mut state = shared.lock().unwrap();
+            assert!(matches!(state.events.as_slice(), [WpsEvent::SlideshowBegin(1)]));
+            state.events.clear();
+        }
+        // The read-only duplicate reports a show at page 1 and then an end.
+        handle_line(&shared, "EVENT SlideShowState pos=1 click=0 ready=0 sid=readonly");
+        handle_line(&shared, "EVENT SlideShowState pos=-1 click=-1 ready=0 sid=readonly");
+        {
+            let state = shared.lock().unwrap();
+            assert!(state.events.is_empty(), "duplicate window must not end the show");
+            assert_eq!(state.real_pos, 1);
+        }
+        handle_line(&shared, "EVENT SlideShowNextSlide pos=2 click=0 ready=0 sid=active");
+        {
+            let mut state = shared.lock().unwrap();
+            assert!(matches!(state.events.as_slice(), [WpsEvent::RealPos(2)]));
+            state.events.clear();
+        }
+        handle_line(&shared, "EVENT SlideShowEnd pos=-1 click=-1 ready=0 sid=active");
+        {
+            let state = shared.lock().unwrap();
+            assert!(matches!(state.events.as_slice(), [WpsEvent::SlideshowEnd]));
+            assert_eq!(state.real_pos, -1);
+        }
+        // The passive window cannot restart the show by repeating its state.
+        handle_line(&shared, "EVENT SlideShowState pos=1 click=0 ready=0 sid=readonly");
+        let state = shared.lock().unwrap();
+        assert_eq!(state.real_pos, -1);
+        assert!(state.events.iter().all(|event| !matches!(event, WpsEvent::SlideshowBegin(_))));
+    }
+
     #[cfg(unix)]
     #[test]
     fn registration_timeout_does_not_block_the_bridge() {
@@ -1497,6 +1627,29 @@ mod tests {
         assert!(bridge.enqueue("NEXT"));
         let response = poll.join().unwrap();
         assert!(response.contains("NEXT"), "long poll missed command: {response:?}");
+    }
+
+    #[test]
+    fn failed_exit_is_retried_before_blocking_navigation() {
+        let bridge = WpsBridge::from_listener(TcpListener::bind(("127.0.0.1", 0)).unwrap());
+        {
+            let mut state = bridge.shared.lock().unwrap();
+            state.connected = true;
+            state.last_seen = now_ms();
+            state.real_pos = 1;
+        }
+        assert!(bridge.enqueue("EXIT"));
+        handle_line(&bridge.shared, "COMMAND_FAILED EXIT");
+        {
+            let state = bridge.shared.lock().unwrap();
+            assert_eq!(state.command_failed_until, 0);
+            assert!(state.queue.iter().any(|(_, command)| command == "EXIT"));
+        }
+        handle_line(&bridge.shared, "COMMAND_FAILED EXIT");
+        handle_line(&bridge.shared, "COMMAND_FAILED EXIT");
+        let state = bridge.shared.lock().unwrap();
+        assert!(state.command_failed_until > 0);
+        assert!(state.queue.is_empty());
     }
 
     #[test]

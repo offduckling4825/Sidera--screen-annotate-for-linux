@@ -3,13 +3,13 @@ run-name: Release packages for ${{ inputs.release_tag || github.ref_name }}
 
 on:
   push:
-    tags: ['v3.2-Electro.rc.4']
+    tags: ['v3.2-Electro.rc.*']
   workflow_dispatch:
     inputs:
       release_tag:
         description: Existing release tag
         required: true
-        default: v3.2-Electro.rc.4
+        default: v3.2-Electro.rc.5
         type: string
 
 permissions:
@@ -47,7 +47,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v3\.2-Electro\.rc$ ]]
+          [[ "$RELEASE_TAG" =~ ^v3\.2-Electro\.rc(\.[0-9]+)?$ ]]
           test "$(uname -m)" = "$EXPECTED_MACHINE"
           test "$(dpkg --print-architecture)" = "$DEB_ARCH"
           version="${RELEASE_TAG#v}"

@@ -384,6 +384,10 @@ pub fn apply_input_shape(rt: &Rt, app: &App) {
         rt.set_input_region(&[], false);
         return;
     }
+    if app.avoid_active {
+        rt.set_input_region(&[], false);
+        return;
+    }
     if app.launch.active() {
         let mut rects = Vec::new();
         if app.launch.panel_alpha() > 0.0 { rects.extend(rect_of(app, ui::launch_rect(app), 0)); }
@@ -570,7 +574,7 @@ pub fn collapse_sidebars(rt: &Rt, app: &mut App) {
 }
 
 pub fn expand_sidebars(rt: &Rt, app: &mut App) {
-    if !app.collapsed {
+    if app.avoid_active || !app.collapsed {
         return;
     }
     app.set_sidebar_collapsed(false);
@@ -586,6 +590,7 @@ pub fn expand_sidebars(rt: &Rt, app: &mut App) {
 }
 
 pub fn toggle_collapse(rt: &Rt, app: &mut App) {
+    if app.avoid_active { return; }
     if app.collapsed {
         expand_sidebars(rt, app);
     } else {
@@ -942,7 +947,8 @@ pub fn collect_system_info(rt: &Rt, app: &App) -> String {
             _ => "橡皮",
         }
     ));
-    s.push_str(&format!("WPS 全屏: {}\n", app.wps_fullscreen));
+    s.push_str(&format!("WPS 全屏: {}\n希沃白板避让: {}\n",
+        app.wps_fullscreen, if app.avoid_active { "是" } else { "否" }));
     s.push_str(&format!("WPS 已连接: {}\n", app.wps_connected));
     s.push_str(&format!("WPS 模式: {}\n", if app.wps_test_mode { "测试（页码/跳页/开始）" } else { "默认（API 翻页 + 快捷键）" }));
     if let Some(path) = app::config_path() {
@@ -2162,6 +2168,7 @@ pub fn handle_touch(
 pub struct Timers {
     last_wps: Instant,
     last_foreground: Instant,
+    last_avoid: Instant,
     foreground: Option<bool>,
 }
 
@@ -2170,6 +2177,7 @@ impl Timers {
         Timers {
             last_wps: Instant::now() - Duration::from_secs(10),
             last_foreground: Instant::now() - Duration::from_secs(10),
+            last_avoid: Instant::now() - Duration::from_secs(10),
             foreground: None,
         }
     }
@@ -2222,8 +2230,12 @@ pub struct WpsUpdate {
 
 pub fn begin_launch(rt: &Rt, app: &mut App) -> bool {
     if std::env::var_os("SIDERA_NO_SPLASH").is_some() { return false; }
+    // The startup card reports the physical display size. On Wayland the
+    // logical size is the scaled surface size, which looked wrong on HiDPI.
+    let physical_w = (app.screen_w as f64 * app.scale).round() as i32;
+    let physical_h = (app.screen_h as f64 * app.scale).round() as i32;
     app.launch = launch::Launch::begin(
-        format!("{} · {} × {}", rt.backend.description(), app.screen_w, app.screen_h),
+        format!("{} · {} × {}", rt.backend.description(), physical_w, physical_h),
         !rt.fonts.list.is_empty() && rt.icon_big.is_some(), app.hotkey_ok, Instant::now());
     true
 }
@@ -2367,7 +2379,7 @@ pub fn tick_shared(rt: &Rt, app: &mut App, _ip: &mut Ip,
         if app.settings_open {rt.redraw(app,ui::settings_rect(app));}
     }
     tick_launch(rt, app, wps_bridge, update.connected);
-    if app.sidebar_expand_due() { expand_sidebars(rt, app); }
+    if app.sidebar_expand_due() && !app.avoid_active { expand_sidebars(rt, app); }
     // Limit X11 round trips in the periodic repaint path. User actions also
     // check focus directly so they cannot use stale navigation availability.
     let was_visible = t.foreground != Some(false);
@@ -2469,6 +2481,25 @@ pub fn tick_shared(rt: &Rt, app: &mut App, _ip: &mut Ip,
     }
 
 
+
+    // Seewo Whiteboard 5: collapse the sidebar and keep it closed while the
+    // whiteboard window is visible; restoring is deliberate and immediate.
+    if t.last_avoid.elapsed() >= Duration::from_millis(500) {
+        t.last_avoid = Instant::now();
+        let avoid = rt.backend.avoid_window_active();
+        if avoid != app.avoid_active {
+            app.avoid_active = avoid;
+            if avoid {
+                if !app.collapsed { collapse_sidebars(rt, app); }
+                crate::diag_log::info("希沃白板：已自动收起侧边栏");
+            } else {
+                if app.collapsed { expand_sidebars(rt, app); }
+                crate::diag_log::info("希沃白板：已恢复侧边栏");
+            }
+            apply_input_shape(rt, app);
+            rt.redraw_full(app);
+        }
+    }
 
     // 全屏检测（1s；始终扫描，避免加载项连着但已退出放映时状态变陈旧）
     if t.last_wps.elapsed() >= Duration::from_millis(1000) {

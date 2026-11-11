@@ -9,7 +9,7 @@ use crate::page_cache::PageCache;
 use tiny_skia::{Color, Pixmap};
 
 // ---------------- 常量（与原 C++ app.h 对齐） ----------------
-pub const VERSION: &str = "3.2-Electro.rc.4";
+pub const VERSION: &str = "3.2-Electro.rc.5";
 // 侧边栏基准尺寸（与 C++ 版对齐：56/34/24/19；可在设置里用「侧边栏大小」缩放）
 pub const SB_BASE_W: f64 = 56.0;
 pub const SB_BASE_BTN: f64 = 34.0;
@@ -122,6 +122,8 @@ pub struct App {
     // 侧边栏
     pub launch: crate::launch::Launch,
     pub collapsed: bool,
+    /// Seewo Whiteboard 5 is visible: collapse the toolbar and refuse to open it.
+    pub avoid_active: bool,
     pub drawing_tools: crate::toolbar::DrawingTools,
     pub sidebar_drag: Option<crate::ui::SidebarDragFeedback>,
     pub sb_y: i32,
@@ -267,6 +269,7 @@ impl App {
             saved_mode: 0,
             launch: crate::launch::Launch::default(),
             collapsed: false,
+            avoid_active: false,
             drawing_tools: crate::toolbar::DrawingTools::default(),
             sidebar_drag: None,
             saved_drawing_tools: false,

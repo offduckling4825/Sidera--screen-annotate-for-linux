@@ -58,7 +58,7 @@ function fixture({ abort = true } = {}) {
       timeouts.delete(id);
       timer.callback();
     },
-    message(index) { return new URL(requests[index].url).searchParams.get('m'); },
+    message(index) { return new URL(requests[index].url).searchParams.get('m').replace(/ sid=[^ ]+$/, ''); },
   };
 }
 

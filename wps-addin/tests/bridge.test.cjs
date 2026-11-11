@@ -63,7 +63,7 @@ function assertStartedOnce(f) {
     const before = f.requests.length;
     f.emit(event);
     assert.equal(f.requests.length, before + 1, `${event} should push exactly once`);
-    assert.equal(new URL(f.requests.at(-1)).searchParams.get('m'), `EVENT ${event} pos=3 click=2 ready=0`);
+    assert.equal(new URL(f.requests.at(-1)).searchParams.get('m').replace(/ sid=[^ ]+$/, ''), `EVENT ${event} pos=3 click=2 ready=0`);
   }
 }
 

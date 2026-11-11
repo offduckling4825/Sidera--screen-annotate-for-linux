@@ -609,6 +609,44 @@ impl X11 {
         false
     }
 
+    /// True when a mapped, non-minimised top-level window has this WM_CLASS.
+    pub fn has_visible_window_class(&self, class: &str) -> bool {
+        let target = class.to_ascii_lowercase();
+        let wm_state = match xproto::intern_atom(&self.conn, true, b"WM_STATE")
+            .ok().and_then(|cookie| cookie.reply().ok()) {
+            Some(reply) => reply.atom,
+            None => return false,
+        };
+        let mut stack: Vec<Window> = vec![self.root];
+        let mut count = 0;
+        while let Some(w) = stack.pop() {
+            if count > 6000 { break; }
+            count += 1;
+            let attr = xproto::get_window_attributes(&self.conn, w)
+                .ok().and_then(|cookie| cookie.reply().ok());
+            if attr.is_some_and(|attr| attr.map_state == xproto::MapState::VIEWABLE) {
+                let iconic = xproto::get_property(&self.conn, false, w, wm_state,
+                    AtomEnum::ANY, 0, 2).ok().and_then(|c| c.reply().ok())
+                    .and_then(|reply| reply.value32().and_then(|mut values| values.next()))
+                    == Some(3);
+                if !iconic {
+                    let class_value = xproto::get_property(&self.conn, false, w,
+                        AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256)
+                        .ok().and_then(|c| c.reply().ok());
+                    if class_value.is_some_and(|reply| {
+                        String::from_utf8_lossy(&reply.value).to_ascii_lowercase()
+                            .split('\0').any(|field| field == target)
+                    }) {
+                        return true;
+                    }
+                }
+            }
+            let tree = xproto::query_tree(&self.conn, w).ok().and_then(|c| c.reply().ok());
+            if let Some(tree) = tree { stack.extend(tree.children); }
+        }
+        false
+    }
+
     /// WPS/OnlyOffice/LibreOffice 全屏放映检测（递归窗口树）
     pub fn is_presentation_fullscreen(&self, self_win: Window) -> bool {
         let mut stack: Vec<Window> = vec![self.root];
@@ -1162,6 +1200,9 @@ impl crate::backend::Backend for X11Plat {
     }
     fn is_presentation_fullscreen(&self) -> bool {
         self.x11.is_presentation_fullscreen(self.win)
+    }
+    fn avoid_window_active(&self) -> bool {
+        self.x11.has_visible_window_class("easinote")
     }
     fn presentation_foreground(&self) -> Option<bool> {
         Some(self.x11.is_wps_presentation_foreground())

@@ -51,6 +51,8 @@ pub trait Backend: 'static {
     fn description(&self) -> &'static str { "X11" }
     /// 是否处于办公软件全屏放映
     fn is_presentation_fullscreen(&self) -> bool;
+    /// A window whose toolbar must be avoided (e.g. Seewo Whiteboard) is visible.
+    fn avoid_window_active(&self) -> bool { false }
     /// WPS 演讲窗口是否在前台。None 表示后端无法可靠判断。
     /// 覆盖层自身获得焦点时返回 false，避免把后台放映误判为可操作。
     fn presentation_foreground(&self) -> Option<bool> { None }

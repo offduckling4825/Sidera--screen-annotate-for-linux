@@ -141,6 +141,7 @@ impl X11Window {
         let net_type_dialog = atom(b"_NET_WM_WINDOW_TYPE_DIALOG")?;
         let net_pid = atom(b"_NET_WM_PID")?;
         let net_icon = atom(b"_NET_WM_ICON")?;
+        let bypass = atom(b"_NET_WM_BYPASS_COMPOSITOR")?;
         let utf8 = atom(b"UTF8_STRING")?;
         // The settings window is fully opaque. Using the root visual avoids
         // compositor effects that some desktops (e.g. UKUI) apply to ARGB
@@ -191,6 +192,14 @@ impl X11Window {
         hints[6] = pixels(340).min(height) as u32;
         x11.conn.change_property32(PropMode::REPLACE, id, AtomEnum::WM_NORMAL_HINTS,
             AtomEnum::WM_SIZE_HINTS, &hints)?.check()?;
+        // UKUI/KWin can scale or blur managed ARGB/dialog windows during
+        // compositing. The settings window is fully opaque, so ask the
+        // compositor to bypass it whenever the desktop supports the hint.
+        if std::env::var_os("SIDERA_SETTINGS_KEEP_COMPOSITOR").is_none() {
+            x11.conn.change_property32(PropMode::REPLACE, id, bypass,
+                AtomEnum::CARDINAL, &[2])?.check()?;
+            crate::diag_log::info("设置窗口：请求合成器 bypass（_NET_WM_BYPASS_COMPOSITOR=2）");
+        }
         x11.conn.map_window(id)?.check()?;
         x11.conn.flush()?;
         Ok(Self {
