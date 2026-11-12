@@ -9,7 +9,7 @@ on:
       release_tag:
         description: Existing release tag
         required: true
-        default: v3.2-Electro.rc.5
+        default: v3.2-Electro.rc.7
         type: string
 
 permissions:

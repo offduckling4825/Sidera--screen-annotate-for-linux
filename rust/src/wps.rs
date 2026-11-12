@@ -81,6 +81,8 @@ pub struct WpsShared {
     pub queue: VecDeque<(i64, String)>,
     pub command_failed_until: i64,
     pub command_not_before: i64,
+    pub thumb_ok: i64,
+    pub thumb_failed: i64,
     pub events: Vec<WpsEvent>,
     sources: HashMap<String, SourceState>,
     primary: String,
@@ -108,6 +110,8 @@ impl Default for WpsShared {
             queue: VecDeque::new(),
             command_failed_until: 0,
             command_not_before: 0,
+            thumb_ok: 0,
+            thumb_failed: 0,
             events: Vec::new(),
             sources: HashMap::new(),
             primary: String::new(),
@@ -737,6 +741,11 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
             crate::diag_log::warn("WPS 画笔指针复位失败（CURSOR）");
             return;
         }
+        if cmd == "THUMB" {
+            wps_log(line);
+            shared.lock().unwrap().thumb_failed = now_ms();
+            return;
+        }
         let mut s = shared.lock().unwrap();
         if cmd == "EXIT" || cmd == "START" {
             // Duplicate WPS windows load the add-in more than once. A command
@@ -765,7 +774,10 @@ fn handle_line(shared: &Arc<Mutex<WpsShared>>, raw: &str) {
     }
     if line.starts_with("COMMAND_OK ") {
         let cmd = line.trim_start_matches("COMMAND_OK ").trim();
-        shared.lock().unwrap().failed_attempts.remove(cmd);
+        let mut s = shared.lock().unwrap();
+        s.failed_attempts.remove(cmd);
+        if cmd == "THUMB" { s.thumb_ok = now_ms(); }
+        drop(s);
         wps_log(line);
         return;
     }
@@ -1321,9 +1333,10 @@ impl WpsBridge {
     pub fn enqueue(&self, cmd: &str) -> bool {
         let mut s = self.shared.lock().unwrap();
         let start = cmd == "START";
-        if !matches!(cmd, "START" | "NEXT" | "PREV" | "EXIT" | "CURSOR") || !s.connected
+        let thumb = cmd.starts_with("THUMB ");
+        if (!matches!(cmd, "START" | "NEXT" | "PREV" | "EXIT" | "CURSOR") && !thumb) || !s.connected
             || now_ms() - s.last_seen > 3000 || s.whiteboard
-            || (!s.test_mode && !matches!(cmd, "NEXT" | "PREV" | "CURSOR"))
+            || (!s.test_mode && !matches!(cmd, "NEXT" | "PREV" | "CURSOR") && !thumb)
             || (start && (!s.can_start || s.real_pos > 0 || now_ms() < s.start_pending_until))
             || (!start && s.real_pos < 1)
             || now_ms() < s.command_failed_until {

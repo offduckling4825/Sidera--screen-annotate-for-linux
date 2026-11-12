@@ -299,3 +299,18 @@ test('CURSOR restores the recorded presentation pointer baseline', () => {
   for (const callback of settle) callback();
   assert.equal(view.PointerType, 1, 'delayed settle must override a late WPS toggle');
 });
+
+test('THUMB exports the selected slide and acknowledges the request', () => {
+  const f = fixture();
+  let exported = null;
+  f.app.ActivePresentation.Slides = {
+    Item(page) {
+      assert.equal(page, 2);
+      return { Export(path, filter, width, height) { exported = { path, filter, width, height }; } };
+    },
+  };
+  f.context.OnAddinLoad({});
+  f.context.bridgeCmd('THUMB 2 /tmp/sidera-thumb.png');
+  assert.deepEqual(exported, { path: '/tmp/sidera-thumb.png', filter: 'PNG', width: 320, height: 180 });
+  assert.ok(f.requests.some(url => new URL(url).searchParams.get('m') === 'COMMAND_OK THUMB'));
+});

@@ -146,7 +146,7 @@ pub fn draw_value(app:&App,fonts:&Fonts,ctx:&mut Ctx,target:Target,r:R,px:f32,pr
 pub fn draw(app:&App,fonts:&Fonts,ctx:&mut Ctx) {
     // Settings and the colour/page pickers show validation in their existing captions.
     let Some(editor)=app.settings_ui.editor.as_ref().filter(|e|e.target==Target::DotSize&&!e.error.is_empty()) else{return};
-    let bar=ui::whiteboard_bar_rect(app);
+    let bar=ui::whiteboard_dot_popup_rect(app);
     let r=R {x:bar.x,y:bar.y-26,w:bar.w,h:24};
     ctx.fill_round(r,4.0,c(ctx.palette.paper));
     ctx.text_center(fonts,r,&crate::settings_panel::fitted(fonts,&editor.error,12.0,r.w-16),12.0,c(ctx.palette.danger));

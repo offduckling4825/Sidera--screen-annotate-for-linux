@@ -12,6 +12,7 @@ pub mod backend;
 pub mod bridge_http;
 pub mod bridge_ws;
 pub mod clear_history;
+pub mod conic;
 pub mod clipboard;
 pub mod diag_log;
 pub mod gesture;
@@ -21,6 +22,7 @@ pub mod page_picker;
 pub mod paint;
 pub mod persistence;
 pub mod process_block;
+pub mod selection;
 pub mod splash_paint;
 pub mod text;
 pub mod toolbar;
@@ -117,6 +119,11 @@ fn start_input_group_auth(app: &mut App) {
     app.input_group_state = 3;
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WbSlider { Size, Shape }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WbHandle { Move, Rotate }
+
 pub struct Ip {
     pub dragging: bool,
     pub drag_start_y: i32,
@@ -130,6 +137,13 @@ pub struct Ip {
     pub slider: Option<ui::SliderId>,
     pub dot_slider: bool,
     dot_value_press_x: i32,
+    pub wb_slider: Option<WbSlider>,
+    pub wb_handle: Option<WbHandle>,
+    pub wb_last: (i32, i32),
+    pub wb_lasso: bool,
+    pub wb_sel_drag: Option<(f32, f32)>,
+    pub wb_start_angle: f32,
+    pub wb_start_rotation: f32,
     pub picker_drag: Option<settings_state::PickerHit>,
     // Start y, initial row/page, and whether motion cancelled the pending tap.
     pub panel_scroll: Option<(i32, usize, bool)>,
@@ -162,6 +176,13 @@ impl Default for Ip {
             slider: None,
             dot_slider: false,
             dot_value_press_x: 0,
+            wb_slider: None,
+            wb_handle: None,
+            wb_last: (0, 0),
+            wb_lasso: false,
+            wb_sel_drag: None,
+            wb_start_angle: 0.0,
+            wb_start_rotation: 0.0,
             picker_drag: None,
             panel_scroll: None,
             touch_shape: HashMap::new(),
@@ -486,7 +507,7 @@ pub fn over_ui(app: &App, x: i32, y: i32) -> bool {
     if app.process_block_open && ui::process_block_rect(app).contains(x, y) {
         return true;
     }
-    if app.whiteboard && ui::whiteboard_bar_rect(app).contains(x, y) {
+    if app.whiteboard && ui::whiteboard_ui_contains(app, x, y) {
         return true;
     }
     false
@@ -559,7 +580,7 @@ pub fn switch_to_draw(rt: &Rt, app: &mut App, mode: i32) {
 }
 
 pub fn collapse_sidebars(rt: &Rt, app: &mut App) {
-    if app.collapsed {
+    if app.whiteboard || app.collapsed {
         return;
     }
     close_all_popups(rt, app);
@@ -590,7 +611,7 @@ pub fn expand_sidebars(rt: &Rt, app: &mut App) {
 }
 
 pub fn toggle_collapse(rt: &Rt, app: &mut App) {
-    if app.avoid_active { return; }
+    if app.avoid_active || app.whiteboard { return; }
     if app.collapsed {
         expand_sidebars(rt, app);
     } else {
@@ -675,6 +696,8 @@ fn open_page_picker(rt: &Rt, app: &mut App, right: bool) {
     close_all_popups(rt, app);
     app.popup_on_right = right;
     app.page_picker = Some(page_picker::PagePicker::new(page, total, source));
+    app.thumb_target = None;
+    app.thumb_target_at = 0;
     app.open_anim = now_ms();
     apply_input_shape(rt, app);
     rt.redraw(app, ui::page_picker_rect(app));
@@ -1075,6 +1098,13 @@ fn handle_process_hit(rt: &Rt, app: &mut App, ip: &mut Ip, x: i32, y: i32) {
     rt.redraw_full(app);
 }
 
+/// X11 defaults to the 3.1 overlay panel because managed windows are blurred
+/// by UKUI/KWin; Wayland keeps the native window. Explicit env overrides win.
+#[cfg(unix)]
+fn use_native_settings(x11_backend: bool, force_overlay: bool, force_native: bool) -> bool {
+    force_native || (!force_overlay && !x11_backend)
+}
+
 pub fn open_settings(rt: &Rt, app: &mut App) {
     #[cfg(unix)]
     if let Some(window) = &app.settings_ui.window {
@@ -1101,13 +1131,20 @@ pub fn open_settings(rt: &Rt, app: &mut App) {
     #[cfg(unix)]
     {
         let force_overlay = std::env::var_os("SIDERA_SETTINGS_OVERLAY").is_some();
-        if force_overlay {
-            crate::diag_log::info("设置窗口：按要求使用覆盖层绘制");
-        } else if !app.launch.active() && !app.show_input_group_prompt {
+        let force_native = std::env::var_os("SIDERA_SETTINGS_NATIVE").is_some();
+        // 3.1 drew settings on the override-redirect overlay and was sharp on
+        // UKUI/KWin X11. The managed native window introduced in 3.2 is blurred
+        // by some X11 compositors, so X11 defaults back to the overlay path.
+        // SIDERA_SETTINGS_NATIVE=1 opts back into the native window.
+        let x11_backend = rt.backend.as_any().is::<crate::x11::X11Plat>();
+        let use_native = use_native_settings(x11_backend, force_overlay, force_native);
+        if !use_native || app.launch.active() || app.show_input_group_prompt {
+            crate::diag_log::info("设置窗口：使用覆盖层绘制");
+        } else {
             match settings_window::Window::open(rt, app) {
                 Ok(window) => {
                     app.settings_ui.window = Some(window);
-                    crate::diag_log::info("设置窗口：使用原生 X11/Wayland 窗口");
+                    crate::diag_log::info("设置窗口：使用原生窗口");
                     // The annotation canvas stays intact while the preferences
                     // window is open. Clear only its presentation surface.
                     rt.render(app, R { x: 0, y: 0, w: app.screen_w, h: app.screen_h });
@@ -1408,6 +1445,163 @@ fn set_sidebar_drag_feedback(rt: &Rt, app: &mut App, feedback: Option<ui::Sideba
     for right in [false, true] { rt.redraw(app, ui::sidebar_rect(app, right)); }
 }
 
+fn apply_wb_size(app: &mut App, x: i32) {
+    let scale = ui::coord_size_at(app, x);
+    if let Some(coord) = app.coord.as_mut() { coord.scale = scale; }
+}
+
+fn apply_wb_shape(app: &mut App, x: i32) {
+    let shape = ui::coord_shape_at(app, x);
+    if let Some(coord) = app.coord.as_mut() { coord.shape = shape; }
+}
+
+fn handle_whiteboard_release(rt: &Rt, app: &mut App, hit: ui::WhiteboardControl) {
+    use ui::WhiteboardControl as W;
+    if app.floating.is_some() && matches!(hit, W::Empty | W::Ellipse | W::Hyperbola | W::Parabola) {
+        crate::selection::commit(app);
+    }
+    match hit {
+        W::Empty => {
+            app.coord = Some(crate::app::CoordGuide::new(app.screen_w, app.screen_h,
+                crate::app::ConicKind::None, crate::app::ConicDirection::Horizontal));
+            app.conic_menu = None;
+            app.dot_popup = false;
+            app.select_mode = false;
+        }
+        W::Ellipse => { app.conic_menu = Some(crate::app::ConicKind::Ellipse); app.dot_popup = false; }
+        W::Hyperbola => { app.conic_menu = Some(crate::app::ConicKind::Hyperbola); app.dot_popup = false; }
+        W::Parabola => { app.conic_menu = Some(crate::app::ConicKind::Parabola); app.dot_popup = false; }
+        W::Direction(kind, direction) => {
+            app.coord = Some(crate::app::CoordGuide::new(app.screen_w, app.screen_h, kind, direction));
+            app.conic_menu = None;
+            app.dot_popup = false;
+            app.select_mode = false;
+        }
+        W::Select => {
+            if let Some(coord) = app.coord.as_mut() { coord.editing = false; }
+            app.select_mode = true;
+            app.conic_menu = None;
+            app.dot_popup = false;
+        }
+        W::Dots => {
+            app.whiteboard_dots = !app.whiteboard_dots;
+            app.dot_popup = app.whiteboard_dots;
+            app.conic_menu = None;
+            crate::app::save_settings(app);
+        }
+        W::DotToggle => {
+            app.whiteboard_dots = !app.whiteboard_dots;
+            if !app.whiteboard_dots { app.dot_popup = false; }
+            crate::app::save_settings(app);
+        }
+        W::DotValue => open_value_input(rt, app, value_input::Target::DotSize),
+        W::Done => {
+            if let Some(coord) = app.coord.as_mut() { coord.editing = false; }
+            app.conic_menu = None;
+            app.dot_popup = false;
+        }
+        W::DotSize | W::SizeSlider | W::ShapeSlider => {}
+    }
+    apply_input_shape(rt, app);
+    rt.redraw_full(app);
+}
+
+fn handle_whiteboard_press(rt: &Rt, app: &mut App, ip: &mut Ip, x: i32, y: i32, button: u8) -> bool {
+    if !app.whiteboard || app.page_picker.is_some() { return false; }
+    if ip.wb_slider.is_some() || ip.wb_handle.is_some() || ip.wb_lasso || ip.wb_sel_drag.is_some() {
+        return true;
+    }
+    if app.floating.is_some() && button == 3 {
+        crate::selection::cancel(app);
+        rt.redraw_full(app);
+        return true;
+    }
+    if app.select_mode && button == 3 {
+        app.lasso.clear();
+        app.select_mode = false;
+        rt.redraw_full(app);
+        return true;
+    }
+    if button == 2 && app.coord.as_ref().is_some_and(|c| c.editing) {
+        ip.wb_handle = Some(WbHandle::Move);
+        ip.wb_last = (x, y);
+        return true;
+    }
+    if app.coord.as_ref().is_some_and(|c| c.editing) {
+        match ui::coord_handle_at(app, x, y) {
+            Some(ui::CoordHandle::Origin) => {
+                ip.wb_handle = Some(WbHandle::Move);
+                ip.wb_last = (x, y);
+                return true;
+            }
+            Some(ui::CoordHandle::Rotate) => {
+                if let Some(coord) = app.coord.as_ref() {
+                    ip.wb_start_angle = (y as f32 - coord.origin_y).atan2(x as f32 - coord.origin_x);
+                    ip.wb_start_rotation = coord.rotation;
+                }
+                ip.wb_handle = Some(WbHandle::Rotate);
+                ip.wb_last = (x, y);
+                return true;
+            }
+            None => {}
+        }
+        if wb_size_slider_hit(app, x, y) {
+            ip.wb_slider = Some(WbSlider::Size);
+            apply_wb_size(app, x);
+            rt.redraw_full(app);
+            return true;
+        }
+        if wb_shape_slider_hit(app, x, y) {
+            ip.wb_slider = Some(WbSlider::Shape);
+            apply_wb_shape(app, x);
+            rt.redraw_full(app);
+            return true;
+        }
+    }
+    if app.select_mode && button == 1 && !ui::whiteboard_ui_contains(app, x, y) {
+        app.lasso.clear();
+        app.lasso.push((x as f32, y as f32));
+        ip.wb_lasso = true;
+        rt.redraw_full(app);
+        return true;
+    }
+    if app.floating.is_some() && button == 1 {
+        let sel = app.floating.as_ref().unwrap();
+        let sc = app.scale.max(0.001) as f32;
+        let left = sel.x as f32 / sc;
+        let top = sel.y as f32 / sc;
+        let right = left + sel.pixmap.width() as f32 / sc;
+        let bottom = top + sel.pixmap.height() as f32 / sc;
+        if (x as f32) >= left && (x as f32) <= right && (y as f32) >= top && (y as f32) <= bottom {
+            ip.wb_sel_drag = Some((x as f32, y as f32));
+            return true;
+        }
+        crate::selection::commit(app);
+        rt.redraw_full(app);
+        return true;
+    }
+    if (app.conic_menu.is_some() || app.dot_popup) && ui::whiteboard_hit(app, x, y).is_none() {
+        app.conic_menu = None;
+        app.dot_popup = false;
+        rt.redraw_full(app);
+        return true;
+    }
+    if app.whiteboard && ui::whiteboard_hit(app, x, y) == Some(ui::WhiteboardControl::DotSize) {
+        ip.dot_slider = true;
+        app.whiteboard_dot_size = ui::whiteboard_dot_size_at(app, x);
+        rt.redraw_full(app);
+        return true;
+    }
+    false
+}
+
+fn wb_size_slider_hit(app: &App, x: i32, y: i32) -> bool {
+    ui::whiteboard_hit(app, x, y) == Some(ui::WhiteboardControl::SizeSlider)
+}
+fn wb_shape_slider_hit(app: &App, x: i32, y: i32) -> bool {
+    ui::whiteboard_hit(app, x, y) == Some(ui::WhiteboardControl::ShapeSlider)
+}
+
 pub fn on_press(
     rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>,
     x: i32, y: i32, button: u8,
@@ -1422,6 +1616,7 @@ pub fn on_press(
     // The press that started a drag owns it until release. A second button
     // must not replace it with a pending click and consume that release.
     if ip.pending_ui.is_some() || ip.slider.is_some() || ip.dragging || ip.picker_drag.is_some() || ip.panel_scroll.is_some() { return; }
+    if handle_whiteboard_press(rt, app, ip, x, y, button) { return; }
     if button==1 && !app.show_input_group_prompt && app.settings_ui.editor.is_some()
         && !value_input::controls(app).iter().any(|(_,r)|r.contains(x,y)) {
         value_input_key(rt,app,value_input::Key::Enter);
@@ -1555,20 +1750,8 @@ fn activate_press(
         return;
     }
     if app.whiteboard {
-        if let Some(hit) = ui::whiteboard_control_hit(app, x, y) {
-            match hit {
-                ui::WhiteboardControl::Dots => {
-                    app.whiteboard_dots = !app.whiteboard_dots;
-                    app::save_settings(app);
-                }
-                ui::WhiteboardControl::DotSize => {
-                    app.whiteboard_dot_size = ui::whiteboard_dot_size_at(app, x);
-                    ip.dot_slider = true;
-                }
-                ui::WhiteboardControl::DotValue => open_value_input(rt,app,value_input::Target::DotSize),
-            }
-            apply_input_shape(rt, app);
-            rt.redraw_full(app);
+        if let Some(hit) = ui::whiteboard_hit(app, x, y) {
+            handle_whiteboard_release(rt, app, hit);
             return;
         }
     }
@@ -1784,6 +1967,52 @@ pub fn handle_btn(rt: &Rt, app: &mut App, wps: Option<&WpsBridge>, k: Btn, right
 }
 
 pub fn on_motion(rt: &Rt, app: &mut App, ip: &mut Ip, x: i32, y: i32) {
+    if app.whiteboard {
+        if let Some(slider) = ip.wb_slider {
+            match slider {
+                WbSlider::Size => apply_wb_size(app, x),
+                WbSlider::Shape => apply_wb_shape(app, x),
+            }
+            rt.redraw_full(app);
+            return;
+        }
+        if let Some(handle) = ip.wb_handle {
+            if let Some(coord) = app.coord.as_mut() {
+                match handle {
+                    WbHandle::Move => {
+                        coord.origin_x += (x - ip.wb_last.0) as f32;
+                        coord.origin_y += (y - ip.wb_last.1) as f32;
+                    }
+                    WbHandle::Rotate => {
+                        let angle = (y as f32 - coord.origin_y).atan2(x as f32 - coord.origin_x);
+                        coord.rotation = ip.wb_start_rotation + (angle - ip.wb_start_angle);
+                    }
+                }
+            }
+            ip.wb_last = (x, y);
+            rt.redraw_full(app);
+            return;
+        }
+        if ip.wb_lasso {
+            if let Some(&(lx, ly)) = app.lasso.last() {
+                if (x as f32 - lx).abs() + (y as f32 - ly).abs() >= 2.0 {
+                    app.lasso.push((x as f32, y as f32));
+                }
+            }
+            rt.redraw_full(app);
+            return;
+        }
+        if let Some((lx, ly)) = ip.wb_sel_drag {
+            let sc = app.scale.max(0.001) as f32;
+            if let Some(sel) = app.floating.as_mut() {
+                sel.x += ((x as f32 - lx) * sc).round() as i32;
+                sel.y += ((y as f32 - ly) * sc).round() as i32;
+            }
+            ip.wb_sel_drag = Some((x as f32, y as f32));
+            rt.redraw_full(app);
+            return;
+        }
+    }
     if let Some(hit)=ip.picker_drag {
         settings_panel::picker_drag(app,hit,x,y);
         rt.redraw(app,settings_panel::picker_rect(app));
@@ -1830,18 +2059,17 @@ pub fn on_motion(rt: &Rt, app: &mut App, ip: &mut Ip, x: i32, y: i32) {
     // A tap on the number edits it. Dragging from the same spot still
     // moves the slider, even when the thumb sits underneath the number.
     if ip.pending_ui == Some(ui::Control::Whiteboard(ui::WhiteboardControl::DotValue))
-        && app.whiteboard && app.whiteboard_dots && x >= 0
+        && app.whiteboard && app.dot_popup && x >= 0
         && (x - ip.dot_value_press_x).abs() > 4 {
         ip.pending_ui = None;
         ip.dot_slider = true;
         app.press = None;
     }
     if ip.dot_slider {
-        if app.whiteboard && app.whiteboard_dots {
+        if app.whiteboard && app.dot_popup {
             let size = ui::whiteboard_dot_size_at(app, x);
             if size != app.whiteboard_dot_size {
                 app.whiteboard_dot_size = size;
-                rt.redraw(app, ui::whiteboard_bar_rect(app));
                 rt.redraw_full(app);
             }
         }
@@ -1991,6 +2219,32 @@ pub fn on_release(rt: &Rt, app: &mut App, ip: &mut Ip, wps: Option<&WpsBridge>, 
     if button != 1 && (ip.panel_scroll.is_some() || ip.picker_drag.is_some()) { return; }
     if ip.picker_drag.take().is_some() { app.press=None; rt.redraw_full(app); return; }
     if ip.panel_scroll.take().is_some_and(|(_,_,moved)|moved) { ip.pending_ui=None; app.press=None; rt.redraw_full(app); return; }
+    if app.whiteboard {
+        if ip.wb_lasso {
+            ip.wb_lasso = false;
+            if let Some(&(lx, ly)) = app.lasso.last() {
+                if (x as f32 - lx).abs() + (y as f32 - ly).abs() >= 2.0 {
+                    app.lasso.push((x as f32, y as f32));
+                }
+            }
+            let lasso = app.lasso.clone();
+            app.floating = crate::selection::lift(app, &lasso);
+            app.lasso.clear();
+            app.select_mode = false;
+            apply_input_shape(rt, app);
+            rt.redraw_full(app);
+            return;
+        }
+        if ip.wb_slider.take().is_some() || ip.wb_handle.take().is_some() {
+            apply_input_shape(rt, app);
+            rt.redraw_full(app);
+            return;
+        }
+        if ip.wb_sel_drag.take().is_some() {
+            rt.redraw_full(app);
+            return;
+        }
+    }
     if ip.dot_slider {
         ip.dot_slider = false;
         app::save_settings(app);
@@ -2301,6 +2555,81 @@ fn handle_pen_shortcut(rt: &Rt, app: &mut App, wps: Option<&WpsBridge>) {
     }
 }
 
+fn load_thumbnail(path: &str) -> Option<tiny_skia::Pixmap> {
+    let root = std::env::temp_dir().join("sidera-thumbs");
+    let file = std::path::Path::new(path);
+    if !file.starts_with(&root) { return None; }
+    let meta = std::fs::metadata(file).ok()?;
+    if !meta.is_file() || meta.len() > 4 * 1024 * 1024 { return None; }
+    let image = image::open(file).ok()?.to_rgba8();
+    let (w, h) = image.dimensions();
+    let mut pm = tiny_skia::Pixmap::new(w, h)?;
+    for (dst, src) in pm.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(image.pixels()) {
+        let a = u32::from(src[3]);
+        let premul = |c: u8| ((u32::from(c) * a + 127) / 255) as u8;
+        *dst = [premul(src[0]), premul(src[1]), premul(src[2]), src[3]];
+    }
+    Some(pm)
+}
+
+/// Ask the WPS add-in to export the selected page as a small PNG. Only the
+/// page picker uses thumbnails; the file is read, decoded and deleted.
+fn tick_thumbnails(rt: &Rt, app: &mut App, wps: Option<&WpsBridge>) {
+    let now = now_ms();
+    if let Some(w) = wps {
+        let (ok, failed) = {
+            let mut state = w.shared.lock().unwrap();
+            let result = (state.thumb_ok, state.thumb_failed);
+            state.thumb_ok = 0;
+            state.thumb_failed = 0;
+            result
+        };
+        if ok > 0 || failed > 0 {
+            if let Some((epoch, page, path)) = app.thumb_waiting.take() {
+                let mut loaded = false;
+                if ok > 0 {
+                    if let Some(pm) = load_thumbnail(&path) {
+                        if app.thumbs.len() >= 24 { app.thumbs.clear(); }
+                        app.thumbs.insert((epoch, page), pm);
+                        loaded = true;
+                    }
+                }
+                let _ = std::fs::remove_file(&path);
+                if failed > 0 || (ok > 0 && !loaded) { app.thumb_target_at = now + 3000; }
+                if app.page_picker.is_some() { rt.redraw(app, ui::page_picker_rect(app)); }
+            }
+        }
+    }
+    if let Some((_, _, path)) = &app.thumb_waiting {
+        if now - app.thumb_target_at > 3000 {
+            let path = path.clone();
+            app.thumb_waiting = None;
+            let _ = std::fs::remove_file(path);
+            app.thumb_target_at = now + 3000;
+        }
+    }
+    let Some(picker) = app.page_picker.as_ref() else { return };
+    let page_picker::Source::Wps(epoch) = picker.source else { return };
+    let page = picker.selected();
+    let key = (epoch, page);
+    if app.thumbs.contains_key(&key) { return; }
+    if app.thumb_waiting.as_ref().is_some_and(|(e, p, _)| *e == epoch && *p == page) { return; }
+    if picker.dragging() { return; }
+    if app.thumb_target != Some(key) {
+        app.thumb_target = Some(key);
+        app.thumb_target_at = now;
+    }
+    if now - app.thumb_target_at < 160 { return; }
+    if now < app.thumb_target_at { return; }
+    let Some(w) = wps else { return; };
+    let dir = std::env::temp_dir().join("sidera-thumbs");
+    if std::fs::create_dir_all(&dir).is_err() { return; }
+    let path = dir.join(format!("{}-{}-{}.png", std::process::id(), epoch, page));
+    if w.enqueue(&format!("THUMB {page} {}", path.display())) {
+        app.thumb_waiting = Some((epoch, page, path.to_string_lossy().into_owned()));
+    }
+}
+
 pub fn tick_shared(rt: &Rt, app: &mut App, _ip: &mut Ip,
     wps_bridge: Option<&WpsBridge>, update: &WpsUpdate, t: &mut Timers, system_dark: bool) {
     // WPS presentation is reported by the add-in on Wayland (where there is
@@ -2500,6 +2829,8 @@ pub fn tick_shared(rt: &Rt, app: &mut App, _ip: &mut Ip,
             rt.redraw_full(app);
         }
     }
+
+    tick_thumbnails(rt, app, wps_bridge);
 
     // 全屏检测（1s；始终扫描，避免加载项连着但已退出放映时状态变陈旧）
     if t.last_wps.elapsed() >= Duration::from_millis(1000) {

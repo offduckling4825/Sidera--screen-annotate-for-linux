@@ -335,6 +335,83 @@ fn ui_fixture() -> (Rt, App, Ip) {
 }
 
 #[test]
+fn coordinate_edit_sliders_and_done_drive_the_guide() {
+    let (rt, mut app, _) = fixture(false);
+    app.configure_geometry(640, 360, 1.0);
+    app.toggle_whiteboard();
+    app.coord = Some(crate::app::CoordGuide::new(640, 360,
+        crate::app::ConicKind::Ellipse, crate::app::ConicDirection::Horizontal));
+    let mut ip = Ip::default();
+    let size = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::SizeSlider)).unwrap();
+    on_press(&rt, &mut app, &mut ip, None, size.x + size.w - 1, size.y + 5, 1);
+    assert!(app.coord.unwrap().scale > 100.0);
+    on_release(&rt, &mut app, &mut ip, None, size.x + size.w - 1, size.y + 5, 1);
+    let shape = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::ShapeSlider)).unwrap();
+    on_press(&rt, &mut app, &mut ip, None, shape.x + shape.w - 1, shape.y + 5, 1);
+    assert!(app.coord.unwrap().shape > 0.9);
+    on_release(&rt, &mut app, &mut ip, None, shape.x + shape.w - 1, shape.y + 5, 1);
+    let origin = (app.coord.unwrap().origin_x as i32, app.coord.unwrap().origin_y as i32);
+    on_press(&rt, &mut app, &mut ip, None, origin.0, origin.1, 1);
+    on_motion(&rt, &mut app, &mut ip, origin.0 + 20, origin.1 + 10);
+    on_release(&rt, &mut app, &mut ip, None, origin.0 + 20, origin.1 + 10, 1);
+    assert!(app.coord.unwrap().origin_x > 330.0);
+    let origin = (app.coord.unwrap().origin_x as i32, app.coord.unwrap().origin_y as i32);
+    on_press(&rt, &mut app, &mut ip, None, origin.0, origin.1 - 76, 1);
+    on_motion(&rt, &mut app, &mut ip, origin.0 + 60, origin.1);
+    on_release(&rt, &mut app, &mut ip, None, origin.0 + 60, origin.1, 1);
+    assert!((app.coord.unwrap().rotation - std::f32::consts::FRAC_PI_2).abs() < 0.2);
+    let done = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::Done)).unwrap();
+    on_press(&rt, &mut app, &mut ip, None, done.x + 5, done.y + 5, 1);
+    on_release(&rt, &mut app, &mut ip, None, done.x + 5, done.y + 5, 1);
+    assert!(!app.coord.unwrap().editing);
+}
+
+#[test]
+fn selection_lasso_moves_whiteboard_ink_and_can_commit() {
+    let (rt, mut app, _) = fixture(false);
+    app.configure_geometry(640, 360, 1.0);
+    app.toggle_whiteboard();
+    {
+        let data = app.canvas.data_mut();
+        let i = (100 * 640 + 100) * 4;
+        data[i..i + 4].copy_from_slice(&[255, 0, 0, 255]);
+    }
+    app.page_has_ink = true;
+    let mut ip = Ip::default();
+    let select = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::Select)).unwrap();
+    on_press(&rt, &mut app, &mut ip, None, select.x + 4, select.y + 4, 1);
+    on_release(&rt, &mut app, &mut ip, None, select.x + 4, select.y + 4, 1);
+    assert!(app.select_mode);
+    on_press(&rt, &mut app, &mut ip, None, 80, 80, 1);
+    on_motion(&rt, &mut app, &mut ip, 120, 80);
+    on_motion(&rt, &mut app, &mut ip, 120, 120);
+    on_motion(&rt, &mut app, &mut ip, 80, 120);
+    on_release(&rt, &mut app, &mut ip, None, 80, 80, 1);
+    assert!(app.floating.is_some(), "lasso must lift the selected ink");
+    assert_eq!(app.canvas.data()[(100 * 640 + 100) * 4 + 3], 0);
+    on_press(&rt, &mut app, &mut ip, None, 100, 100, 1);
+    on_motion(&rt, &mut app, &mut ip, 130, 110);
+    on_release(&rt, &mut app, &mut ip, None, 130, 110, 1);
+    on_press(&rt, &mut app, &mut ip, None, 500, 300, 1);
+    on_release(&rt, &mut app, &mut ip, None, 500, 300, 1);
+    assert!(app.floating.is_none());
+    assert_eq!(app.canvas.data()[(110 * 640 + 130) * 4 + 3], 255);
+}
+
+#[test]
+fn thumbnail_decoder_accepts_only_private_temp_files() {
+    let dir = std::env::temp_dir().join("sidera-thumbs");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("test-{}.png", std::process::id()));
+    let image = image::RgbaImage::from_raw(2, 2, vec![255u8; 16]).unwrap();
+    image.save(&path).unwrap();
+    let pm = super::load_thumbnail(path.to_str().unwrap()).unwrap();
+    assert_eq!((pm.width(), pm.height()), (2, 2));
+    let _ = std::fs::remove_file(&path);
+    assert!(super::load_thumbnail("/etc/passwd").is_none());
+}
+
+#[test]
 fn page_wheel_previews_without_changing_whiteboard_and_commits_once() {
     for right in [false, true] {
         let (rt, mut app, mut ip) = ui_fixture();
@@ -768,6 +845,16 @@ fn collapsed_edge_tabs_stay_hidden_until_the_user_expands_them() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn x11_settings_default_to_the_sharp_overlay_path() {
+    assert!(!super::use_native_settings(true, false, false));
+    assert!(super::use_native_settings(true, false, true));
+    assert!(!super::use_native_settings(true, true, false));
+    assert!(super::use_native_settings(false, false, false));
+    assert!(!super::use_native_settings(false, true, false));
+}
+
 #[test]
 fn seewo_avoidance_blocks_expanding_and_restores_it() {
     let (rt, mut app, _) = ui_fixture();
@@ -1083,59 +1170,61 @@ fn outside_click_dismisses_cursor_popups() {
 }
 
 #[test]
-fn whiteboard_dot_controls_toggle_and_apply_the_size_slider() {
+fn whiteboard_dot_controls_live_in_the_bottom_menu() {
     let (rt, mut app, _) = fixture(false);
     app.configure_geometry(640, 360, 1.0);
     app.toggle_whiteboard();
     let mut ip = Ip::default();
-    let toggle = ui::whiteboard_dots_toggle_rect(&app);
-    on_press(
-        &rt,
-        &mut app,
-        &mut ip,
-        None,
-        toggle.x + 20,
-        toggle.y + 20,
-        1,
-    );
-    on_release(
-        &rt,
-        &mut app,
-        &mut ip,
-        None,
-        toggle.x + 20,
-        toggle.y + 20,
-        1,
-    );
-    assert!(app.whiteboard_dots);
-    let slider = ui::whiteboard_dot_slider_rect(&app);
-    on_press(
-        &rt,
-        &mut app,
-        &mut ip,
-        None,
-        slider.x + slider.w - 1,
-        slider.y + 10,
-        1,
-    );
+    let dots = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::Dots)).unwrap();
+    on_press(&rt, &mut app, &mut ip, None, dots.x + 10, dots.y + 10, 1);
+    on_release(&rt, &mut app, &mut ip, None, dots.x + 10, dots.y + 10, 1);
+    assert!(app.whiteboard_dots && app.dot_popup);
+    let slider = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::DotSize)).unwrap();
+    on_press(&rt, &mut app, &mut ip, None, slider.x + slider.w - 1, slider.y + 10, 1);
     assert_eq!(app.whiteboard_dot_size, 10);
     assert!(ip.dot_slider);
-    on_release(
-        &rt,
-        &mut app,
-        &mut ip,
-        None,
-        slider.x + slider.w - 1,
-        slider.y + 10,
-        1,
-    );
+    on_release(&rt, &mut app, &mut ip, None, slider.x + slider.w - 1, slider.y + 10, 1);
     assert!(!ip.dot_slider);
-    app.whiteboard_dots = false;
-    assert_eq!(
-        ui::whiteboard_control_hit(&app, slider.x + 4, slider.y + 4),
-        Some(ui::WhiteboardControl::DotSize)
-    );
-    on_press(&rt, &mut app, &mut ip, None, slider.x + 4, slider.y + 4, 1);
-    assert!(!ip.dot_slider);
-    assert_eq!(app.whiteboard_dot_size, 10, "a disabled slider must retain its value");
+    assert_eq!(ui::control_at(&app, slider.x + 4, slider.y + 4),
+        Some(ui::Control::Whiteboard(ui::WhiteboardControl::DotSize)));
+}
+
+#[test]
+fn whiteboard_sidebar_has_no_collapse_button_and_enters_expanded() {
+    let (_rt, mut app, _) = fixture(false);
+    app.configure_geometry(640, 360, 1.0);
+    app.collapsed = true;
+    app.toggle_whiteboard();
+    assert!(!app.collapsed, "whiteboard must be expanded so its controls are reachable");
+    let buttons: Vec<ui::Btn> = [false, true].into_iter()
+        .flat_map(|right| ui::sidebar_buttons(&app, right).into_iter().map(|(b, _)| b))
+        .collect();
+    assert!(!buttons.contains(&ui::Btn::Collapse));
+    app.toggle_whiteboard();
+    let buttons: Vec<ui::Btn> = [false, true].into_iter()
+        .flat_map(|right| ui::sidebar_buttons(&app, right).into_iter().map(|(b, _)| b))
+        .collect();
+    assert!(buttons.contains(&ui::Btn::Collapse));
+}
+
+#[test]
+fn whiteboard_shape_menu_creates_the_selected_conic_in_edit_mode() {
+    let (rt, mut app, _) = fixture(false);
+    app.configure_geometry(640, 360, 1.0);
+    app.toggle_whiteboard();
+    let mut ip = Ip::default();
+    let ellipse = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::Ellipse)).unwrap();
+    on_press(&rt, &mut app, &mut ip, None, ellipse.x + 8, ellipse.y + 8, 1);
+    on_release(&rt, &mut app, &mut ip, None, ellipse.x + 8, ellipse.y + 8, 1);
+    assert_eq!(app.conic_menu, Some(crate::app::ConicKind::Ellipse));
+    assert!(app.coord.is_none());
+    let option = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::Direction(
+        crate::app::ConicKind::Ellipse, crate::app::ConicDirection::Vertical))).unwrap();
+    on_press(&rt, &mut app, &mut ip, None, option.x + 8, option.y + 8, 1);
+    on_release(&rt, &mut app, &mut ip, None, option.x + 8, option.y + 8, 1);
+    let coord = app.coord.expect("ellipse creates a coordinate guide");
+    assert_eq!(coord.conic, crate::app::ConicKind::Ellipse);
+    assert_eq!(coord.direction, crate::app::ConicDirection::Vertical);
+    assert!(coord.editing);
+    assert_eq!(app.conic_menu, None);
 }

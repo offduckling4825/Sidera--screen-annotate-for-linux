@@ -298,10 +298,22 @@ function bridgeSetPointerArrow(view) {
 }
 function bridgeCmd(cmd) {
     var jump = /^GOTO ([1-9][0-9]{0,9}) ([1-9][0-9]{0,9})$/.exec(cmd)
-    if (!jump && cmd !== 'START' && cmd !== 'NEXT' && cmd !== 'PREV' && cmd !== 'EXIT' && cmd !== 'CURSOR') return
-    if (!BRIDGE_FULL && cmd !== 'NEXT' && cmd !== 'PREV' && cmd !== 'CURSOR') return
+    var thumb = /^THUMB ([1-9][0-9]{0,9}) (.+)$/.exec(cmd)
+    if (!jump && !thumb && cmd !== 'START' && cmd !== 'NEXT' && cmd !== 'PREV' && cmd !== 'EXIT' && cmd !== 'CURSOR') return
+    if (!BRIDGE_FULL && cmd !== 'NEXT' && cmd !== 'PREV' && cmd !== 'CURSOR' && !thumb) return
     try {
         var v = bridgeView()
+        if (thumb) {
+            var app = bridgeApplication()
+            var deck = app && app.ActivePresentation
+            if (!deck) throw new Error('No presentation')
+            var page = Number(thumb[1])
+            var slide = deck.Slides.Item(page)
+            if (!slide || typeof slide.Export !== 'function') throw new Error('Slide.Export unavailable')
+            slide.Export(thumb[2], 'PNG', 320, 180)
+            bridgeSend('COMMAND_OK THUMB')
+            return
+        }
         if (jump) {
             var destination = bridgeJumpTarget()
             var page = Number(jump[1]), epoch = Number(jump[2])

@@ -17,7 +17,7 @@
 #
 # 产物：
 #   target/container-aarch64/release/sidera
-#   ../sidera_3.2-Electro.rc.5_arm64.deb（打包时）
+#   ../sidera_3.2-Electro.rc.7_arm64.deb（打包时）
 # ============================================================
 set -e
 

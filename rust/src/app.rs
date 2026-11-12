@@ -9,7 +9,7 @@ use crate::page_cache::PageCache;
 use tiny_skia::{Color, Pixmap};
 
 // ---------------- 常量（与原 C++ app.h 对齐） ----------------
-pub const VERSION: &str = "3.2-Electro.rc.5";
+pub const VERSION: &str = "3.2-Electro.rc.7";
 // 侧边栏基准尺寸（与 C++ 版对齐：56/34/24/19；可在设置里用「侧边栏大小」缩放）
 pub const SB_BASE_W: f64 = 56.0;
 pub const SB_BASE_BTN: f64 = 34.0;
@@ -82,6 +82,62 @@ pub struct UndoEntry {
     tiles: HashMap<(i32, i32), Vec<u8>>,
 }
 
+// ---------------- 白板坐标系 / 圆锥曲线 ----------------
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConicKind { None, Ellipse, Hyperbola, Parabola }
+
+impl ConicKind {
+    pub fn label(self) -> &'static str {
+        match self { Self::None => "空坐标系", Self::Ellipse => "椭圆", Self::Hyperbola => "双曲线", Self::Parabola => "抛物线" }
+    }
+    pub fn directions(self) -> &'static [(ConicDirection, &'static str)] {
+        match self {
+            Self::Ellipse | Self::Hyperbola => &[
+                (ConicDirection::Horizontal, "横向"),
+                (ConicDirection::Vertical, "纵向"),
+            ],
+            Self::Parabola => &[
+                (ConicDirection::Up, "向上"),
+                (ConicDirection::Down, "向下"),
+                (ConicDirection::Left, "向左"),
+                (ConicDirection::Right, "向右"),
+            ],
+            Self::None => &[],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConicDirection { Horizontal, Vertical, Up, Down, Left, Right }
+
+#[derive(Clone, Copy, Debug)]
+pub struct CoordGuide {
+    pub origin_x: f32,
+    pub origin_y: f32,
+    pub scale: f32,
+    pub rotation: f32,
+    pub conic: ConicKind,
+    pub direction: ConicDirection,
+    /// 0..1 normalized shape parameter (eccentricity / focal length).
+    pub shape: f32,
+    pub editing: bool,
+}
+
+impl CoordGuide {
+    pub fn new(screen_w: i32, screen_h: i32, conic: ConicKind, direction: ConicDirection) -> Self {
+        Self {
+            origin_x: screen_w as f32 / 2.0,
+            origin_y: screen_h as f32 / 2.0,
+            scale: 40.0,
+            rotation: 0.0,
+            conic,
+            direction,
+            shape: 0.5,
+            editing: true,
+        }
+    }
+}
+
 // ---------------- 全局状态 ----------------
 pub struct App {
     // 模式 0=光标 1=画笔 2=橡皮
@@ -116,6 +172,16 @@ pub struct App {
     pub whiteboard_bg_index: i32,
     pub whiteboard_dots: bool,
     pub whiteboard_dot_size: i32,
+    pub coord: Option<CoordGuide>,
+    pub conic_menu: Option<ConicKind>,
+    pub dot_popup: bool,
+    pub select_mode: bool,
+    pub lasso: Vec<(f32, f32)>,
+    pub floating: Option<crate::selection::FloatingSelection>,
+    pub thumbs: HashMap<(i32, i32), Pixmap>,
+    pub thumb_waiting: Option<(i32, i32, String)>,
+    pub thumb_target: Option<(i32, i32)>,
+    pub thumb_target_at: i64,
     pub saved_mode: i32, // 退出白板时恢复进入前的工具。
     pub saved_drawing_tools: bool,
 
@@ -266,6 +332,16 @@ impl App {
             whiteboard_bg_index: 1,
             whiteboard_dots: false,
             whiteboard_dot_size: DEFAULT_WHITEBOARD_DOT_SIZE,
+            coord: None,
+            conic_menu: None,
+            dot_popup: false,
+            select_mode: false,
+            lasso: Vec::new(),
+            floating: None,
+            thumbs: HashMap::new(),
+            thumb_waiting: None,
+            thumb_target: None,
+            thumb_target_at: 0,
             saved_mode: 0,
             launch: crate::launch::Launch::default(),
             collapsed: false,
@@ -368,8 +444,9 @@ impl App {
         (SB_BASE_DOT * self.sb_scale) as i32
     }
     pub fn sb_height(&self) -> i32 {
-        sb_compact_height_of(self.sb_scale) + self.drawing_tools_height()
-            - self.sb_page_h() - 6 + self.sidebar_page_space()
+        let base = sb_compact_height_of(self.sb_scale) + self.drawing_tools_height()
+            - self.sb_page_h() - 6 + self.sidebar_page_space();
+        if self.whiteboard { base - (self.sb_btn() + 6) } else { base }
     }
     /// Keep the visible toolbar on screen without losing its preferred anchor.
     /// Height changes (tools, page count, scale) share these bounds with dragging.
@@ -499,6 +576,10 @@ impl App {
     pub fn clear_undo(&mut self) {
         self.undo.clear();
     }
+    /// Drop the most recent undo entry (used when a selection is cancelled).
+    pub fn discard_last_undo(&mut self) {
+        self.undo.pop_back();
+    }
     /// 开始一次新的撤回记录（落笔前调用）；不立即拷贝像素，避免整屏快照
     pub fn begin_undo(&mut self) {
         if self.undo.len() >= MAX_UNDO {
@@ -599,6 +680,7 @@ impl App {
     }
 
     pub fn clear_canvas(&mut self) {
+        if self.floating.is_some() { crate::selection::commit(self); }
         self.stroke_pts.clear();
         self.canvas.fill(Color::TRANSPARENT);
         self.page_has_ink = false;
@@ -664,6 +746,9 @@ impl App {
 
     // ---- 当前生效缓存 ----
     pub fn save_current_page(&mut self) {
+        // A floating lasso selection is not on the canvas yet; commit it so a
+        // page change does not silently drop the lifted ink.
+        if self.floating.is_some() { crate::selection::commit(self); }
         if !self.page_has_ink {
             // 清空后的空白页也要覆盖旧快照，否则重开/翻回该页会复活旧笔迹。
             if self.whiteboard {
@@ -749,6 +834,8 @@ impl App {
             self.mode = 1;
             self.drawing_tools.set_expanded(true);
             self.current_slide = self.whiteboard_slide;
+            // Whiteboard has no collapse button; make sure it is visible.
+            self.set_sidebar_collapsed(false);
         } else {
             // 手动切回普通模式时丢弃白板全部笔迹，但保留透明批注页缓存。
             self.whiteboard_cache.clear();
@@ -759,9 +846,19 @@ impl App {
             self.drawing_tools.set_expanded(self.saved_drawing_tools);
             self.current_slide = self.saved_slide;
         }
-        // Each whiteboard session starts with the default dot controls.
+        // Each whiteboard session starts fresh.
         self.whiteboard_dots = false;
         self.whiteboard_dot_size = DEFAULT_WHITEBOARD_DOT_SIZE;
+        self.coord = None;
+        self.conic_menu = None;
+        self.dot_popup = false;
+        self.select_mode = false;
+        self.lasso.clear();
+        self.floating = None;
+        self.thumbs.clear();
+        self.thumb_waiting = None;
+        self.thumb_target = None;
+        self.thumb_target_at = 0;
         self.wb_limit_msg_until = 0;
         self.load_page(self.current_slide);
     }

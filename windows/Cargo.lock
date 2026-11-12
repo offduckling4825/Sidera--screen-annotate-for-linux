@@ -1652,7 +1652,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sidera"
-version = "3.2.0-Electro.rc.5"
+version = "3.2.0-Electro.rc.7"
 dependencies = [
  "ab_glyph",
  "arboard",
@@ -1684,7 +1684,7 @@ dependencies = [
 
 [[package]]
 name = "sidera-windows"
-version = "3.2.0-Electro.rc.5"
+version = "3.2.0-Electro.rc.7"
 dependencies = [
  "env_logger",
  "image",

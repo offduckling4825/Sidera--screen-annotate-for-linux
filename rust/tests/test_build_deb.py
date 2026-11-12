@@ -15,7 +15,7 @@ import unittest
 
 
 REPO = Path(__file__).resolve().parents[2]
-VERSION = "3.2-Electro.rc.5"
+VERSION = "3.2-Electro.rc.7"
 
 
 def elf_fixture(machine, elf_class=2, byte_order=1, kind=2):

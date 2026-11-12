@@ -7,7 +7,7 @@ on:
       release_tag:
         description: Existing Sidera release tag
         required: true
-        default: v3.2-Electro.rc.5
+        default: v3.2-Electro.rc.7
         type: string
       runner_image:
         description: Native ARM64 build system (also determines the library baseline)
