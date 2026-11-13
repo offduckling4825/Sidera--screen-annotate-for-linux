@@ -40,20 +40,15 @@
 
 | PPT 放映中 | 设置界面 |
 | :---: | :---: |
-| ![PPT 放映中界面](https://github.com/user-attachments/assets/23399457-4d09-4afd-b9a3-729bf51b78a0) | ![Sidera 设置界面](<img width="2550" height="1540" alt="image" src="https://github.com/user-attachments/assets/b6ab9f3c-f849-404d-a841-e8c2cf8b5c58" />
-) |
+| ![PPT 放映中界面](https://github.com/user-attachments/assets/23399457-4d09-4afd-b9a3-729bf51b78a0) | ![Sidera 设置界面](https://github.com/user-attachments/assets/b6ab9f3c-f849-404d-a841-e8c2cf8b5c58) |
 | 放映时只保留课堂需要的批注与翻页入口。 | 主题、工具栏、触摸、WPS 联动、进程屏蔽与诊断。 |
 
 | 白色白板 | 绿色白板 |
 | :---: | :---: |
-| ![白色背景白板]<img width="2560" height="1600" alt="image" src="https://github.com/user-attachments/assets/17a05914-889d-45b5-87c9-c69d9774a3b3" />
-
- | ![绿色背景白板]<img width="2560" height="1600" alt="image" src="https://github.com/user-attachments/assets/8b295bf4-694a-4c36-b5d4-5155b4915447" />
- |
+| ![白色背景白板](https://github.com/user-attachments/assets/17a05914-889d-45b5-87c9-c69d9774a3b3) | ![绿色背景白板](https://github.com/user-attachments/assets/8b295bf4-694a-4c36-b5d4-5155b4915447) |
 | 白色白板，适合明亮教室。 | 墨绿白板，适合传统课堂板书。 |
 
-![页码拨轮与跳页按钮]<img width="411" height="797" alt="image" src="https://github.com/user-attachments/assets/00dcb002-66d5-4af8-962d-00e2498fe1dc" />
-
+![页码拨轮与跳页按钮](https://github.com/user-attachments/assets/00dcb002-66d5-4af8-962d-00e2498fe1dc)
 
 *页码跳转：选择页码后确认跳转，避免误触。*
 
