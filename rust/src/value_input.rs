@@ -2,7 +2,7 @@
 use crate::{app::App, text::Fonts, ui::{self, Ctx, R, SliderId}, ui_theme::c};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Target { Setting(SliderId), DotSize, Page, Hue, Saturation, Brightness, Hex }
+pub enum Target { Setting(SliderId), Page, Hue, Saturation, Brightness, Hex }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key { Character(char), Backspace, Delete, Left, Right, Home, End, SelectAll, Paste, Enter, Escape }
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -24,7 +24,6 @@ pub fn spec(app: &App, target: Target) -> Spec {
         Setting(SliderId::AutoExpand)=>("自动展开时间",1.0,20.0,0,"分钟",app.sidebar_expand_minutes as f32),
         Setting(SliderId::Threshold)=>("大触点阈值",20.0,260.0,0,"px",app.large_touch_threshold as f32),
         Setting(SliderId::EraseScale)=>("大触点橡皮倍率",0.8,2.5,1,"×",app.large_erase_scale10 as f32/10.0),
-        DotSize=>("白板点大小",1.0,10.0,0,"",app.whiteboard_dot_size as f32),
         Page=>("跳转页码",1.0,app.page_picker.as_ref().map_or(1,|p|p.total) as f32,0,"页",app.page_picker.as_ref().map_or(1,|p|p.selected()) as f32),
         Hue=>("色相 H",0.0,360.0,1,"°",app.settings_ui.picker.as_ref().map_or(0.0,|p|p.hue*360.0)),
         Saturation=>("饱和度 S",0.0,100.0,1,"%",app.settings_ui.picker.as_ref().map_or(0.0,|p|p.saturation*100.0)),
@@ -89,7 +88,6 @@ pub fn parse(app:&App)->Result<f32,String> {
 pub fn target_rect(app:&App,target:Target)->Option<R> {
     match target {
         Target::Setting(id)=>ui::settings_sliders(app).into_iter().find(|s|s.id==id).map(|s|s.badge),
-        Target::DotSize=>Some(ui::whiteboard_dot_value_rect(app)),
         Target::Page=>Some(ui::page_picker_control_rect(app,ui::PagePickerHit::Input)),
         _=>crate::settings_panel::picker_controls(app).into_iter()
             .find_map(|(hit,r)|(hit==crate::settings_state::PickerHit::Edit(target)).then_some(r)),
@@ -126,7 +124,7 @@ pub fn draw_value(app:&App,fonts:&Fonts,ctx:&mut Ctx,target:Target,r:R,px:f32,pr
     let x=r.x as f32+(r.w as f32-before-width-after)/2.0;
     let baseline=r.y as f32+(r.h as f32+px*0.72)/2.0;
     let value_x=x+before;
-    let ink=if target==Target::DotSize&&!app.whiteboard_dots {palette.disabled_ink}else{palette.text};
+    let ink=palette.text;
     ctx.text(fonts,prefix,x,baseline,px,c(palette.muted));
     if let Some(editor)=editor {
         if editor.selected {
@@ -143,14 +141,6 @@ pub fn draw_value(app:&App,fonts:&Fonts,ctx:&mut Ctx,target:Target,r:R,px:f32,pr
     ctx.text(fonts,suffix,value_x+width,baseline,px,c(palette.muted));
 }
 
-pub fn draw(app:&App,fonts:&Fonts,ctx:&mut Ctx) {
-    // Settings and the colour/page pickers show validation in their existing captions.
-    let Some(editor)=app.settings_ui.editor.as_ref().filter(|e|e.target==Target::DotSize&&!e.error.is_empty()) else{return};
-    let bar=ui::whiteboard_dot_popup_rect(app);
-    let r=R {x:bar.x,y:bar.y-26,w:bar.w,h:24};
-    ctx.fill_round(r,4.0,c(ctx.palette.paper));
-    ctx.text_center(fonts,r,&crate::settings_panel::fitted(fonts,&editor.error,12.0,r.w-16),12.0,c(ctx.palette.danger));
-}
 
 #[cfg(test)]
 mod tests {

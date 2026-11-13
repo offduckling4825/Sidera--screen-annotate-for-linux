@@ -25,7 +25,7 @@ def main():
     architecture = os.environ.get("DEB_ARCH", "arm64")
     machine = {"amd64": "Advanced Micro Devices X86-64", "arm64": "AArch64"}[architecture]
     legacy = re.fullmatch(r"v3\.0-Electro-testing-custom[0-9]{8}\.[0-9]+", tag)
-    current = re.fullmatch(r"v3\.2-Electro\.rc(\.[0-9]+)?", tag)
+    current = re.fullmatch(r"v3\.2-Electro(-stable|\.rc(\.[0-9]+)?)", tag)
     if not (legacy or current):
         raise ValueError("Invalid release tag")
     if version != tag[1:].replace("-custom", "+custom"):

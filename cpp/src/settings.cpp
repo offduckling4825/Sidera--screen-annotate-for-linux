@@ -251,7 +251,7 @@ void openSettings() {
   lay->addWidget(clearLogBtn);
 
   // 版权信息
-  QLabel* creditLbl = new QLabel(QString::fromUtf8("Sidera 3.2-Electro.rc   © 2026 Carl_Jin\nGNU GPL v3"));
+  QLabel* creditLbl = new QLabel(QString::fromUtf8("Sidera 3.2-Electro-stable   © 2026 Carl_Jin\nGNU GPL v3"));
   creditLbl->setAlignment(Qt::AlignCenter);
   creditLbl->setStyleSheet("color:#556;font-size:11px;");
   lay->addWidget(creditLbl);

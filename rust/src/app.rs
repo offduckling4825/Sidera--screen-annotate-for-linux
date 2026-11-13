@@ -9,7 +9,7 @@ use crate::page_cache::PageCache;
 use tiny_skia::{Color, Pixmap};
 
 // ---------------- 常量（与原 C++ app.h 对齐） ----------------
-pub const VERSION: &str = "3.2-Electro.rc.7";
+pub const VERSION: &str = "3.2-Electro-stable";
 // 侧边栏基准尺寸（与 C++ 版对齐：56/34/24/19；可在设置里用「侧边栏大小」缩放）
 pub const SB_BASE_W: f64 = 56.0;
 pub const SB_BASE_BTN: f64 = 34.0;
@@ -34,8 +34,7 @@ pub const STROKE_RAMP_MS: i64 = 600;
 pub const STROKE_MIN_SCALE: f64 = 0.85;
 
 pub const WHITEBOARD_COLORS: [(u8, u8, u8); 2] = [(0x0F, 0x3D, 0x2E), (255, 255, 255)];
-pub const WHITEBOARD_DOT_PITCH: i32 = 32;
-pub const DEFAULT_WHITEBOARD_DOT_SIZE: i32 = 3;
+pub const DEFAULT_COORD_SIZE: f32 = 0.5;
 
 pub const COLORS: [(u8, u8, u8); 10] = [
     (255, 40, 40),
@@ -115,6 +114,8 @@ pub struct CoordGuide {
     pub origin_x: f32,
     pub origin_y: f32,
     pub scale: f32,
+    /// 0..1 normalized conic size multiplier (see `conic::size_scale`).
+    pub size: f32,
     pub rotation: f32,
     pub conic: ConicKind,
     pub direction: ConicDirection,
@@ -129,6 +130,7 @@ impl CoordGuide {
             origin_x: screen_w as f32 / 2.0,
             origin_y: screen_h as f32 / 2.0,
             scale: 40.0,
+            size: DEFAULT_COORD_SIZE,
             rotation: 0.0,
             conic,
             direction,
@@ -170,11 +172,11 @@ pub struct App {
     // 白板
     pub whiteboard: bool,
     pub whiteboard_bg_index: i32,
-    pub whiteboard_dots: bool,
-    pub whiteboard_dot_size: i32,
     pub coord: Option<CoordGuide>,
+    /// One guide per whiteboard page; the active copy lives in `coord`.
+    pub coord_pages: HashMap<i32, CoordGuide>,
+    pub coord_page: i32,
     pub conic_menu: Option<ConicKind>,
-    pub dot_popup: bool,
     pub select_mode: bool,
     pub lasso: Vec<(f32, f32)>,
     pub floating: Option<crate::selection::FloatingSelection>,
@@ -330,11 +332,10 @@ impl App {
             input_group_state: 0,
             whiteboard: false,
             whiteboard_bg_index: 1,
-            whiteboard_dots: false,
-            whiteboard_dot_size: DEFAULT_WHITEBOARD_DOT_SIZE,
             coord: None,
+            coord_pages: HashMap::new(),
+            coord_page: 1,
             conic_menu: None,
-            dot_popup: false,
             select_mode: false,
             lasso: Vec::new(),
             floating: None,
@@ -777,6 +778,26 @@ impl App {
             self.slide_cache.contains_key(&page)
         };
         crate::wps::wps_log(&format!("[PAGE] load page={} has_cache={}", page, cached));
+        if self.whiteboard {
+            // Guides belong to their page: stash the active one before showing
+            // the target page, and leave edit mode when navigating away.
+            let was_editing = self.coord.is_some_and(|c| c.editing);
+            if let Some(mut coord) = self.coord {
+                coord.editing = false;
+                self.coord_pages.insert(self.coord_page, coord);
+            } else {
+                self.coord_pages.remove(&self.coord_page);
+            }
+            self.coord = self.coord_pages.get(&page).copied().map(|mut coord| {
+                coord.editing = false;
+                coord
+            });
+            self.coord_page = page;
+            if was_editing { self.mode = 1; }
+            self.conic_menu = None;
+            self.select_mode = false;
+            self.lasso.clear();
+        }
         self.stroke_pts.clear();
         self.canvas.fill(Color::TRANSPARENT);
         let cached = if self.whiteboard {
@@ -795,6 +816,45 @@ impl App {
         if !self.whiteboard { self.drawing_tools.request_page_update(); }
     }
 
+    /// Store the active guide into the current whiteboard page.
+    pub fn save_coord_page(&mut self) {
+        if !self.whiteboard { return; }
+        if let Some(coord) = self.coord {
+            self.coord_pages.insert(self.coord_page, coord);
+        } else {
+            self.coord_pages.remove(&self.coord_page);
+        }
+    }
+
+    /// Create or replace the current page's guide, keeping its transform.
+    pub fn set_coord(&mut self, conic: ConicKind, direction: ConicDirection) {
+        let mut coord = match self.coord {
+            Some(mut existing) => {
+                existing.conic = conic;
+                existing.direction = direction;
+                existing
+            }
+            None => CoordGuide::new(self.screen_w, self.screen_h, conic, direction),
+        };
+        coord.editing = true;
+        self.coord = Some(coord);
+        self.coord_page = self.current_slide;
+        self.coord_pages.insert(self.current_slide, coord);
+        self.conic_menu = None;
+        self.select_mode = false;
+        self.lasso.clear();
+        self.mode = 0;
+    }
+
+    pub fn delete_coord(&mut self) {
+        self.coord_pages.remove(&self.current_slide);
+        self.coord = None;
+        self.coord_page = self.current_slide;
+        self.conic_menu = None;
+        self.select_mode = false;
+        self.lasso.clear();
+    }
+
     /// 放映开始/结束或全屏状态变化只重置透明批注，不影响独立白板。
     pub fn clear_slide_pages(&mut self) {
         crate::wps::wps_log("[PAGE] clear_slide_pages");
@@ -809,6 +869,7 @@ impl App {
     }
 
     pub fn clear_current_strokes(&mut self) {
+        if self.floating.is_some() { crate::selection::commit(self); }
         self.stroke_pts.clear();
         if self.whiteboard {
             self.whiteboard_cache.remove(&self.current_slide);
@@ -847,11 +908,10 @@ impl App {
             self.current_slide = self.saved_slide;
         }
         // Each whiteboard session starts fresh.
-        self.whiteboard_dots = false;
-        self.whiteboard_dot_size = DEFAULT_WHITEBOARD_DOT_SIZE;
         self.coord = None;
+        self.coord_pages.clear();
+        self.coord_page = 1;
         self.conic_menu = None;
-        self.dot_popup = false;
         self.select_mode = false;
         self.lasso.clear();
         self.floating = None;
@@ -987,10 +1047,7 @@ fn parse_settings(app: &mut App, content: &str) {
                     app.sidebar_alpha = n.clamp(30, 255) as u8;
                 }
             }
-            "whiteboardDots" => app.whiteboard_dots = v == "1",
-            "whiteboardDotSize" => {
-                if let Ok(n) = v.parse::<i32>() { app.whiteboard_dot_size = n.clamp(1, 10); }
-            }
+            "whiteboardDots" | "whiteboardDotSize" => {}
             "processBlock" => app.process_block_enabled = v == "1",
             // Pen choices last only for this session; ignore values saved by older versions.
             "penColor" | "penSize" => {}
@@ -1033,15 +1090,13 @@ pub fn save_settings(app: &App) {
 
 fn serialize_settings(app: &App) -> String {
     format!(
-        "configVersion=2\nwpsDebug={}\nwpsTestMode={}\nstartupDelay={}\nsidebarExpandMinutes={}\nsbScale={:.2}\nsidebarAlpha={}\nwhiteboardDots={}\nwhiteboardDotSize={}\nprocessBlock={}\neraserSize={}\nlargeTouchThreshold={}\nlargeEraseScale10={}\ntheme={}\nthemeAccent={}\n",
+        "configVersion=3\nwpsDebug={}\nwpsTestMode={}\nstartupDelay={}\nsidebarExpandMinutes={}\nsbScale={:.2}\nsidebarAlpha={}\nprocessBlock={}\neraserSize={}\nlargeTouchThreshold={}\nlargeEraseScale10={}\ntheme={}\nthemeAccent={}\n",
         1,
         1,
         app.startup_delay,
         app.sidebar_expand_minutes.clamp(1,20),
         app.sb_scale,
         app.sidebar_alpha,
-        if app.whiteboard_dots { 1 } else { 0 },
-        app.whiteboard_dot_size,
         if app.process_block_enabled { 1 } else { 0 },
         app.cur_eraser,
         app.large_touch_threshold as i32,

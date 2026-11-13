@@ -342,9 +342,13 @@ fn coordinate_edit_sliders_and_done_drive_the_guide() {
     app.coord = Some(crate::app::CoordGuide::new(640, 360,
         crate::app::ConicKind::Ellipse, crate::app::ConicDirection::Horizontal));
     let mut ip = Ip::default();
+    let zoom = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::ZoomSlider)).unwrap();
+    on_press(&rt, &mut app, &mut ip, None, zoom.x + zoom.w - 1, zoom.y + 5, 1);
+    assert!(app.coord.unwrap().scale > 100.0);
+    on_release(&rt, &mut app, &mut ip, None, zoom.x + zoom.w - 1, zoom.y + 5, 1);
     let size = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::SizeSlider)).unwrap();
     on_press(&rt, &mut app, &mut ip, None, size.x + size.w - 1, size.y + 5, 1);
-    assert!(app.coord.unwrap().scale > 100.0);
+    assert!(app.coord.unwrap().size > 0.9);
     on_release(&rt, &mut app, &mut ip, None, size.x + size.w - 1, size.y + 5, 1);
     let shape = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::ShapeSlider)).unwrap();
     on_press(&rt, &mut app, &mut ip, None, shape.x + shape.w - 1, shape.y + 5, 1);
@@ -364,6 +368,85 @@ fn coordinate_edit_sliders_and_done_drive_the_guide() {
     on_press(&rt, &mut app, &mut ip, None, done.x + 5, done.y + 5, 1);
     on_release(&rt, &mut app, &mut ip, None, done.x + 5, done.y + 5, 1);
     assert!(!app.coord.unwrap().editing);
+    assert_eq!(app.mode, 1, "完成 returns to the pen");
+}
+
+#[test]
+fn whiteboard_cursor_and_edit_share_the_sidebar_button() {
+    let (_rt, mut app, _) = fixture(false);
+    app.configure_geometry(640, 360, 1.0);
+    app.toggle_whiteboard();
+    assert!(ui::control_enabled(&app, ui::Control::Sidebar(Btn::Cursor, false)));
+    switch_to_cursor(&_rt, &mut app);
+    assert_eq!(app.mode, 0);
+    assert!(app.coord.is_none());
+    app.set_coord(crate::app::ConicKind::Ellipse, crate::app::ConicDirection::Horizontal);
+    assert!(app.coord.unwrap().editing);
+    assert_eq!(app.mode, 0);
+    switch_to_draw(&_rt, &mut app, 1);
+    assert!(!app.coord.unwrap().editing);
+    assert_eq!(app.mode, 1);
+    switch_to_cursor(&_rt, &mut app);
+    assert!(app.coord.unwrap().editing);
+    assert_eq!(app.mode, 0);
+}
+
+#[test]
+fn switching_shapes_keeps_the_guide_transform() {
+    let (_rt, mut app, _) = fixture(false);
+    app.configure_geometry(640, 360, 1.0);
+    app.toggle_whiteboard();
+    app.set_coord(crate::app::ConicKind::Ellipse, crate::app::ConicDirection::Horizontal);
+    if let Some(coord) = app.coord.as_mut() {
+        coord.origin_x = 111.0; coord.origin_y = 222.0;
+        coord.scale = 77.0; coord.size = 0.8; coord.shape = 0.2; coord.rotation = 0.3;
+    }
+    app.set_coord(crate::app::ConicKind::Parabola, crate::app::ConicDirection::Up);
+    let coord = app.coord.unwrap();
+    assert_eq!((coord.origin_x, coord.origin_y), (111.0, 222.0));
+    assert_eq!((coord.scale, coord.size, coord.shape, coord.rotation), (77.0, 0.8, 0.2, 0.3));
+    assert_eq!(coord.conic, crate::app::ConicKind::Parabola);
+}
+
+#[test]
+fn whiteboard_guides_belong_to_their_page_and_clear_keeps_them() {
+    let (_rt, mut app, _) = fixture(false);
+    app.configure_geometry(640, 360, 1.0);
+    app.toggle_whiteboard();
+    app.set_coord(crate::app::ConicKind::Ellipse, crate::app::ConicDirection::Horizontal);
+    app.save_coord_page();
+    app.save_current_page();
+    app.current_slide = 2;
+    app.load_page(2);
+    assert!(app.coord.is_none(), "a new page starts without a guide");
+    assert_eq!(app.mode, 1, "leaving edit mode restores the pen");
+    app.set_coord(crate::app::ConicKind::Parabola, crate::app::ConicDirection::Up);
+    app.save_coord_page();
+    app.save_current_page();
+    app.current_slide = 1;
+    app.load_page(1);
+    let guide = app.coord.unwrap();
+    assert_eq!(guide.conic, crate::app::ConicKind::Ellipse);
+    assert!(!guide.editing);
+    app.clear_current_strokes();
+    assert!(app.coord.is_some(), "clearing ink must not delete the guide");
+    app.toggle_whiteboard();
+    assert!(app.coord.is_none() && app.coord_pages.is_empty());
+}
+
+#[test]
+fn whiteboard_delete_button_removes_the_current_page_guide() {
+    let (rt, mut app, _) = fixture(false);
+    app.configure_geometry(640, 360, 1.0);
+    app.toggle_whiteboard();
+    app.set_coord(crate::app::ConicKind::Ellipse, crate::app::ConicDirection::Horizontal);
+    let delete = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::Delete)).unwrap();
+    let mut ip = Ip::default();
+    on_press(&rt, &mut app, &mut ip, None, delete.x + 5, delete.y + 5, 1);
+    on_release(&rt, &mut app, &mut ip, None, delete.x + 5, delete.y + 5, 1);
+    assert!(app.coord.is_none());
+    assert!(!app.coord_pages.contains_key(&1));
+    assert_eq!(app.mode, 1);
 }
 
 #[test]
@@ -392,10 +475,74 @@ fn selection_lasso_moves_whiteboard_ink_and_can_commit() {
     on_press(&rt, &mut app, &mut ip, None, 100, 100, 1);
     on_motion(&rt, &mut app, &mut ip, 130, 110);
     on_release(&rt, &mut app, &mut ip, None, 130, 110, 1);
-    on_press(&rt, &mut app, &mut ip, None, 500, 300, 1);
-    on_release(&rt, &mut app, &mut ip, None, 500, 300, 1);
+    let done = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::SelDone)).unwrap();
+    on_press(&rt, &mut app, &mut ip, None, done.x + 5, done.y + 5, 1);
+    on_release(&rt, &mut app, &mut ip, None, done.x + 5, done.y + 5, 1);
     assert!(app.floating.is_none());
     assert_eq!(app.canvas.data()[(110 * 640 + 130) * 4 + 3], 255);
+}
+
+#[test]
+fn floating_selection_commits_when_tools_change_or_the_page_is_cleared() {
+    let (rt, mut app, _) = fixture(false);
+    app.configure_geometry(640, 360, 1.0);
+    app.toggle_whiteboard();
+    let ink = {
+        let data = app.canvas.data_mut();
+        let i = (100 * 640 + 100) * 4;
+        data[i..i + 4].copy_from_slice(&[255, 0, 0, 255]);
+        i
+    };
+    app.page_has_ink = true;
+    let lasso = [(80.0, 80.0), (120.0, 80.0), (120.0, 120.0), (80.0, 120.0)];
+    app.floating = crate::selection::lift(&mut app, &lasso);
+    assert!(app.floating.is_some());
+    switch_to_draw(&rt, &mut app, 1);
+    assert!(app.floating.is_none());
+    assert_eq!(app.canvas.data()[ink + 3], 255, "the lifted ink must be committed");
+    app.floating = crate::selection::lift(&mut app, &lasso);
+    assert!(app.floating.is_some());
+    app.clear_current_strokes();
+    assert!(app.floating.is_none());
+}
+
+#[test]
+fn whiteboard_selection_works_through_the_touch_path() {
+    let (rt, mut app, _) = fixture(false);
+    app.configure_geometry(640, 360, 1.0);
+    app.toggle_whiteboard();
+    {
+        let data = app.canvas.data_mut();
+        let i = (100 * 640 + 100) * 4;
+        data[i..i + 4].copy_from_slice(&[255, 0, 0, 255]);
+    }
+    app.page_has_ink = true;
+    let mut ip = Ip::default();
+    let select = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::Select)).unwrap();
+    handle_touch(&rt, &mut app, &mut ip, None, 7, select.x + 5, select.y + 5, TouchKind::Begin, 1.0);
+    handle_touch(&rt, &mut app, &mut ip, None, 7, select.x + 5, select.y + 5, TouchKind::End, 0.0);
+    assert!(app.select_mode);
+    handle_touch(&rt, &mut app, &mut ip, None, 8, 80, 80, TouchKind::Begin, 1.0);
+    handle_touch(&rt, &mut app, &mut ip, None, 8, 120, 80, TouchKind::Update, 1.0);
+    handle_touch(&rt, &mut app, &mut ip, None, 8, 120, 120, TouchKind::Update, 1.0);
+    handle_touch(&rt, &mut app, &mut ip, None, 8, 80, 120, TouchKind::Update, 1.0);
+    handle_touch(&rt, &mut app, &mut ip, None, 8, 80, 80, TouchKind::End, 0.0);
+    assert!(app.floating.is_some(), "the touch lasso must lift ink");
+    assert_eq!(app.canvas.data()[(100 * 640 + 100) * 4 + 3], 0);
+}
+
+#[test]
+fn whiteboard_cursor_touch_does_not_draw() {
+    let (rt, mut app, _) = fixture(false);
+    app.configure_geometry(640, 360, 1.0);
+    app.toggle_whiteboard();
+    switch_to_cursor(&rt, &mut app);
+    assert_eq!(app.mode, 0);
+    let mut ip = Ip::default();
+    handle_touch(&rt, &mut app, &mut ip, None, 9, 100, 100, TouchKind::Begin, 1.0);
+    handle_touch(&rt, &mut app, &mut ip, None, 9, 160, 140, TouchKind::Update, 1.0);
+    handle_touch(&rt, &mut app, &mut ip, None, 9, 160, 140, TouchKind::End, 0.0);
+    assert!(app.canvas.data().iter().all(|byte| *byte == 0), "cursor touch must not paint");
 }
 
 #[test]
@@ -1170,23 +1317,14 @@ fn outside_click_dismisses_cursor_popups() {
 }
 
 #[test]
-fn whiteboard_dot_controls_live_in_the_bottom_menu() {
-    let (rt, mut app, _) = fixture(false);
+fn whiteboard_bottom_bar_keeps_only_guides_and_selection() {
+    let (_rt, mut app, _) = fixture(false);
     app.configure_geometry(640, 360, 1.0);
     app.toggle_whiteboard();
-    let mut ip = Ip::default();
-    let dots = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::Dots)).unwrap();
-    on_press(&rt, &mut app, &mut ip, None, dots.x + 10, dots.y + 10, 1);
-    on_release(&rt, &mut app, &mut ip, None, dots.x + 10, dots.y + 10, 1);
-    assert!(app.whiteboard_dots && app.dot_popup);
-    let slider = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::DotSize)).unwrap();
-    on_press(&rt, &mut app, &mut ip, None, slider.x + slider.w - 1, slider.y + 10, 1);
-    assert_eq!(app.whiteboard_dot_size, 10);
-    assert!(ip.dot_slider);
-    on_release(&rt, &mut app, &mut ip, None, slider.x + slider.w - 1, slider.y + 10, 1);
-    assert!(!ip.dot_slider);
-    assert_eq!(ui::control_at(&app, slider.x + 4, slider.y + 4),
-        Some(ui::Control::Whiteboard(ui::WhiteboardControl::DotSize)));
+    let select = ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::Select)).unwrap();
+    assert_eq!(ui::control_at(&app, select.x + 4, select.y + 4),
+        Some(ui::Control::Whiteboard(ui::WhiteboardControl::Select)));
+    assert!(ui::control_rect(&app, ui::Control::Whiteboard(ui::WhiteboardControl::Empty)).is_some());
 }
 
 #[test]

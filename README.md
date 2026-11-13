@@ -9,7 +9,7 @@
 轻量、免费、开源：把注意力留给课堂。
 
 [![CI](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml/badge.svg)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux/actions/workflows/ci.yml)
-[![阶段](https://img.shields.io/badge/3.2-Electro.rc.7-b98237?style=flat-square)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux)
+[![阶段](https://img.shields.io/badge/3.2-Electro-stable-b98237?style=flat-square)](https://github.com/offduckling4825/Sidera--screen-annotate-for-linux)
 [![平台](https://img.shields.io/badge/platform-Linux-5a6f69?style=flat-square)](#桌面与安装包兼容性)
 [![许可](https://img.shields.io/badge/license-GPL_v3-5a6f69?style=flat-square)](LICENSE)
 
@@ -27,8 +27,8 @@
 
 | 版本 | 技术栈 | 版本号 | 建议场景 |
 | --- | --- | --- | --- |
-| **Rust 版（主推，active）** | 纯 Rust，**不依赖 Qt / libX11**，tiny-skia 软件渲染 | `3.2-Electro.rc.7` | X11 与 Wayland 通吃；老机器、国产化教室机；追求轻量与无重量级依赖 |
-| **C++ / Qt5 版（legacy）** | C++17 + Qt5 | `3.2-Electro.rc.7` | 经典实现；长期在 X11 教室环境验证 |
+| **Rust 版（主推，active）** | 纯 Rust，**不依赖 Qt / libX11**，tiny-skia 软件渲染 | `3.2-Electro-stable` | X11 与 Wayland 通吃；老机器、国产化教室机；追求轻量与无重量级依赖 |
+| **C++ / Qt5 版（legacy）** | C++17 + Qt5 | `3.2-Electro-stable` | 经典实现；长期在 X11 教室环境验证 |
 
 > Rust 运行时只依赖 `libc6` 与 `libgcc-s1`。C++ 与 Rust 包使用相同的 `sidera` 包名，安装会替换已有版本，**二选一安装**。
 
@@ -45,8 +45,8 @@
 
 | 白色白板 | 绿色白板 |
 | :---: | :---: |
-| ![白色背景白板与点阵](https://github.com/user-attachments/assets/08d261b1-3687-470b-b23e-178de9aefbb5) | ![绿色背景白板与点阵](https://github.com/user-attachments/assets/16bfb9a4-d0ce-4687-bd54-338e1516a00b) |
-| 白色白板，可开启点阵辅助。 | 墨绿白板，适合传统课堂板书。 |
+| ![白色背景白板](https://github.com/user-attachments/assets/08d261b1-3687-470b-b23e-178de9aefbb5) | ![绿色背景白板](https://github.com/user-attachments/assets/16bfb9a4-d0ce-4687-bd54-338e1516a00b) |
+| 白色白板，适合明亮教室。 | 墨绿白板，适合传统课堂板书。 |
 
 ![页码拨轮与跳页按钮](https://github.com/user-attachments/assets/5e1e0c23-14cb-4c87-95ba-1e84e90c8b2e)
 
@@ -54,13 +54,12 @@
 
 ## 核心特性
 
-- 🖊️ **轻量流畅的屏幕批注**：自由画笔、20/30/60/80 四档橡皮、白板与 10 色色盘；支持多指同时绘画，笔迹随落笔时长由细到粗。
+- 🖊️ **轻量流畅的屏幕批注**：自由画笔、20/30/60/80 四档橡皮、白板、坐标系图形与 10 色色盘；支持多指同时绘画，笔迹随落笔时长由细到粗。
 - 🖱️ **智能点击穿透**：光标模式下只响应工具栏与弹窗交互，全屏透明区域完全穿透，不影响底层桌面与课件操作。
 - 🧑‍🏫 **白板模式**：一键把透明批注层变为不透明白板（背景可切换墨绿/白），翻页与笔迹完全本地、与外部放映隔离。
 - ✋ **手掌/大触点橡皮**：多点或大面积触点（如手背）自动临时当大号橡皮，单点恢复画笔；阈值与倍率可调。
 - ↩️ **撤回 / 恢复**：一键撤回最近一笔（最多 12 步）；手动清除后可用“恢复”找回刚才的整页笔迹。
 - 📸 **截图**：抓屏保存 PNG 到图片目录并复制到剪贴板（后端能力允许时）。
-- 🧮 **白板点阵**：白板底部可开关点阵辅助线，并用滑块调节点大小。
 - 🛠️ **托盘与进程屏蔽**：托盘菜单可打开设置、切换批注/光标、白板与退出；设置中可扫描并屏蔽启动后不需要的进程。
 - 📊 **WPS 演示联动**：默认启用完整测试模式，提供页码、跳页、从当前页开始、API 上下翻页与放映状态；命令优先走 WebSocket 双向连接，不可用时回退 SSE。**仅在真实换页时切换批注缓存**，页内动画不丢笔迹。
 - 🖥️ **跨架构**：原生支持 x86_64 (amd64) 与 aarch64 (arm64)，适配国产化 Linux 教室机。
@@ -73,7 +72,8 @@
 | 工具与反馈 | 笔尖跟随所选颜色，橡皮图标随尺寸适度变化；选中态明显，取消悬浮反馈，强化按下反馈。 |
 | 绘图工具组 | 默认收起橡皮、清除、恢复与撤回，保留画笔与翻页入口；选画笔展开。清除后保留展开以便点“恢复”；恢复后或翻到别的空页时再按空页规则收回。返回有笔迹页自动展开；白板模式保持展开。 |
 | 工具栏拖动 | 上下两个拖拽点，拖动高亮，范围限制在屏幕内；整栏收起后只留边缘小角，不自动弹开。 |
-| 白板 | 进入即切换画笔，光标按钮禁用；切回普通模式会清除白板笔迹并回到空白第 1 页，普通批注页笔迹保留。保持原来的白色／绿板切换，底色不跟随界面主题。**退出程序后不持久保存笔迹。** |
+| 白板 | 进入即切换画笔；白板内可用侧边栏光标键进入图形编辑（有图形时显示缩放/形状/大小滑条、删除与完成）。每页各自保存一个坐标系图形，翻页切换显示，清空只清笔迹；切回普通模式会清除白板笔迹与图形并回到空白第 1 页，普通批注页笔迹保留。保持原来的白色／绿板切换，底色不跟随界面主题。**退出程序后不持久保存笔迹与图形。** |
+| 白板选择 | 黄黑警戒线套索框选用户笔迹；浮动后可直接拖动，点击“完成/取消”或外部区域提交。坐标系图形不在框选范围内。 |
 | WPS 联动 | 联动在线时显示页码、跳页与放映状态；支持 API 上下翻页、绿色“从当前页开始”和结束放映。真实换页切换批注，页内动画不切换页缓存。 |
 | 页码与跳页 | 联动时显示当前页 / 总页数并允许拨轮跳转；白板始终使用自身页码与拨轮。 |
 | 未接入 WPS | 上下键与 Esc 回退到桌面支持的直接按键模拟，页码区域隐藏；不因翻页发起共享桌面授权。 |
@@ -114,13 +114,13 @@ getconf GNU_LIBC_VERSION
 Rust 版（主推）与 C++ / Qt5 版（legacy）现共用同一版本号与 `sidera` 包名，**二选一安装**：
 
 ```sh
-sudo apt install ./sidera_3.2-Electro.rc.7_amd64.deb   # amd64
-sudo apt install ./sidera_3.2-Electro.rc.7_arm64.deb   # arm64
+sudo apt install ./sidera_3.2-Electro-stable_amd64.deb   # amd64
+sudo apt install ./sidera_3.2-Electro-stable_arm64.deb   # arm64
 ```
 
 > 也可以直接用 `dpkg -i`，但推荐 `apt install ./xxx.deb` 以自动补齐依赖。不要跳过依赖检查或替换系统 libc。
 
-RPM / Arch 包可由源码构建（见下），分别产出 `sidera-3.2-Electro.rc.7.<arch>.rpm`（RPM 拆成 `Version: 3.2` + `Release: Electro.rc.7`，用 `.` 代替包名中的 `-`）与 `sidera-3.2_electro_rc_7-1-<arch>.pkg.tar.zst`（Arch `pkgver` 不允许 `-`，用 `_` 代替）。
+RPM / Arch 包可由源码构建（见下），分别产出 `sidera-3.2-Electro.stable.<arch>.rpm`（RPM 拆成 `Version: 3.2` + `Release: Electro.stable`，用 `.` 代替包名中的 `-`）与 `sidera-3.2_electro_stable-1-<arch>.pkg.tar.zst`（Arch `pkgver` 不允许 `-`，用 `_` 代替）。
 
 ### 2. 选择桌面入口
 
@@ -154,18 +154,19 @@ cargo build --release --locked     # 产物: rust/target/release/sidera
 cargo test --locked
 ```
 
-**容器编译 + 主机打包（推荐用于发布）**：采用「**2 个编译容器 + 主机打包**」——编译统一在仓库内 sysroot 容器（`amd64-sysroot` / `aarch64-sysroot`，bwrap，低 glibc），三种包从同一二进制产出：
+**容器编译 + 主机打包（推荐用于发布）**：采用「**amd64 容器编译 + 主机打包**」——`amd64` 在 `amd64-sysroot` 容器里原生编译；`aarch64` 在同一 amd64 容器里用 x86_64 rustc 交叉编译，链接器和目标库来自工具链 `ld.lld` 与 `aarch64-sysroot`，不再用 QEMU 慢速运行 aarch64 rustc。三种包从同一二进制产出：
 
 ```sh
 cd rust
 ./build_amd64.sh        # 容器编译 + 打包 deb/rpm/arch（amd64）
-./build_aarch64.sh      # 同上（aarch64，需 qemu-aarch64-static）
+./build_aarch64.sh      # amd64 容器交叉编译 + 打包（aarch64）
 ./build_amd64.sh --no-pkg   # 只编译，不打包
 ```
 
+- aarch64 交叉编译首次需要该工具链的标准库：`rustup target add --toolchain 1.93.1 aarch64-unknown-linux-gnu`；不再需要 `qemu-aarch64-static` 或 aarch64 宿主工具链。
 - 打包工具：`dpkg-deb`（deb）、`rpmbuild`（rpm，支持 `--target aarch64`）、`bsdtar`+`zstd`+`fakeroot`（Arch）。
 - 底层脚本：`build_container.sh <arch>`（编译）、`build_deb.sh` / `build_rpm.sh` / `build_arch.sh <arch>`（打包）。
-- sysroot **不在仓库中**（体积大、已 gitignore），需自行准备；若本机装了 rustup，`build_container.sh` 会使用固定的 1.93.1 工具链（可用 `SIDERA_RUST_TOOLCHAIN` 覆盖）。
+- sysroot **不在仓库中**（体积大、已 gitignore），需自行准备；若本机装了 rustup，`build_container.sh` 优先使用项目内 `.toolchains/rustup`，否则使用 `~/.rustup` 的固定 1.93.1 工具链（可用 `SIDERA_RUST_TOOLCHAIN` 覆盖）。
 - Arch 源码包配方见 `rust/arch/PKGBUILD`（供 AUR 用户 `makepkg`）。
 
 ### C++ / Qt5 版

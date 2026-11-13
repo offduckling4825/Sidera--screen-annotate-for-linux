@@ -9,7 +9,7 @@
 | 本地 WSL Ubuntu 26.04 amd64 | Rust/Cargo 1.93.1、GCC 15.2、Qt 5.15.18、Python 3.14、bubblewrap、Xvfb、Sway 1.11/wlroots 0.19.2 | 编译、接口及私有图形协议检查；不等于真实桌面体验 |
 | Windows / NAS 工作区 | PowerShell、Node 24.19；custom 分支 | 编辑、Node 模拟测试；Linux 构建使用本地文件系统副本 |
 | VMware Ubuntu 26.04.1 amd64 | GNOME 50.1 Wayland、glibc 2.43；已覆盖安装含小屏幕设置修复、主题功能且保留白板底色的 custom.35，扩展文件版本 6 | 37 个安装文件校验通过、原有配置保留；2026-10-25 用户确认下列三组功能在此虚拟机上没有问题 |
-| GitHub 原生 Ubuntu 22.04 amd64 / ARM64 | 3.2-Electro.rc.7 发布构建基线；Rust 1.93.1 | 发布工作流分别编译、检查主题与私有协议，再验证包内程序；实际结果见 Release 的 BUILDINFO |
+| GitHub 原生 Ubuntu 22.04 amd64 / ARM64 | 3.2-Electro-stable 发布构建基线；Rust 1.93.1 | 发布工作流分别编译、检查主题与私有协议，再验证包内程序；实际结果见 Release 的 BUILDINFO |
 | 学校银河麒麟 V10 SP1 | Phytium D2000/8 E8C、ARM64、UKUI 原生 X11、glibc 2.31、Qt 5.12；报告已装上游 2.6 | U 盘另备 custom.35 低 ABI 构建；QEMU + glibc 2.31 下 107 项普通 Rust、16 项启动检查通过，不是学校硬件验收；有图形窗口不代表 Wayland |
 | Ubuntu 24.04 / GNOME 46–49 / KDE / 原生 ARM64 | 缺少完整当前版本验收 | 不预填为已支持或已通过 |
 
@@ -47,7 +47,7 @@ sudo apt-get install -y build-essential pkg-config dpkg-dev binutils \
   python3 bubblewrap xvfb xauth sway dbus-x11 fonts-noto-cjk
 ```
 
-另外准备 Node.js 24 与 rustup。进入 rust/ 后，`rust-toolchain.toml` 选择 1.93.1；首次按配置安装工具链，随后 `cargo fetch --locked` 准备依赖。此版本是当前工具链，不是已验证的最低 Rust 版本。
+另外准备 Node.js 24 与 rustup。进入 rust/ 后，`rust-toolchain.toml` 选择 1.93.1；首次按配置安装工具链，随后 `cargo fetch --locked` 准备依赖。aarch64 交叉构建还需 `rustup target add --toolchain 1.93.1 aarch64-unknown-linux-gnu`。此版本是当前工具链，不是已验证的最低 Rust 版本。
 
 字体回归单独绘制中文，不能用“英文有像素”代替中文覆盖。系统需有可被 ab_glyph 读取的中文字体，例如 Noto Sans CJK。
 
@@ -110,17 +110,17 @@ make -C cpp -j4 WITH_WAYLAND=1
 
 ## 打包与构建输入
 
-`rust/build_deb.sh amd64|arm64` 优先取对应 `target/container-<arch>/release/sidera`，再取 `target/release/sidera`。务必确认被选中的是本次构建，尤其使用独立 CARGO_TARGET_DIR 时需将待打包文件放到脚本约定目录。
+`rust/build_deb.sh amd64|arm64` 优先取对应 `target/container-<arch>/release/sidera`（`build_aarch64.sh` 的交叉产物也在 `target/container-aarch64/`），再取 `target/release/sidera`。务必确认被选中的是本次构建，尤其使用独立 CARGO_TARGET_DIR 时需将待打包文件放到脚本约定目录。
 
 三个 DEB 脚本均调用 `tools/deb_dependencies.py`，用 readelf 检查 ELF，再由 dpkg-shlibdeps 计算实际动态依赖，另加登记需要的 Python 3。需要匹配架构的 Debian/Ubuntu 库和 dpkg-dev；不能跨环境猜依赖。通过 `SIDERA_VERSION` 指定本地包版本，失败不得删除旧包，成功后原子替换输出。
 
 ```sh
 cd rust
-SIDERA_VERSION=3.2-Electro.rc.7+local1 bash build_deb.sh amd64
-dpkg-deb -f ../sidera_3.2-Electro.rc.7+local1_amd64.deb Architecture Depends
+SIDERA_VERSION=3.2-Electro-stable+local1 bash build_deb.sh amd64
+dpkg-deb -f ../sidera_3.2-Electro-stable+local1_amd64.deb Architecture Depends
 ```
 
-外部 `amd64-sysroot/`、`aarch64-sysroot/` 不在仓库。现有容器脚本不负责创建它们；缺少来源、版本和校验和时不能声称可复现。ARM64 另需匹配工具链与 QEMU/binfmt 或原生构建机；低 ABI 必须在相应库环境构建，再到目标机验收，不能仅降低 control 中的 libc 要求。
+外部 `amd64-sysroot/`、`aarch64-sysroot/` 不在仓库。现有容器脚本不负责创建它们；缺少来源、版本和校验和时不能声称可复现。ARM64 现在由 amd64 容器交叉编译：需要 x86_64 1.93.1 工具链的 `aarch64-unknown-linux-gnu` 标准库，并用 `aarch64-sysroot` 提供目标 crt/libc；不再需要 QEMU/binfmt 或 aarch64 宿主工具链。低 ABI 仍以实际链接的目标库为准，并需到目标机验收，不能仅降低 control 中的 libc 要求。
 
 已有 Release 的 [ARM64 补充构建](releases/ARM64.md) 使用可选 Ubuntu 22.04 / 24.04 的原生 ARM64 runner，分别记录应用 tag 与打包工具提交，并运行隔离启动检查。每次结果以其构建日志和 `BUILDINFO-arm64.md` 为准，不能继承 amd64 的桌面验收结论。
 

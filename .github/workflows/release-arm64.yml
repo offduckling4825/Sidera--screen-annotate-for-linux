@@ -7,7 +7,7 @@ on:
       release_tag:
         description: Existing Sidera release tag
         required: true
-        default: v3.2-Electro.rc.7
+        default: v3.2-Electro-stable
         type: string
       runner_image:
         description: Native ARM64 build system (also determines the library baseline)
@@ -40,7 +40,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v3\.2-Electro\.rc(\.[0-9]+)?$ ]]
+          [[ "$RELEASE_TAG" =~ ^v3\.2-Electro(-stable|\.rc(\.[0-9]+)?)$ ]]
           test "$(uname -m)" = aarch64
           test "$(dpkg --print-architecture)" = arm64
           version="${RELEASE_TAG#v}"

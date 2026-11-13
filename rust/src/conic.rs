@@ -25,24 +25,31 @@ pub fn visible_bounds(coord: &CoordGuide, x0: f32, y0: f32, x1: f32, y1: f32) ->
     (u0, u1, v0, v1)
 }
 
+/// Normalized size slider (0..1) to a conic dimension multiplier.
+pub fn size_scale(size: f32) -> f32 {
+    0.4 + 1.2 * size.clamp(0.0, 1.0)
+}
+
 /// (semi-major, semi-minor or focal parameter) from the normalized shape slider.
-pub fn ellipse_axes(shape: f32) -> (f32, f32) {
-    let a = 4.0;
+pub fn ellipse_axes(shape: f32, size: f32) -> (f32, f32) {
+    let a = 4.0 * size_scale(size);
     let b = a * (0.30 + 0.70 * shape.clamp(0.0, 1.0));
     (a, b)
 }
-pub fn hyperbola_axes(shape: f32) -> (f32, f32) {
-    let a = 3.0;
+pub fn hyperbola_axes(shape: f32, size: f32) -> (f32, f32) {
+    let a = 3.0 * size_scale(size);
     let b = a * (0.25 + 1.25 * shape.clamp(0.0, 1.0));
     (a, b)
 }
-pub fn parabola_p(shape: f32) -> f32 { 0.8 + 4.2 * shape.clamp(0.0, 1.0) }
+pub fn parabola_p(shape: f32, size: f32) -> f32 {
+    (0.8 + 4.2 * shape.clamp(0.0, 1.0)) * size_scale(size)
+}
 
 pub fn foci(coord: &CoordGuide) -> Vec<(f32, f32)> {
     match coord.conic {
         ConicKind::None => Vec::new(),
         ConicKind::Ellipse => {
-            let (a, b) = ellipse_axes(coord.shape);
+            let (a, b) = ellipse_axes(coord.shape, coord.size);
             let c = (a * a - b * b).max(0.0).sqrt();
             match coord.direction {
                 ConicDirection::Vertical => vec![(0.0, c), (0.0, -c)],
@@ -50,7 +57,7 @@ pub fn foci(coord: &CoordGuide) -> Vec<(f32, f32)> {
             }
         }
         ConicKind::Hyperbola => {
-            let (a, b) = hyperbola_axes(coord.shape);
+            let (a, b) = hyperbola_axes(coord.shape, coord.size);
             let c = (a * a + b * b).sqrt();
             match coord.direction {
                 ConicDirection::Vertical => vec![(0.0, c), (0.0, -c)],
@@ -58,7 +65,7 @@ pub fn foci(coord: &CoordGuide) -> Vec<(f32, f32)> {
             }
         }
         ConicKind::Parabola => {
-            let p = parabola_p(coord.shape);
+            let p = parabola_p(coord.shape, coord.size);
             match coord.direction {
                 ConicDirection::Left => vec![(-p, 0.0)],
                 ConicDirection::Up => vec![(0.0, p)],
@@ -76,7 +83,7 @@ pub fn branches(coord: &CoordGuide, u0: f32, u1: f32, v0: f32, v1: f32) -> Vec<V
     match coord.conic {
         ConicKind::None => Vec::new(),
         ConicKind::Ellipse => {
-            let (a, b) = ellipse_axes(coord.shape);
+            let (a, b) = ellipse_axes(coord.shape, coord.size);
             let points = (0..=N).map(|i| {
                 let t = i as f32 / N as f32 * std::f32::consts::TAU;
                 match coord.direction {
@@ -87,7 +94,7 @@ pub fn branches(coord: &CoordGuide, u0: f32, u1: f32, v0: f32, v1: f32) -> Vec<V
             vec![points]
         }
         ConicKind::Hyperbola => {
-            let (a, b) = hyperbola_axes(coord.shape);
+            let (a, b) = hyperbola_axes(coord.shape, coord.size);
             let mut left = Vec::new();
             let mut right = Vec::new();
             let tmax = 2.2;
@@ -106,7 +113,7 @@ pub fn branches(coord: &CoordGuide, u0: f32, u1: f32, v0: f32, v1: f32) -> Vec<V
             vec![left, right]
         }
         ConicKind::Parabola => {
-            let p = parabola_p(coord.shape);
+            let p = parabola_p(coord.shape, coord.size);
             let mut points = Vec::new();
             match coord.direction {
                 ConicDirection::Left | ConicDirection::Right => {
@@ -150,6 +157,20 @@ mod tests {
         c.conic = ConicKind::Parabola;
         c.direction = ConicDirection::Right;
         assert_eq!(foci(&c).len(), 1);
+    }
+
+    #[test]
+    fn size_scales_conic_dimensions() {
+        let small = ellipse_axes(0.5, 0.0);
+        let large = ellipse_axes(0.5, 1.0);
+        assert!(large.0 > small.0 && large.1 > small.1);
+        assert!(parabola_p(0.5, 1.0) > parabola_p(0.5, 0.0));
+        let mut c = CoordGuide::new(300, 200, ConicKind::Ellipse, ConicDirection::Horizontal);
+        c.shape = 0.5;
+        c.size = 0.0;
+        let near = foci(&c)[0].0;
+        c.size = 1.0;
+        assert!(foci(&c)[0].0 > near);
     }
 
     #[test]
