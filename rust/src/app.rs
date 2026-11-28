@@ -564,7 +564,7 @@ impl App {
     pub fn sidebar_retract(&self) -> f32 {
         let target = if self.collapsed { 1.0 } else { 0.0 };
         let Some(start) = self.sidebar_anim_start else { return target };
-        let t = (start.elapsed().as_secs_f32() / 0.18).clamp(0.0, 1.0);
+        let t = (start.elapsed().as_secs_f32() / 0.09).clamp(0.0, 1.0);
         let eased = 1.0 - (1.0 - t).powi(3);
         self.sidebar_anim_from + (target - self.sidebar_anim_from) * eased
     }
@@ -600,7 +600,7 @@ impl App {
         self.sidebar_countdown_at(std::time::Instant::now()) == Some(0)
     }
     pub fn finish_sidebar_animation(&mut self) -> bool {
-        if self.sidebar_anim_start.is_some_and(|start| start.elapsed().as_millis() >= 180) {
+        if self.sidebar_anim_start.is_some_and(|start| start.elapsed().as_millis() >= 90) {
             self.sidebar_anim_start = None;
             return true;
         }

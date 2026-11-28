@@ -4,7 +4,7 @@ use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use std::time::{Duration, Instant};
 use crate::ui::Btn;
 
-const DURATION: Duration = Duration::from_millis(220);
+const DURATION: Duration = Duration::from_millis(120);
 const PAGE_OPEN_DELAY: Duration = Duration::from_millis(400);
 const PAGE_CLOSE_DELAY: Duration = Duration::from_millis(650);
 
@@ -147,7 +147,7 @@ impl ToolSelector {
 
     pub fn advance_at(&mut self, now: Instant) -> bool {
         let Some((motion, target)) = self.travel else { return false };
-        let t = (now.saturating_duration_since(motion.started).as_secs_f32() / 0.15).min(1.0);
+        let t = (now.saturating_duration_since(motion.started).as_secs_f32() / 0.08).min(1.0);
         self.frame = motion.from + (target as f32 - motion.from) * (1.0 - (1.0 - t).powi(3));
         if t >= 1.0 { self.travel = None; }
         true
