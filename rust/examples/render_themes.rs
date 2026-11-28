@@ -18,6 +18,9 @@ mod instance {}
 #[path = "../src/paint.rs"] mod paint;
 #[path = "../src/text.rs"] mod text;
 #[path = "../src/toolbar.rs"] mod toolbar;
+#[path = "../src/document_scroll.rs"] mod document_scroll;
+#[cfg(unix)]
+#[path = "../src/linux_scroll.rs"] mod linux_scroll;
 #[path = "../src/page_picker.rs"] mod page_picker;
 #[path = "../src/ui.rs"] mod ui;
 #[path = "../src/ui_icons.rs"] mod ui_icons;
