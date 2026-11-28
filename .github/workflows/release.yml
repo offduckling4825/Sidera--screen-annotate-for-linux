@@ -3,13 +3,13 @@ run-name: Release packages for ${{ inputs.release_tag || github.ref_name }}
 
 on:
   push:
-    tags: ['v3.2-Electro*']
+    tags: ['v3.3-Electro*']
   workflow_dispatch:
     inputs:
       release_tag:
         description: Existing release tag
         required: true
-        default: v3.2-Electro-stable-beta1
+        default: v3.3-Electro-alpha
         type: string
 
 permissions:
@@ -50,12 +50,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v3\.2-Electro(-stable(-beta[0-9]+)?|\.rc(\.[0-9]+)?)$ ]]
+          [[ "$RELEASE_TAG" =~ ^v3\.3-Electro(-alpha|-stable(-beta[0-9]+)?|\.rc(\.[0-9]+)?)$ ]]
           test "$(uname -m)" = "$EXPECTED_MACHINE"
           test "$(dpkg --print-architecture)" = "$DEB_ARCH"
           version="${RELEASE_TAG#v}"
           # git 标签不能含 '~'；包版本用 '~' 表示"低于正式版"，
-          # 这样以后发布 3.2-Electro-stable 时会被视为升级而不是降级。
+          # 这样以后发布 3.3-Electro-stable 时会被视为升级而不是降级。
           version="${version/-beta/~beta}"
           echo "SIDERA_VERSION=${version}" >> "$GITHUB_ENV"
 

@@ -1,7 +1,7 @@
 Name:           sidera
-Version:        3.2
+Version:        3.3
 # RPM 的 Version/Release 字段用 '-' 分隔，故用 '.' 表示版本里的 '-'。
-Release:        Electro.stable~beta1
+Release:        Electro.alpha
 Summary:        Linux 屏幕批注与教学演示工具（Rust，X11/Wayland，WPS 联动）
 
 License:        GPL-3.0-only
@@ -73,5 +73,8 @@ fi
 udevadm control --reload-rules 2>/dev/null || :
 
 %changelog
+* Sat Nov 28 2026 Carl_Jin <user@localhost> - 3.3-1
+- 触屏工具栏重做，新增白板页面预览与长页面连续滚动。
+
 * Sat Nov 07 2026 Carl_Jin <user@localhost> - 3.2-1
 - Rust 版（Electro rc）

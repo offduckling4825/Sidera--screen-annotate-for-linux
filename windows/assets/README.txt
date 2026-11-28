@@ -1,4 +1,4 @@
-Sidera · Windows 版（3.2-Electro-stable）
+Sidera · Windows 版（3.3-Electro-alpha）
 
 运行：双击 sidera.exe
 要求：Windows 10 x64 或更高（仅验证单显示器场景）

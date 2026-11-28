@@ -11,9 +11,9 @@
 #
 # 产物：
 #   target/container-amd64/release/sidera（低 glibc 二进制）
-#   <repo>/sidera_3.2-Electro-stable~beta1_amd64.deb
-#   rust/dist/sidera-3.2-Electro.stable.x86_64.rpm
-#   rust/dist/sidera-3.2_electro_stable-1-x86_64.pkg.tar.zst
+#   <repo>/sidera_3.3-Electro-alpha_amd64.deb
+#   rust/dist/sidera-3.3-Electro.alpha.x86_64.rpm
+#   rust/dist/sidera-3.3_electro_alpha-1-x86_64.pkg.tar.zst
 # ============================================================
 set -e
 
@@ -66,9 +66,9 @@ if [ "$NO_PKG" -eq 0 ]; then
 
   echo ""
   echo "========== 产物 =========="
-  for f in "../sidera_3.2-Electro-stable~beta1_amd64.deb" \
-           dist/sidera-3.2-Electro.stable~beta1.x86_64.rpm \
-           dist/sidera-3.2_electro_stable_beta1-1-x86_64.pkg.tar.zst; do
+  for f in "../sidera_3.3-Electro-alpha_amd64.deb" \
+           dist/sidera-3.3-Electro.alpha.x86_64.rpm \
+           dist/sidera-3.3_electro_alpha-1-x86_64.pkg.tar.zst; do
     [ -f "$f" ] && ls -lh "$f"
   done
 else
