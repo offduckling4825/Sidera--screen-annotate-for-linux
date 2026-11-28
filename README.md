@@ -169,6 +169,7 @@ cd rust
 - 打包工具：`dpkg-deb`（deb）、`rpmbuild`（rpm，支持 `--target aarch64`）、`bsdtar`+`zstd`+`fakeroot`（Arch）。
 - 底层脚本：`build_container.sh <arch>`（编译）、`build_deb.sh` / `build_rpm.sh` / `build_arch.sh <arch>`（打包）。
 - sysroot **不在仓库中**（体积大、已 gitignore），需自行准备；若本机装了 rustup，`build_container.sh` 优先使用项目内 `.toolchains/rustup`，否则使用 `~/.rustup` 的固定 1.93.1 工具链（可用 `SIDERA_RUST_TOOLCHAIN` 覆盖）。
+- 打包产物统一放在仓库的 `rust/dist/`：Rust 版为 `sidera_<版本>_<架构>.deb`，另有 `sidera-<版本>.<架构>.rpm` 与 `sidera-<版本>-1-<架构>.pkg.tar.zst`。
 - Arch 源码包配方见 `rust/arch/PKGBUILD`（供 AUR 用户 `makepkg`）。
 
 ### C++ / Qt5 版
@@ -184,7 +185,7 @@ make -j$(nproc)            # 本机编译 → cpp/annotate_amd64
 ./annotate_amd64
 ```
 
-或用仓库内容器脚本：`cpp/build_amd64.sh` / `cpp/build_aarch64.sh`（容器编译 + 打 DEB）。
+或用仓库内容器脚本：`cpp/build_amd64.sh` / `cpp/build_aarch64.sh`（容器编译 + 打 DEB）。C++ 版的包名与 Rust 版相同，文件名加 `-cpp` 区分，产出在仓库的 `rust/dist/sidera-cpp_<版本>_<架构>.deb`。
 
 ## 项目结构
 

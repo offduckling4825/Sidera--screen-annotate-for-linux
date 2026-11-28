@@ -2,7 +2,7 @@
 # ============================================================
 # Rust 版 Sidera DEB 打包脚本
 #   用法: ./build_deb.sh [amd64|aarch64]
-#   产物: <repo>/sidera_3.3-Electro-alpha_<amd64|arm64>.deb
+#   产物: <repo>/rust/dist/sidera_3.3-Electro-alpha_<amd64|arm64>.deb
 #
 # 依赖：dpkg-dev（dpkg-deb）、binutils、python3
 #       默认用 dpkg-shlibdeps 从 ELF 推导运行依赖；主机缺少目标库清单时
@@ -114,7 +114,9 @@ else
     rm -f -- "$DEPS_ERR"; DEPS_ERR=""
   fi
 fi
-OUTPUT="$REPO/${PKG_NAME}_${VERSION}_${DEB_ARCH}.deb"
+DIST="$REPO/rust/dist"
+mkdir -p "$DIST"
+OUTPUT="$DIST/${PKG_NAME}_${VERSION}_${DEB_ARCH}.deb"
 PKG_DIR="$(mktemp -d "$REPO/.sidera-package.XXXXXXXX")"
 trap 'rm -rf -- "$PKG_DIR"; rm -f -- "$PKG_DIR.deb"; [ -z "${DEPS_ERR:-}" ] || rm -f -- "$DEPS_ERR"' EXIT
 echo "==> 打包 $BIN -> $OUTPUT"

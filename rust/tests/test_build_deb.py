@@ -41,6 +41,8 @@ class BuildDebTests(unittest.TestCase):
         self.addCleanup(scratch.cleanup)
         repo = Path(scratch.name) / "repo with spaces"
         (repo / "rust").mkdir(parents=True)
+        # build_deb.sh writes into rust/dist; create it so tests can seed old artifacts.
+        (repo / "rust/dist").mkdir(parents=True, exist_ok=True)
 
         # Normalize the Windows checkout's CRLF in the isolated Linux copy.
         (repo / "rust/build_deb.sh").write_text(
@@ -78,7 +80,7 @@ class BuildDebTests(unittest.TestCase):
 
     def assert_rejected(self, repo, arch):
         deb_arch = "arm64" if arch in ("arm64", "aarch64") else arch
-        package = repo / f"sidera_{VERSION}_{deb_arch}.deb"
+        package = repo / "rust/dist" / f"sidera_{VERSION}_{deb_arch}.deb"
         package.write_bytes(b"previous package")
         staging = package.with_suffix("")
         staging.mkdir()
@@ -110,7 +112,7 @@ class BuildDebTests(unittest.TestCase):
                 result = self.build(repo, arch)
                 self.assertEqual(result.returncode, 0, result.stdout)
                 deb_arch = "amd64" if arch == "amd64" else "arm64"
-                package = repo / f"sidera_{VERSION}_{deb_arch}.deb"
+                package = repo / "rust/dist" / f"sidera_{VERSION}_{deb_arch}.deb"
                 control_arch = subprocess.check_output(
                     ["dpkg-deb", "-f", str(package), "Architecture"], text=True,
                 ).strip()

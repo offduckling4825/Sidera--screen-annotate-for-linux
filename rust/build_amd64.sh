@@ -11,7 +11,7 @@
 #
 # 产物：
 #   target/container-amd64/release/sidera（低 glibc 二进制）
-#   <repo>/sidera_3.3-Electro-alpha_amd64.deb
+#   <repo>/rust/dist/sidera_3.3-Electro-alpha_amd64.deb
 #   rust/dist/sidera-3.3-Electro.alpha.x86_64.rpm
 #   rust/dist/sidera-3.3_electro_alpha-1-x86_64.pkg.tar.zst
 # ============================================================
@@ -66,7 +66,7 @@ if [ "$NO_PKG" -eq 0 ]; then
 
   echo ""
   echo "========== 产物 =========="
-  for f in "../sidera_3.3-Electro-alpha_amd64.deb" \
+  for f in "dist/sidera_3.3-Electro-alpha_amd64.deb" \
            dist/sidera-3.3-Electro.alpha.x86_64.rpm \
            dist/sidera-3.3_electro_alpha-1-x86_64.pkg.tar.zst; do
     [ -f "$f" ] && ls -lh "$f"

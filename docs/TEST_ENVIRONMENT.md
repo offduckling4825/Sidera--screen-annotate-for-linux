@@ -119,7 +119,7 @@ make -C cpp -j4 WITH_WAYLAND=1
 ```sh
 cd rust
 SIDERA_VERSION=3.3-Electro-alpha+local1 bash build_deb.sh amd64
-dpkg-deb -f ../sidera_3.3-Electro-alpha+local1_amd64.deb Architecture Depends
+dpkg-deb -f ../rust/dist/sidera_3.3-Electro-alpha+local1_amd64.deb Architecture Depends
 ```
 
 外部 `amd64-sysroot/`、`aarch64-sysroot/` 不在仓库。现有容器脚本不负责创建它们；缺少来源、版本和校验和时不能声称可复现。ARM64 现在由 amd64 容器交叉编译：需要 x86_64 1.93.1 工具链的 `aarch64-unknown-linux-gnu` 标准库，并用 `aarch64-sysroot` 提供目标 crt/libc；不再需要 QEMU/binfmt 或 aarch64 宿主工具链。低 ABI 仍以实际链接的目标库为准，并需到目标机验收，不能仅降低 control 中的 libc 要求。

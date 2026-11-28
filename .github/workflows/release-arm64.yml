@@ -112,7 +112,7 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" release-source
           git -C release-source diff --exit-code -- rust/src rust/Cargo.toml rust/Cargo.lock wps-addin compat
           mkdir release-artifacts
-          cp "release-source/sidera_${SIDERA_VERSION}_arm64.deb" release-artifacts/
+          cp "release-source/rust/dist/sidera_${SIDERA_VERSION}_arm64.deb" release-artifacts/
           dpkg-deb --extract "release-artifacts/sidera_${SIDERA_VERSION}_arm64.deb" "$PWD/release-unpacked-arm64"
           cmp release-source/rust/target/release/sidera "$PWD/release-unpacked-arm64/usr/bin/sidera"
           sudo apt-get --simulate install "$PWD/release-artifacts/sidera_${SIDERA_VERSION}_arm64.deb"

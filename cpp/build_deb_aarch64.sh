@@ -1,7 +1,7 @@
 #!/bin/bash
 # arm64 deb 打包脚本
 # 用法: ./build_deb_aarch64.sh
-# 产物: sidera_3.3-Electro-alpha_arm64.deb
+# 产物: rust/dist/sidera-cpp_3.3-Electro-alpha_arm64.deb
 
 set -e
 cd "$(dirname "$0")"
@@ -19,7 +19,9 @@ if [ ! -f "$BINARY" ]; then
 fi
 
 DEPENDS="$(python3 ../tools/deb_dependencies.py "$BINARY" "$ARCH")"
-OUTPUT="$PWD/${PKG_NAME}_${VERSION}_${ARCH}.deb"
+DIST="$(cd "$PWD/.." && pwd)/rust/dist"
+mkdir -p "$DIST"
+OUTPUT="$DIST/${PKG_NAME}-cpp_${VERSION}_${ARCH}.deb"
 PKG_DIR="$(mktemp -d "$PWD/.sidera-package.XXXXXXXX")"
 trap 'rm -rf -- "$PKG_DIR"; rm -f -- "$PKG_DIR.deb"' EXIT
 
